@@ -42,8 +42,6 @@ class PersonaRuntime:
         Generates the prompt for the current state of the persona's HSM,
         now with support for additional, ad-hoc context.
         """
-        # Note: self.state is the current state string from the HSM
-        # The prompt keys in YAML already match the state names, no transformation needed
         prompt_template_path = self.config.prompts.get(self.state)
         
         # Special handling for requirements persona to select provider-specific prompt

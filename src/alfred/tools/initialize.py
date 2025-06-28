@@ -9,7 +9,6 @@ from src.alfred.config.manager import ConfigManager
 from src.alfred.config.settings import settings
 from src.alfred.models.alfred_config import AlfredConfig, ProviderConfig, TaskProvider
 from src.alfred.models.schemas import ToolResponse
-from src.alfred.models.state import StateFile
 
 
 def initialize_project(provider: str | None = None) -> ToolResponse:
@@ -26,7 +25,7 @@ def initialize_project(provider: str | None = None) -> ToolResponse:
     alfred_dir = settings.alfred_dir
     
     # Check if already initialized
-    if alfred_dir.exists() and settings.state_file.exists():
+    if alfred_dir.exists() and (alfred_dir / "workflow.yml").exists():
         return ToolResponse(
             status="success", 
             message=f"Project already initialized at '{alfred_dir}'. No changes were made."
@@ -42,11 +41,6 @@ def initialize_project(provider: str | None = None) -> ToolResponse:
         
         # Create base directory
         alfred_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create empty state file
-        initial_state = StateFile()
-        with settings.state_file.open("w", encoding="utf-8") as f:
-            f.write(initial_state.model_dump_json(indent=2))
 
         # Copy default workflow file
         shutil.copyfile(settings.packaged_workflow_file, settings.workflow_file)

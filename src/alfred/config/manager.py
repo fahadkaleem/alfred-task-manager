@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 
-from alfred.lib.logger import get_logger
-from alfred.models.alfred_config import AlfredConfig
+from src.alfred.lib.logger import get_logger
+from src.alfred.models.alfred_config import AlfredConfig
 
 logger = get_logger("alfred.config.manager")
 

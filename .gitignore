@@ -41,7 +41,6 @@ htmlcov/
 .tox/
 
 # Project specific
-.epictaskmanager/
 *.log
 reference_code/
 .claude-trace/
@@ -49,6 +48,6 @@ reference_code/
 # OS
 .DS_Store
 Thumbs.db
-/.epictaskmanager/
 worktrees/
 /.alfred/
+/ai/alfred_tasks_old/

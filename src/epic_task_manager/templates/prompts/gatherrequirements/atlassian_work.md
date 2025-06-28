@@ -1,1 +1,0 @@
-# Atlassian-specific requirements template
