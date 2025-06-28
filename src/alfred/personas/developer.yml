@@ -1,0 +1,38 @@
+name: "James"
+title: "Full Stack Developer"
+target_status: "ready_for_dev"
+completion_status: "ready_for_qa"
+execution_mode: "stepwise"
+
+hsm:
+  initial_state: "coding_working"
+  states:
+    - "coding_working"
+    - "coding_submission"
+    - "coding_aireview"
+    - "coding_devreview"
+    - "coding_verified"
+
+  transitions:
+    - trigger: "submit_manifest"
+      source: "coding_submission"
+      dest: "coding_aireview"
+    - trigger: "ai_approve"
+      source: "coding_aireview"
+      dest: "coding_devreview"
+    - trigger: "human_approve"
+      source: "coding_devreview"
+      dest: "coding_verified"
+    - trigger: "request_revision"
+      source: ["coding_aireview", "coding_devreview"]
+      dest: "coding_working"
+
+prompts:
+  coding_working: "prompts/developer/coding_step.md"
+  coding_submission: "prompts/developer/coding_submission.md"
+  coding_aireview: "prompts/developer/ai_review.md"
+  coding_devreview: "prompts/developer/dev_review.md"
+
+artifacts:
+  - state: "coding_submission"
+    model_path: "src.alfred.models.artifacts.CodingManifest"

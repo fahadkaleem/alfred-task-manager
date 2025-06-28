@@ -1,0 +1,621 @@
+"""
+Comprehensive tests for Prompter class covering provider-specific template selection
+"""
+
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch, mock_open
+
+import pytest
+
+from epic_task_manager.execution.prompter import Prompter
+from epic_task_manager.models.config import TaskSource
+
+
+class TestPrompter:
+    """Test Prompter functionality"""
+
+    @pytest.fixture
+    def temp_templates(self):
+        """Create temporary template directory structure for testing"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            # Create template directory structure (phase-first)
+            templates_dir = temp_path / "templates"
+            templates_dir.mkdir()
+
+            # Create phase-specific directories
+            (templates_dir / "prompts" / "claimtask").mkdir(parents=True)
+            (templates_dir / "prompts" / "planning").mkdir(parents=True)
+            (templates_dir / "prompts" / "coding").mkdir(parents=True)
+
+            # Create task-source-specific claimtask templates
+            atlassian_template = templates_dir / "prompts" / "claimtask" / "atlassian_work.md"
+            atlassian_template.write_text("# Atlassian Claimtask Work\nTask: {task_id}\nFeedback: {revision_feedback}")
+
+            local_template = templates_dir / "prompts" / "claimtask" / "local_work.md"
+            local_template.write_text("# Local Claimtask Work\nTask: {task_id}\nFeedback: {revision_feedback}")
+
+            # Create phase-specific templates for other phases
+            planning_template = templates_dir / "prompts" / "planning" / "work.md"
+            planning_template.write_text("# Shared Planning Work\nTask: {task_id}\nPrevious: {verified_claim_task_artifact}")
+
+            coding_template = templates_dir / "prompts" / "coding" / "work.md"
+            coding_template.write_text("# Generic Coding Work\nTask: {task_id}\nPlan: {verified_planning_artifact}")
+
+            yield temp_path
+
+    @pytest.fixture
+    def mock_config_atlassian(self):
+        """Mock configuration for Atlassian provider"""
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            mock_config.load_config.return_value.get_task_source.return_value.value = "atlassian"
+            yield mock_config
+
+    @pytest.fixture
+    def mock_config_local(self):
+        """Mock configuration for local provider"""
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            mock_config.load_config.return_value.get_task_source.return_value.value = "local"
+            yield mock_config
+
+    @pytest.fixture
+    def mock_artifact_manager(self):
+        """Mock ArtifactManager for testing"""
+        with patch("epic_task_manager.execution.prompter.ArtifactManager") as mock_class:
+            mock_instance = Mock()
+            mock_class.return_value = mock_instance
+            yield mock_instance
+
+    def test_load_template_selects_atlassian_when_provider_is_atlassian(self, temp_templates, mock_config_atlassian):
+        """Test it correctly selects _atlassian template when provider is 'atlassian'"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+
+            template = prompter._load_template("prompts", "claimtask_work")
+
+            assert "Atlassian Claimtask Work" in template
+            assert "{task_id}" in template
+
+    def test_load_template_selects_local_when_provider_is_local(self, temp_templates, mock_config_local):
+        """Test it correctly selects _local template when provider is 'local'"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+
+            template = prompter._load_template("prompts", "claimtask_work")
+
+            assert "Local Claimtask Work" in template
+            assert "{task_id}" in template
+
+    def test_load_template_falls_back_to_shared_template(self, temp_templates, mock_config_atlassian):
+        """Test fallback to shared template when provider-specific not found"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+
+            template = prompter._load_template("prompts", "planning_work")
+
+            assert "Shared Planning Work" in template
+            assert "{verified_claim_task_artifact}" in template
+
+    def test_load_template_falls_back_to_generic_template(self, temp_templates, mock_config_local):
+        """Test fallback to generic template when provider and shared not found"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+
+            template = prompter._load_template("prompts", "coding_work")
+
+            assert "Generic Coding Work" in template
+            assert "{verified_planning_artifact}" in template
+
+    def test_load_template_generates_dynamic_template_for_missing_work_prompts(self, temp_templates, mock_config_local):
+        """Test dynamic template generation for missing work prompts"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+
+            template = prompter._load_template("prompts", "testing_work")
+
+            assert "Please work on task {task_id}" in template
+            assert "testing phase" in template
+            assert "{revision_feedback}" in template
+
+    def test_load_template_generates_dynamic_template_for_missing_ai_review_prompts(self, temp_templates, mock_config_local):
+        """Test dynamic template generation for missing AI review prompts"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+
+            template = prompter._load_template("prompts", "finalize_ai_review")
+
+            assert "Please review the artifact" in template
+            assert "finalize phase" in template
+            assert "{artifact_content}" in template
+
+    def test_load_template_raises_error_for_unknown_template_type(self, temp_templates, mock_config_local):
+        """Test error handling for unknown template types"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+
+            with pytest.raises(FileNotFoundError, match="Template not found: unknown_template"):
+                prompter._load_template("prompts", "unknown_template")
+
+    def test_safe_format_template_only_replaces_existing_placeholders(self, temp_templates):
+        """Test template formatting only replaces placeholders that exist in context"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+
+            template = "Task: {task_id}, Status: {status}, Example: {example_placeholder}"
+            context = {"task_id": "TEST-123", "status": "working"}
+
+            result = prompter._safe_format_template(template, context)
+
+            assert "Task: TEST-123" in result
+            assert "Status: working" in result
+            assert "{example_placeholder}" in result  # Should remain unchanged
+
+    def test_generate_prompt_for_claimtask_working_state(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation for claimtask_working state"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-123", "claimtask_working", "No feedback")
+
+            assert "Local Claimtask Work" in prompt
+            assert "TEST-123" in prompt
+            assert "No feedback" in prompt
+
+    def test_generate_prompt_for_planning_working_loads_claim_task_context(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation for planning_working loads verified claim task artifact"""
+        mock_artifact_manager.get_archive_path.return_value.exists.return_value = True
+        mock_artifact_manager.get_archive_path.return_value.read_text.return_value = "Verified claim task content"
+
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-456", "planning_working")
+
+            mock_artifact_manager.get_archive_path.assert_called_with("TEST-456", "claimtask", 1)
+            assert "Verified claim task content" in prompt
+
+    def test_generate_prompt_for_coding_working_loads_planning_context(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation for coding_working loads verified planning artifact"""
+        mock_artifact_manager.get_archive_path.return_value.exists.return_value = True
+        mock_artifact_manager.get_archive_path.return_value.read_text.return_value = "Verified planning content"
+
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-789", "coding_working")
+
+            mock_artifact_manager.get_archive_path.assert_called_with("TEST-789", "planning", 1)
+            assert "Verified planning content" in prompt
+
+    def test_generate_prompt_for_testing_working_loads_coding_context(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation for testing_working loads verified coding artifact"""
+        mock_artifact_manager.get_archive_path.return_value.exists.return_value = True
+        mock_artifact_manager.get_archive_path.return_value.read_text.return_value = "Verified coding content"
+
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-999", "testing_working")
+
+            mock_artifact_manager.get_archive_path.assert_called_with("TEST-999", "coding", 1)
+            assert "Verified coding content" in prompt
+
+    def test_generate_prompt_for_finalize_working_loads_testing_context(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation for finalize_working loads verified testing artifact"""
+        mock_artifact_manager.get_archive_path.return_value.exists.return_value = True
+        mock_artifact_manager.get_archive_path.return_value.read_text.return_value = "Verified testing content"
+
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-111", "finalize_working")
+
+            mock_artifact_manager.get_archive_path.assert_called_with("TEST-111", "testing", 1)
+            assert "Verified testing content" in prompt
+
+    def test_generate_prompt_handles_missing_archived_artifact(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation handles missing archived artifacts gracefully"""
+        mock_artifact_manager.get_archive_path.return_value.exists.return_value = False
+
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-222", "planning_working")
+
+            assert "Error: Could not find verified claim_task artifact" in prompt
+
+    def test_generate_prompt_for_aireview_state(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation for AI review states"""
+        mock_artifact_manager.read_artifact.return_value = "Current artifact content"
+
+        # Create AI review template
+        ai_review_template = temp_templates / "templates" / "prompts" / "claimtask_ai_review.md"
+        ai_review_template.write_text("# Review Artifact\nTask: {task_id}\nContent: {artifact_content}")
+
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-333", "claimtask_aireview")
+
+            mock_artifact_manager.read_artifact.assert_called_with("TEST-333")
+            assert "Review Artifact" in prompt
+            assert "Current artifact content" in prompt
+
+    def test_generate_prompt_for_devreview_state(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation for dev review states"""
+        mock_artifact_manager.get_artifact_path.return_value = Path("/path/to/artifact.md")
+
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-444", "claimtask_devreview")
+
+            assert "ready for your review" in prompt
+            assert "/path/to/artifact.md" in prompt
+
+    def test_generate_prompt_for_verified_state(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test prompt generation for verified states"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            prompt = prompter.generate_prompt("TEST-555", "claimtask_verified")
+
+            assert "No further AI action is required" in prompt
+
+    def test_generate_prompt_raises_error_for_invalid_state_format(self, temp_templates, mock_config_local, mock_artifact_manager):
+        """Test error handling for invalid state format"""
+        with patch.object(Prompter, "__init__", lambda x: None):
+            prompter = Prompter()
+            prompter.template_dir = temp_templates / "templates"
+            prompter.artifact_manager = mock_artifact_manager
+
+            with pytest.raises(ValueError, match="Invalid machine state format"):
+                prompter.generate_prompt("TEST-666", "invalid_state_format")
+
+    def test_provider_configuration_validation(self, temp_templates):
+        """Test provider configuration validation during template loading"""
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            # Mock config that raises exception
+            mock_config.load_config.side_effect = Exception("Config error")
+
+            with patch.object(Prompter, "__init__", lambda x: None):
+                prompter = Prompter()
+                prompter.template_dir = temp_templates / "templates"
+
+                # Should handle config errors gracefully and fall back
+                with pytest.raises(Exception):
+                    prompter._load_template("prompts", "claimtask_work")
+
+    @pytest.fixture
+    def prompter(self, isolated_epic_settings):
+        """Create Prompter with isolated test settings."""
+        return Prompter()
+
+    @pytest.fixture
+    def mock_template_content(self):
+        """Mock template content for testing."""
+        return {
+            "claimtask_work": "# Role: Task Claimer\n\nPlease work on task {task_id}.\n\n{revision_feedback}",
+            "planning_work": "# Role: Planner\n\nCreate plan for {task_id}.\n\nVerified requirements:\n{verified_claim_task_artifact}",
+            "coding_work": "# Role: Developer\n\nImplement {task_id}.\n\nPlan:\n{verified_planning_artifact}",
+            "testing_work": "# Role: Tester\n\nTest {task_id}.\n\nCode:\n{verified_coding_artifact}",
+            "finalize_work": "# Role: Finalizer\n\nFinalize {task_id}.\n\nTests:\n{verified_testing_artifact}",
+            "claimtask_ai_review": "# Role: Reviewer\n\nReview artifact:\n{artifact_content}",
+        }
+
+    def test_generate_prompt_for_claimtask_working_state(self, prompter, sample_task_id, mock_template_content):
+        """Test prompt generation for claimtask_working state."""
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = mock_template_content["claimtask_work"]
+
+            prompt = prompter.generate_prompt(sample_task_id, "claimtask_working")
+
+            mock_load.assert_called_once_with("prompts", "claimtask_work")
+            assert sample_task_id in prompt
+            assert "No feedback provided" in prompt
+
+    def test_generate_prompt_with_revision_feedback(self, prompter, sample_task_id, mock_template_content):
+        """Test prompt generation includes revision feedback when provided."""
+        feedback = "Please add more details to the implementation"
+
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = mock_template_content["claimtask_work"]
+
+            prompt = prompter.generate_prompt(sample_task_id, "claimtask_working", revision_feedback=feedback)
+
+            assert feedback in prompt
+            assert "No feedback provided" not in prompt
+
+    def test_generate_prompt_for_planning_working_loads_claimtask_context(self, prompter, sample_task_id, isolated_epic_settings, mock_template_content):
+        """Test planning_working state loads verified claimtask artifact."""
+        # Create mock archived claimtask artifact
+        task_dir = isolated_epic_settings.workspace_dir / sample_task_id
+        archive_dir = task_dir / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        claimtask_content = "# Verified Claim Task\nTask requirements verified."
+        claimtask_archive = archive_dir / "01-claimtask.md"
+        claimtask_archive.write_text(claimtask_content)
+
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = mock_template_content["planning_work"]
+
+            prompt = prompter.generate_prompt(sample_task_id, "planning_working")
+
+            assert "Verified Claim Task" in prompt
+            assert "Task requirements verified" in prompt
+
+    def test_generate_prompt_for_coding_working_loads_planning_context(self, prompter, sample_task_id, isolated_epic_settings, mock_template_content):
+        """Test coding_working state loads verified planning artifact."""
+        # Create mock archived planning artifact
+        task_dir = isolated_epic_settings.workspace_dir / sample_task_id
+        archive_dir = task_dir / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        planning_content = "# Verified Planning\nDetailed implementation plan."
+        planning_archive = archive_dir / "02-planning.md"
+        planning_archive.write_text(planning_content)
+
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = mock_template_content["coding_work"]
+
+            prompt = prompter.generate_prompt(sample_task_id, "coding_working")
+
+            assert "Verified Planning" in prompt
+            assert "Detailed implementation plan" in prompt
+
+    def test_generate_prompt_for_testing_working_loads_coding_context(self, prompter, sample_task_id, isolated_epic_settings, mock_template_content):
+        """Test testing_working state loads verified coding artifact."""
+        # Create mock archived coding artifact
+        task_dir = isolated_epic_settings.workspace_dir / sample_task_id
+        archive_dir = task_dir / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        coding_content = "# Verified Coding\nImplementation complete."
+        coding_archive = archive_dir / "03-coding.md"
+        coding_archive.write_text(coding_content)
+
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = mock_template_content["testing_work"]
+
+            prompt = prompter.generate_prompt(sample_task_id, "testing_working")
+
+            assert "Verified Coding" in prompt
+            assert "Implementation complete" in prompt
+
+    def test_generate_prompt_for_finalize_working_loads_testing_context(self, prompter, sample_task_id, isolated_epic_settings, mock_template_content):
+        """Test finalize_working state loads verified testing artifact."""
+        # Create mock archived testing artifact
+        task_dir = isolated_epic_settings.workspace_dir / sample_task_id
+        archive_dir = task_dir / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        testing_content = "# Verified Testing\nAll tests passing."
+        testing_archive = archive_dir / "04-testing.md"
+        testing_archive.write_text(testing_content)
+
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = mock_template_content["finalize_work"]
+
+            prompt = prompter.generate_prompt(sample_task_id, "finalize_working")
+
+            assert "Verified Testing" in prompt
+            assert "All tests passing" in prompt
+
+    def test_generate_prompt_for_aireview_state(self, prompter, sample_task_id, isolated_epic_settings, mock_template_content):
+        """Test prompt generation for AI review states."""
+        # Create artifact content
+        artifact_content = "# Test Artifact\nContent to review."
+        artifact_manager = prompter.artifact_manager
+        artifact_manager.create_task_structure(sample_task_id)
+        artifact_manager.write_artifact(sample_task_id, artifact_content)
+
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = mock_template_content["claimtask_ai_review"]
+
+            prompt = prompter.generate_prompt(sample_task_id, "claimtask_aireview")
+
+            mock_load.assert_called_once_with("prompts", "claimtask_ai_review")
+            assert artifact_content in prompt
+
+    def test_generate_prompt_for_devreview_state_returns_human_message(self, prompter, sample_task_id, isolated_epic_settings):
+        """Test devreview state returns human-facing message."""
+        prompt = prompter.generate_prompt(sample_task_id, "claimtask_devreview")
+
+        assert "ready for your review" in prompt
+        assert "scratchpad.md" in prompt
+
+    def test_generate_prompt_for_verified_state_returns_no_action_message(self, prompter, sample_task_id):
+        """Test verified state returns no action required message."""
+        prompt = prompter.generate_prompt(sample_task_id, "claimtask_verified")
+
+        assert "No further AI action is required" in prompt
+        assert "claimtask_verified" in prompt
+
+    def test_generate_prompt_raises_error_for_invalid_state_format(self, prompter, sample_task_id):
+        """Test ValueError is raised for invalid state format."""
+        with pytest.raises(ValueError, match="Invalid machine state format"):
+            prompter.generate_prompt(sample_task_id, "invalidstateformat")
+
+    def test_load_template_selects_provider_specific_template(self, prompter, isolated_epic_settings):
+        """Test _load_template correctly selects provider-specific templates."""
+        # Mock config to return specific task source
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            mock_config.load_config.return_value.get_task_source.return_value = TaskSource.ATLASSIAN
+
+            # Mock file system for phase-first structure
+            atlassian_template_content = "# Atlassian-specific claimtask template"
+            template_path = prompter.template_dir / "prompts" / "claimtask" / "atlassian_work.md"
+
+            with patch.object(Path, "exists") as mock_exists, patch.object(Path, "read_text") as mock_read:
+                # Only atlassian claimtask template exists
+                mock_exists.side_effect = lambda: str(template_path).endswith("prompts/claimtask/atlassian_work.md")
+                mock_read.return_value = atlassian_template_content
+
+                result = prompter._load_template("prompts", "claimtask_work")
+
+                assert result == atlassian_template_content
+
+    def test_load_template_falls_back_to_shared_template(self, prompter, isolated_epic_settings):
+        """Test _load_template falls back to shared template when provider-specific not found."""
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            mock_config.load_config.return_value.get_task_source.return_value = TaskSource.LOCAL
+
+            shared_template_content = "# Shared template"
+
+            with patch.object(Path, "exists") as mock_exists, patch.object(Path, "read_text") as mock_read:
+                # Provider template doesn't exist, shared does
+                def exists_side_effect():
+                    return False  # First call (provider template)
+
+                mock_exists.side_effect = [False, True]  # Provider false, shared true
+                mock_read.return_value = shared_template_content
+
+                result = prompter._load_template("prompts", "test_template")
+
+                assert result == shared_template_content
+
+    def test_load_template_falls_back_to_generic_template(self, prompter, isolated_epic_settings):
+        """Test _load_template falls back to generic template when others not found."""
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            mock_config.load_config.return_value.get_task_source.return_value = TaskSource.LINEAR
+
+            generic_template_content = "# Generic template"
+
+            with patch.object(Path, "exists") as mock_exists, patch.object(Path, "read_text") as mock_read:
+                # Only generic template exists (provider false, shared false, generic true)
+                mock_exists.side_effect = [False, False, True]
+                mock_read.return_value = generic_template_content
+
+                result = prompter._load_template("prompts", "test_template")
+
+                assert result == generic_template_content
+
+    def test_load_template_generates_dynamic_template_for_work_phases(self, prompter, isolated_epic_settings):
+        """Test _load_template generates dynamic template for _work phases when none found."""
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            mock_config.load_config.return_value.get_task_source.return_value = TaskSource.LOCAL
+
+            with patch.object(Path, "exists", return_value=False):
+                result = prompter._load_template("prompts", "custom_work")
+
+                assert "Role: AI Assistant" in result
+                assert "custom phase" in result
+                assert "submit_for_review" in result
+
+    def test_load_template_generates_dynamic_template_for_ai_review_phases(self, prompter, isolated_epic_settings):
+        """Test _load_template generates dynamic template for _ai_review phases when none found."""
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            mock_config.load_config.return_value.get_task_source.return_value = TaskSource.LOCAL
+
+            with patch.object(Path, "exists", return_value=False):
+                result = prompter._load_template("prompts", "custom_ai_review")
+
+                assert "Role: QA Reviewer" in result
+                assert "custom phase" in result
+                assert "approve_or_request_changes" in result
+
+    def test_load_template_raises_error_when_no_template_found(self, prompter, isolated_epic_settings):
+        """Test _load_template raises FileNotFoundError when no template found."""
+        with patch("epic_task_manager.execution.prompter.config_manager") as mock_config:
+            mock_config.load_config.return_value.get_task_source.return_value = TaskSource.LOCAL
+
+            with patch.object(Path, "exists", return_value=False):
+                with pytest.raises(FileNotFoundError, match="Template not found: unknown_template"):
+                    prompter._load_template("prompts", "unknown_template")
+
+    def test_safe_format_template_preserves_unknown_placeholders(self, prompter):
+        """Test _safe_format_template only replaces known placeholders."""
+        template = "Task: {task_id}, Unknown: {unknown_placeholder}, Status: {status}"
+        context = {"task_id": "TEST-123", "status": "working"}
+
+        result = prompter._safe_format_template(template, context)
+
+        assert "Task: TEST-123" in result
+        assert "Status: working" in result
+        assert "{unknown_placeholder}" in result  # Should remain unchanged
+
+    def test_safe_format_template_handles_empty_context(self, prompter):
+        """Test _safe_format_template handles empty context gracefully."""
+        template = "Task: {task_id}, Phase: {phase}"
+        context = {}
+
+        result = prompter._safe_format_template(template, context)
+
+        # All placeholders should remain unchanged
+        assert result == template
+
+    @pytest.mark.parametrize(
+        "state,expected_phase,expected_substate",
+        [
+            ("claimtask_working", "claimtask", "working"),
+            ("planning_aireview", "planning", "aireview"),
+            ("coding_devreview", "coding", "devreview"),
+            ("testing_verified", "testing", "verified"),
+            ("finalize_working", "finalize", "working"),
+        ],
+        ids=["claimtask_working", "planning_aireview", "coding_devreview", "testing_verified", "finalize_working"],
+    )
+    def test_state_parsing_extracts_correct_phase_and_substate(self, prompter, sample_task_id, mock_template_content, state, expected_phase, expected_substate):
+        """Test that state parsing correctly extracts phase and substate."""
+        if expected_substate == "working":
+            template_name = f"{expected_phase}_work"
+            with patch.object(prompter, "_load_template") as mock_load:
+                mock_load.return_value = mock_template_content.get(template_name, "Mock template")
+
+                prompter.generate_prompt(sample_task_id, state)
+
+                mock_load.assert_called_once_with("prompts", template_name)
+
+    def test_missing_archived_artifact_shows_error_message(self, prompter, sample_task_id, mock_template_content):
+        """Test that missing archived artifacts show error message in context."""
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = mock_template_content["planning_work"]
+
+            prompt = prompter.generate_prompt(sample_task_id, "planning_working")
+
+            assert "Error: Could not find verified claim_task artifact" in prompt
+
+    def test_artifact_manager_integration(self, prompter, sample_task_id, isolated_epic_settings):
+        """Test that Prompter correctly integrates with ArtifactManager."""
+        # Create artifact content
+        artifact_content = "# Integration Test\nTesting artifact manager integration."
+
+        # Use prompter's artifact manager
+        prompter.artifact_manager.create_task_structure(sample_task_id)
+        prompter.artifact_manager.write_artifact(sample_task_id, artifact_content)
+
+        # Test AI review prompt generation
+        with patch.object(prompter, "_load_template") as mock_load:
+            mock_load.return_value = "Review: {artifact_content}"
+
+            prompt = prompter.generate_prompt(sample_task_id, "claimtask_aireview")
+
+            assert artifact_content in prompt
