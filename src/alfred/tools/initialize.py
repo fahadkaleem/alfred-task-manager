@@ -11,18 +11,19 @@ from src.alfred.models.alfred_config import AlfredConfig, ProviderConfig, TaskPr
 from src.alfred.models.schemas import ToolResponse
 
 
-def initialize_project(provider: str | None = None) -> ToolResponse:
+def initialize_project(provider: str | None = None, test_dir: Path | None = None) -> ToolResponse:
     """
     Initializes the project workspace by creating the .alfred directory with
     provider-specific configuration.
     
     Args:
         provider: Provider choice ('jira', 'linear', or 'local'). If None, returns available choices.
+        test_dir: Optional test directory for testing purposes. If provided, will use this instead of settings.alfred_dir.
         
     Returns:
         ToolResponse: Standardized response object.
     """
-    alfred_dir = settings.alfred_dir
+    alfred_dir = test_dir if test_dir is not None else settings.alfred_dir
     
     # Check if already initialized
     if alfred_dir.exists() and (alfred_dir / "workflow.yml").exists():
@@ -43,11 +44,16 @@ def initialize_project(provider: str | None = None) -> ToolResponse:
         alfred_dir.mkdir(parents=True, exist_ok=True)
 
         # Copy default workflow file
-        shutil.copyfile(settings.packaged_workflow_file, settings.workflow_file)
+        workflow_file = alfred_dir / settings.workflow_filename
+        shutil.copyfile(settings.packaged_workflow_file, workflow_file)
 
         # Copy default persona and template directories
         shutil.copytree(settings.packaged_personas_dir, alfred_dir / "personas")
         shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates")
+        
+        # Create workspace directory
+        workspace_dir = alfred_dir / "workspace"
+        workspace_dir.mkdir(exist_ok=True)
 
         # Create configuration with selected provider
         config_manager = ConfigManager(alfred_dir)

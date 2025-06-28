@@ -10,12 +10,16 @@ from src.alfred.config.settings import settings
 from src.alfred.lib.transaction_logger import transaction_logger
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
-from src.alfred.tools.progress_tools import mark_step_complete as mark_step_complete_impl
-from src.alfred.tools.review_tools import approve_and_advance_stage as approve_and_advance_stage_impl
-from src.alfred.tools.review_tools import approve_and_handoff as approve_and_handoff_impl
-from src.alfred.tools.review_tools import provide_review as provide_review_impl
-from src.alfred.tools.task_tools import begin_task as begin_task_impl
-from src.alfred.tools.task_tools import submit_work as submit_work_impl
+from src.alfred.tools.plan_task import plan_task_impl
+# --- COMMENTED OUT LEGACY TOOL IMPORTS ---
+# from src.alfred.tools.progress_tools import mark_step_complete as mark_step_complete_impl
+# from src.alfred.tools.review_tools import approve_and_advance_stage as approve_and_advance_stage_impl
+# from src.alfred.tools.review_tools import approve_and_handoff as approve_and_handoff_impl
+# from src.alfred.tools.task_tools import begin_task as begin_task_impl
+
+# New generic state-advancing tool implementations
+from src.alfred.tools.submit_work import submit_work_impl
+from src.alfred.tools.provide_review import provide_review_impl
 
 app = FastMCP(settings.server_name)
 
@@ -49,8 +53,99 @@ async def initialize_project(provider: str | None = None) -> ToolResponse:
 
 
 @app.tool()
-async def begin_task(task_id: str) -> ToolResponse:
+async def plan_task(task_id: str) -> ToolResponse:
     """
+    Initiates the detailed technical planning for a specific task.
+
+    This is the primary tool for transforming a high-level task or user story
+    into a concrete, machine-executable 'Execution Plan' composed of SLOTs.
+    A SLOT (Spec, Location, Operation, Taskflow) is an atomic unit of work.
+
+    This tool manages a multi-step, interactive planning process:
+    1. **Contextualize**: Deep analysis of the task requirements and codebase context
+    2. **Strategize**: High-level technical approach and architecture decisions  
+    3. **Design**: Detailed technical design and component specifications
+    4. **Generate SLOTs**: Break down into atomic, executable work units
+
+    Each step includes AI self-review followed by human approval gates to ensure quality.
+    The final output is a validated execution plan ready for implementation.
+
+    Args:
+        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+
+    Returns:
+        ToolResponse: Contains success/error status and the next prompt to guide planning
+
+    Preconditions:
+        - Task must exist and be in 'new' or 'planning' status
+        - Project must be initialized with Alfred
+
+    Postconditions:
+        - Task status updated to 'planning'
+        - Planning tool instance registered and active
+        - First planning prompt returned for contextualization phase
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id}
+    
+    response = await plan_task_impl(task_id)
+    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    return response
+
+
+@app.tool()
+async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
+    """
+    Submits a structured work artifact for the current step of a workflow tool.
+
+    This is the generic state-advancing tool that handles work submission for any active workflow tool.
+    It automatically determines the correct state transition based on the current state and advances 
+    the tool's state machine accordingly.
+
+    Args:
+        task_id (str): The unique identifier for the task
+        artifact (dict): A dictionary containing the structured work data
+
+    Returns:
+        ToolResponse: Contains success/error status and the next prompt
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id, "artifact": artifact}
+    response = submit_work_impl(task_id, artifact)
+    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    return response
+
+
+@app.tool()
+async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
+    """
+    Provides feedback on a work artifact during a review step.
+
+    This is the generic state-advancing tool that handles review feedback for any active workflow tool.
+    It automatically determines the correct state transition based on the approval status and advances
+    the tool's state machine accordingly.
+
+    Args:
+        task_id (str): The unique identifier for the task
+        is_approved (bool): True to approve, False to request revisions
+        feedback_notes (str): Specific feedback for revision (required if is_approved=False)
+
+    Returns:
+        ToolResponse: Contains success/error status and the next prompt
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id, "is_approved": is_approved, "feedback_notes": feedback_notes}
+    response = provide_review_impl(task_id, is_approved, feedback_notes)
+    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    return response
+
+
+# --- LEGACY TOOLS COMMENTED OUT ---
+
+"""
+@app.tool()
+async def begin_task(task_id: str) -> ToolResponse:
+    '''
     Begins or resumes a task in the Alfred workflow, activating the correct persona based on the task's current state.
 
     - **Primary Function**: This is the main entry point for starting or continuing work on a specific task.
@@ -67,7 +162,7 @@ async def begin_task(task_id: str) -> ToolResponse:
 
     ## Parameters
     - **task_id** `[string]` (required): The unique identifier for the task (e.g., "PROJ-123").
-    """
+    '''
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
     response = begin_task_impl(task_id)
@@ -75,61 +170,11 @@ async def begin_task(task_id: str) -> ToolResponse:
     return response
 
 
-@app.tool()
-async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
-    """
-    Submits a structured work artifact for the current step of a persona's workflow.
-
-    - **Primary Function**: Takes a structured dictionary of work, validates it, saves it as the official artifact for the current step, and advances the internal state.
-    - **Key Features**:
-      - Validates the submitted `artifact` against the Pydantic model defined in the active persona's configuration.
-      - Persists the work by appending a rendered version to the task's `scratchpad.md`.
-      - Triggers the `submit` transition in the persona's state machine, moving it from a `_working` state to a `_aireview` state.
-    - **Use this tool when**: The server's `next_prompt` has instructed you to perform a task and submit the result.
-    - **CRITICAL GUARDRAILS**:
-      - The `artifact` dictionary MUST have the exact keys and data types specified in the prompt's `<required_artifact_structure>` block.
-      - This tool must only be called from a `_working` state. Calling it from a review state will fail.
-
-    ## Parameters
-    - **task_id** `[string]` (required): The task identifier.
-    - **artifact** `[dict]` (required): A dictionary containing the structured work data. The required fields are defined by the active persona and will be specified in the prompt.
-    """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "artifact": artifact}
-    response = submit_work_impl(task_id, artifact)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
-    return response
-
-
-@app.tool()
-async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
-    """
-    Provides feedback on a work artifact during a review step, either approving it or requesting revisions.
-
-    - **Primary Function**: This tool drives the internal review cycle of a persona (`aireview` -> `devreview`).
-    - **Key Features**:
-      - `is_approved=True`: Triggers an `ai_approve` transition, moving the task to the next review step (typically `devreview`).
-      - `is_approved=False`: Triggers a `request_revision` transition, moving the task back to the `_working` state for corrections.
-    - **Use this tool when**: The server's `next_prompt` has instructed you to review an artifact and provide feedback (e.g., from an `_aireview` state).
-    - **CRITICAL GUARDRAILS**:
-      - **NEVER** call this tool with `is_approved=True` if you have not thoroughly validated the artifact against the criteria in the prompt.
-      - You **MUST** provide clear, actionable `feedback_notes` when `is_approved` is `false`.
-
-    ## Parameters
-    - **task_id** `[string]` (required): The task identifier.
-    - **is_approved** `[boolean]` (required): `true` to approve, `false` to request revisions.
-    - **feedback_notes** `[string]` (optional, but required if `is_approved=false`): Specific feedback for revision.
-    """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "is_approved": is_approved, "feedback_notes": feedback_notes}
-    response = provide_review_impl(task_id, is_approved, feedback_notes)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
-    return response
 
 
 @app.tool()
 async def approve_and_handoff(task_id: str) -> ToolResponse:
-    """
+    '''
     Gives final approval for a persona's entire workflow and hands the task off to the next persona in the sequence.
 
     - **Primary Function**: This is the "human approval" gate for an entire persona's completed work. It archives the current persona's work and activates the next persona.
@@ -143,7 +188,7 @@ async def approve_and_handoff(task_id: str) -> ToolResponse:
 
     ## Parameters
     - **task_id** `[string]` (required): The task identifier.
-    """
+    '''
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
     response = approve_and_handoff_impl(task_id)
@@ -153,7 +198,7 @@ async def approve_and_handoff(task_id: str) -> ToolResponse:
 
 @app.tool()
 async def approve_and_advance_stage(task_id: str) -> ToolResponse:
-    """
+    '''
     Gives human approval to an internal stage and advances to the next stage *within the same persona*.
 
     - **Primary Function**: This is the "human approval" gate for multi-stage personas like Planning. It triggers the `human_approve` transition.
@@ -167,7 +212,7 @@ async def approve_and_advance_stage(task_id: str) -> ToolResponse:
 
     ## Parameters
     - **task_id** `[string]` (required): The task identifier.
-    """
+    '''
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
     response = approve_and_advance_stage_impl(task_id)
@@ -177,7 +222,7 @@ async def approve_and_advance_stage(task_id: str) -> ToolResponse:
 
 @app.tool()
 async def mark_step_complete(task_id: str, step_id: str) -> ToolResponse:
-    """
+    '''
     Marks a single execution step as complete during a multi-step ("stepwise") persona workflow, like coding.
 
     - **Primary Function**: Acts as a checkpoint. Persists the completion of one atomic step and provides the prompt for the very next step.
@@ -187,12 +232,13 @@ async def mark_step_complete(task_id: str, step_id: str) -> ToolResponse:
     ## Parameters
     - **task_id** `[string]` (required): The task identifier.
     - **step_id** `[string]` (required): The unique ID of the step that has just been completed. The ID will be in the prompt.
-    """
+    '''
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id, "step_id": step_id}
     response = mark_step_complete_impl(task_id, step_id)
     transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
     return response
+"""
 
 
 if __name__ == "__main__":
