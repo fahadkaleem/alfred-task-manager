@@ -1,100 +1,72 @@
-"""
-Generic state-advancing tool for providing review feedback.
-"""
-
-from src.alfred.models.schemas import ToolResponse
+# src/alfred/tools/provide_review.py
+import json
+from src.alfred.models.schemas import ToolResponse, Task, TaskStatus
 from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.lib.task_utils import load_task, update_task_status
+from src.alfred.core.prompter import prompter
+from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
     """
-    Generic implementation for providing review feedback.
-    
-    This function:
-    1. Looks up the active tool for the given task_id
-    2. Determines the correct SM trigger based on approval status
-    3. Calls the trigger on the active tool's machine
-    4. Checks if the new state is terminal (VERIFIED)
-    5. If terminal, performs tool completion logic
-    6. If not terminal, generates and returns the prompt for the new state
+    Processes review feedback, advancing the active tool's State Machine.
+    Handles both mid-workflow reviews and final tool completion.
     """
-    # Look up the active tool for this task
-    active_tool = orchestrator.active_tools.get(task_id)
-    if not active_tool:
-        error_msg = f"No active tool found for task {task_id}. Use plan_task or begin_task first."
-        logger.error(error_msg)
-        return ToolResponse(status="error", message=error_msg)
+    if task_id not in orchestrator.active_tools:
+        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
+
+    active_tool = orchestrator.active_tools[task_id]
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    # Determine the trigger and advance the state machine
+    trigger = "ai_approve" if is_approved else "request_revision"
+    if not hasattr(active_tool, trigger):
+        return ToolResponse(status="error", message=f"Invalid action: cannot trigger '{trigger}' from state '{active_tool.state}'.")
     
-    # Get current state
-    current_state = active_tool.state
-    if not current_state:
-        error_msg = f"Active tool for task {task_id} has no current state."
-        logger.error(error_msg)
-        return ToolResponse(status="error", message=error_msg)
-    
-    # Determine the trigger based on approval status
-    if is_approved:
-        trigger_name = "ai_approve"
+    getattr(active_tool, trigger)()
+    logger.info(f"Task {task_id}: State transitioned via trigger '{trigger}' to '{active_tool.state}'.")
+
+    # Check if the new state is the tool's terminal state
+    if active_tool.is_terminal:
+        # --- TOOL COMPLETION LOGIC ---
+        # This logic must be extensible for different tools in the future.
+        # For now, we hardcode the outcome for plan_task.
+        final_task_status = TaskStatus.READY_FOR_DEVELOPMENT
+        handoff_message = (
+            f"Planning for task {task_id} is complete and verified. "
+            f"The task is now '{final_task_status.value}'.\n\n"
+            f"To begin implementation, run `alfred.implement_task(task_id='{task_id}')`."
+        )
+        
+        update_task_status(task_id, final_task_status)
+        del orchestrator.active_tools[task_id]
+        logger.info(f"Tool '{active_tool.tool_name}' for task {task_id} completed. Task status updated to '{final_task_status.value}'.")
+
+        return ToolResponse(
+            status="success",
+            message=f"Tool '{active_tool.tool_name}' completed successfully.",
+            next_prompt=handoff_message
+        )
     else:
-        trigger_name = "request_revision"
-    
-    try:
-        # Check if the trigger exists on the machine and call it
-        if not hasattr(active_tool.machine, trigger_name):
-            error_msg = f"Invalid state transition. No trigger '{trigger_name}' available from state '{current_state}'."
-            logger.error(error_msg)
-            return ToolResponse(status="error", message=error_msg)
+        # --- MID-WORKFLOW REVIEW LOGIC ---
+        try:
+            persona_config = load_persona(active_tool.persona_name)
+        except FileNotFoundError as e:
+            return ToolResponse(status="error", message=str(e))
         
-        # Call the trigger to advance the state machine
-        trigger_method = getattr(active_tool.machine, trigger_name)
-        trigger_method()
+        additional_context = {"feedback_notes": feedback_notes} if not is_approved and feedback_notes else None
         
-        new_state = active_tool.state
+        next_prompt = prompter.generate_prompt(
+            task=task,
+            tool_name=active_tool.tool_name,
+            state=active_tool.state,
+            persona_config=persona_config,
+            additional_context=additional_context
+        )
         
-        # Check if the new state is a terminal state
-        if active_tool.is_terminal:
-            # Tool completion logic
-            message = f"Tool completed successfully. Final state: '{new_state}'"
-            
-            # Remove the tool from active tools
-            del orchestrator.active_tools[task_id]
-            
-            # TODO: Update master task status and return handoff prompt
-            # For now, return a completion message
-            next_prompt = "Task planning phase completed. Ready for next phase."
-            
-            logger.info(f"Tool completed for task {task_id}. Removed from active tools.")
-            
-            return ToolResponse(
-                status="success",
-                message=message,
-                next_prompt=next_prompt
-            )
-        else:
-            # Not a terminal state, generate prompt for new state
-            if is_approved:
-                message = f"Review approved. Advanced from '{current_state}' to '{new_state}'."
-            else:
-                message = f"Review requested revisions. Returned from '{current_state}' to '{new_state}'."
-                message += f" Feedback: {feedback_notes}" if feedback_notes else ""
-            
-            # TODO: Integrate with proper prompter once available
-            next_prompt = f"You are now in state '{new_state}'. Please continue with the required work."
-            if not is_approved and feedback_notes:
-                next_prompt += f" Address the following feedback: {feedback_notes}"
-            
-            logger.info(f"Review processed for task {task_id}. State: {current_state} -> {new_state}")
-            
-            return ToolResponse(
-                status="success",
-                message=message,
-                next_prompt=next_prompt
-            )
-            
-    except Exception as e:
-        error_msg = f"Failed to process review for task {task_id}: {str(e)}"
-        logger.error(error_msg)
-        return ToolResponse(status="error", message=error_msg)
+        message = "Review approved. Proceeding to next step." if is_approved else "Revision requested."
+        return ToolResponse(status="success", message=message, next_prompt=next_prompt)

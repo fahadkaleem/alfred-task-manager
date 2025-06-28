@@ -1,76 +1,58 @@
-"""
-Generic state-advancing tool for submitting work artifacts.
-"""
+# src/alfred/tools/submit_work.py
+import json
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.core.prompter import prompter
 from src.alfred.lib.artifact_manager import artifact_manager
 from src.alfred.lib.logger import get_logger
+from src.alfred.lib.task_utils import load_task
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.orchestration.persona_loader import load_persona
 
 logger = get_logger(__name__)
 
-
 def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     """
-    Generic implementation for submitting work artifacts.
-    
-    This function:
-    1. Looks up the active tool for the given task_id
-    2. Determines the correct SM trigger based on current state
-    3. Calls the trigger on the active tool's machine
-    4. Persists the artifact to the scratchpad
-    5. Generates and returns the prompt for the new state
+    Implements the logic for submitting a work artifact to the active tool.
     """
-    # Look up the active tool for this task
-    active_tool = orchestrator.active_tools.get(task_id)
-    if not active_tool:
-        error_msg = f"No active tool found for task {task_id}. Use plan_task or begin_task first."
-        logger.error(error_msg)
-        return ToolResponse(status="error", message=error_msg)
+    if task_id not in orchestrator.active_tools:
+        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'. Cannot submit work.")
     
-    # Get current state and determine the submit trigger
-    current_state = active_tool.state
-    if not current_state:
-        error_msg = f"Active tool for task {task_id} has no current state."
-        logger.error(error_msg)
-        return ToolResponse(status="error", message=error_msg)
+    active_tool = orchestrator.active_tools[task_id]
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    # --- Artifact Persistence ---
+    # Reuse the existing ArtifactManager to append to the human-readable scratchpad.
+    # We create a simple, clean representation of the submitted artifact.
+    rendered_artifact = f"### Submission for State: `{active_tool.state}`\n\n```json\n{json.dumps(artifact, indent=2)}\n```"
+    artifact_manager.append_to_scratchpad(task_id, rendered_artifact)
     
-    # By convention, the trigger is "submit_{current_state}"
-    submit_trigger = f"submit_{current_state}"
+    # --- State Transition ---
+    current_state_val = active_tool.state.value if hasattr(active_tool.state, 'value') else active_tool.state
+    trigger = f"submit_{current_state_val}"
     
+    if not hasattr(active_tool, trigger):
+        return ToolResponse(status="error", message=f"Invalid action: cannot submit from state '{current_state_val}'. No trigger '{trigger}' exists.")
+    
+    # Trigger the state transition (e.g., tool.submit_contextualize())
+    getattr(active_tool, trigger)()
+    logger.info(f"Task {task_id}: State transitioned via trigger '{trigger}' to '{active_tool.state}'.")
+    
+    # --- Generate Next Prompt for the new review state ---
     try:
-        # Check if the trigger exists on the machine and call it
-        if not hasattr(active_tool.machine, submit_trigger):
-            error_msg = f"Invalid state transition. No trigger '{submit_trigger}' available from state '{current_state}'."
-            logger.error(error_msg)
-            return ToolResponse(status="error", message=error_msg)
+        persona_config = load_persona(active_tool.persona_name)
+    except FileNotFoundError as e:
+        return ToolResponse(status="error", message=str(e))
         
-        # Call the trigger to advance the state machine
-        trigger_method = getattr(active_tool.machine, submit_trigger)
-        trigger_method()
-        
-        # Persist the artifact to the scratchpad
-        # Note: Using a generic artifact type based on current state
-        artifact_type = current_state
-        artifact_manager.append_to_scratchpad(task_id, artifact_type, artifact, None)
-        
-        # Generate the prompt for the new state using the orchestrator's prompter
-        # For now, using a simple success message and next state
-        new_state = active_tool.state
-        message = f"Work submitted successfully. Transitioned from '{current_state}' to '{new_state}'."
-        
-        # TODO: Integrate with proper prompter once available
-        next_prompt = f"You are now in state '{new_state}'. Please review the submitted work and provide feedback."
-        
-        logger.info(f"Successfully submitted work for task {task_id}. State: {current_state} -> {new_state}")
-        
-        return ToolResponse(
-            status="success",
-            message=message,
-            next_prompt=next_prompt
-        )
-        
-    except Exception as e:
-        error_msg = f"Failed to submit work for task {task_id}: {str(e)}"
-        logger.error(error_msg)
-        return ToolResponse(status="error", message=error_msg)
+    next_prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=active_tool.tool_name,
+        state=active_tool.state,
+        persona_config=persona_config,
+        # Pass the submitted artifact into the context for the AI review prompt
+        additional_context={"artifact_content": json.dumps(artifact, indent=2)}
+    )
+
+    return ToolResponse(status="success", message="Work submitted. Awaiting review.", next_prompt=next_prompt)

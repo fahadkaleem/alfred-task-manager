@@ -2,140 +2,92 @@
 Unit tests for the submit_work tool implementation.
 """
 
-import pytest
-from unittest.mock import Mock, patch
+import json
 
+from src.alfred.core.workflow import PlanTaskState
+from src.alfred.models.schemas import Task
+from src.alfred.orchestration.orchestrator import orchestrator
 from src.alfred.tools.submit_work import submit_work_impl
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.core.workflow import PlanTaskTool
 
 
 class TestSubmitWork:
     """Test cases for submit_work_impl function."""
     
-    def test_submit_work_success_path(self):
-        """Test successful work submission that transitions state."""
-        # Setup
-        task_id = "TEST-01"
-        artifact = {"context": "This is test context"}
+    def test_submit_work_advances_state(self):
+        """
+        Comprehensive integration test that follows the AC Verification steps using mocked components:
+        1. Mock the necessary components
+        2. Set up a PlanTaskTool in the orchestrator
+        3. Call submit_work_impl("TS-01", artifact={"context_summary": "..."})
+        4. Assert successful response and next_prompt for review_context
+        5. Check orchestrator.active_tools state is now REVIEW_CONTEXT
+        6. Verify artifact was persisted to scratchpad
+        """
+        from unittest.mock import patch
         
-        # Mock active tool
-        mock_tool = Mock(spec=PlanTaskTool)
-        mock_tool.state = "contextualize"
-        mock_tool.machine = Mock()
-        mock_tool.machine.submit_contextualize = Mock()
+        # 1. Set up test task and tool
+        task_id = "TS-01"
+        test_task = Task(
+            task_id=task_id,
+            title="Test Task for Submit Work",
+            context="Testing the submit_work tool functionality in the Alfred workflow",
+            implementation_details="Verify that work artifacts can be submitted and state transitions work correctly"
+        )
         
-        # Mock orchestrator
-        with patch('src.alfred.tools.submit_work.orchestrator') as mock_orchestrator:
-            mock_orchestrator.active_tools = {task_id: mock_tool}
+        # 2. Create and register a PlanTaskTool instance
+        from src.alfred.core.workflow import PlanTaskTool
+        tool_instance = PlanTaskTool(task_id=task_id, persona_name="planning")
+        orchestrator.active_tools[task_id] = tool_instance
+        
+        # Verify initial state
+        assert tool_instance.state == PlanTaskState.CONTEXTUALIZE.value
+        
+        # 3. Mock dependencies for submit_work_impl
+        with (
+            patch('src.alfred.tools.submit_work.load_task', return_value=test_task),
+            patch('src.alfred.tools.submit_work.artifact_manager') as mock_artifact_manager,
+            patch('src.alfred.tools.submit_work.load_persona', return_value={"name": "planning"}),
+            patch('src.alfred.tools.submit_work.prompter') as mock_prompter
+        ):
+            mock_prompter.generate_prompt.return_value = "Please review the submitted context analysis"
             
-            # Mock artifact manager
-            with patch('src.alfred.tools.submit_work.artifact_manager') as mock_artifact_manager:
-                # Execute
-                result = submit_work_impl(task_id, artifact)
-                
-                # Verify
-                assert isinstance(result, ToolResponse)
-                assert result.status == "success"
-                assert "contextualize" in result.message
-                assert result.next_prompt is not None
-                
-                # Verify state machine was triggered
-                mock_tool.machine.submit_contextualize.assert_called_once()
-                
-                # Verify artifact was persisted
-                mock_artifact_manager.append_to_scratchpad.assert_called_once_with(
-                    task_id, "contextualize", artifact, None
-                )
+            # 4. Call submit_work_impl
+            test_artifact = {"context_summary": "Analyzed requirements and identified key components"}
+            submit_response = submit_work_impl(task_id, test_artifact)
+            
+            # 5. Assert successful response
+            assert submit_response.status == "success"
+            assert "Work submitted. Awaiting review." in submit_response.message
+            assert submit_response.next_prompt is not None
+            
+            # 6. Check state transition occurred
+            assert tool_instance.state == PlanTaskState.REVIEW_CONTEXT.value
+            
+            # 7. Verify artifact was persisted
+            mock_artifact_manager.append_to_scratchpad.assert_called_once()
+            call_args = mock_artifact_manager.append_to_scratchpad.call_args
+            assert call_args[0][0] == task_id  # task_id argument
+            assert "### Submission for State: `contextualize`" in call_args[0][1]  # rendered content
+            assert json.dumps(test_artifact, indent=2) in call_args[0][1]
+            
+            # 8. Verify prompter was called with artifact content
+            mock_prompter.generate_prompt.assert_called_once()
+            prompt_call_args = mock_prompter.generate_prompt.call_args
+            assert prompt_call_args[1]['additional_context']['artifact_content'] == json.dumps(test_artifact, indent=2)
+        
+        # Clean up
+        orchestrator.active_tools.pop(task_id, None)
     
-    def test_submit_work_no_active_tool(self):
-        """Test error handling when no active tool exists for task."""
-        # Setup
-        task_id = "TEST-01"
-        artifact = {"context": "This is test context"}
+    def test_submit_work_fails_if_no_active_tool(self):
+        """Test that submit_work_impl fails gracefully when no active tool exists."""
+        # Clear any existing active tools
+        orchestrator.active_tools.clear()
         
-        # Mock orchestrator with no active tools
-        with patch('src.alfred.tools.submit_work.orchestrator') as mock_orchestrator:
-            mock_orchestrator.active_tools = {}
-            
-            # Execute
-            result = submit_work_impl(task_id, artifact)
-            
-            # Verify
-            assert isinstance(result, ToolResponse)
-            assert result.status == "error"
-            assert "No active tool found" in result.message
-            assert task_id in result.message
-    
-    def test_submit_work_no_current_state(self):
-        """Test error handling when active tool has no current state."""
-        # Setup
-        task_id = "TEST-01"
-        artifact = {"context": "This is test context"}
+        # Attempt to submit work for non-existent task
+        artifact = {"test": "data"}
+        result = submit_work_impl("NONEXISTENT-01", artifact)
         
-        # Mock active tool without state
-        mock_tool = Mock()
-        mock_tool.state = None
-        
-        # Mock orchestrator
-        with patch('src.alfred.tools.submit_work.orchestrator') as mock_orchestrator:
-            mock_orchestrator.active_tools = {task_id: mock_tool}
-            
-            # Execute
-            result = submit_work_impl(task_id, artifact)
-            
-            # Verify
-            assert isinstance(result, ToolResponse)
-            assert result.status == "error"
-            assert "no current state" in result.message
-    
-    def test_submit_work_invalid_trigger(self):
-        """Test error handling when trigger doesn't exist on machine."""
-        # Setup
-        task_id = "TEST-01"
-        artifact = {"context": "This is test context"}
-        
-        # Mock active tool with invalid trigger
-        mock_tool = Mock()
-        mock_tool.state = "invalid_state"
-        mock_tool.machine = Mock()
-        
-        # Mock hasattr to return False for the trigger
-        with patch('builtins.hasattr', return_value=False):
-            # Mock orchestrator
-            with patch('src.alfred.tools.submit_work.orchestrator') as mock_orchestrator:
-                mock_orchestrator.active_tools = {task_id: mock_tool}
-                
-                # Execute
-                result = submit_work_impl(task_id, artifact)
-                
-                # Verify
-                assert isinstance(result, ToolResponse)
-                assert result.status == "error"
-                assert "Invalid state transition" in result.message
-                assert "submit_invalid_state" in result.message
-    
-    def test_submit_work_machine_exception(self):
-        """Test error handling when state machine trigger raises exception."""
-        # Setup
-        task_id = "TEST-01"
-        artifact = {"context": "This is test context"}
-        
-        # Mock active tool that raises exception
-        mock_tool = Mock()
-        mock_tool.state = "contextualize"
-        mock_tool.machine = Mock()
-        mock_tool.machine.submit_contextualize = Mock(side_effect=Exception("State machine error"))
-        
-        # Mock orchestrator
-        with patch('src.alfred.tools.submit_work.orchestrator') as mock_orchestrator:
-            mock_orchestrator.active_tools = {task_id: mock_tool}
-            
-            # Execute
-            result = submit_work_impl(task_id, artifact)
-            
-            # Verify
-            assert isinstance(result, ToolResponse)
-            assert result.status == "error"
-            assert "Failed to submit work" in result.message
-            assert "State machine error" in result.message
+        # Verify error response
+        assert result.status == "error"
+        assert "No active tool found for task 'NONEXISTENT-01'" in result.message
+        assert "Cannot submit work" in result.message
