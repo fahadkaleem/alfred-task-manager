@@ -19,10 +19,19 @@ class PersonaRuntime:
     def __init__(self, task_id: str, config: PersonaConfig):
         self.task_id = task_id
         self.config = config
+        
+        # Ensure transitions have source as list
+        transitions = []
+        for t in config.hsm.transitions:
+            transition = t.copy()
+            if isinstance(transition.get("source"), str):
+                transition["source"] = [transition["source"]]
+            transitions.append(transition)
+        
         self.machine = HierarchicalMachine(
             model=self,
             states=config.hsm.states,
-            transitions=config.hsm.transitions,
+            transitions=transitions,
             initial=config.hsm.initial_state,
             auto_transitions=False,
         )
@@ -111,8 +120,23 @@ class PersonaRuntime:
         """
         Processes a review. Returns a signal if a handoff is required.
         """
-        trigger_name = "ai_approve" if is_approved else "request_revision"
-        transition_config = next((t for t in self.config.hsm.transitions if t["trigger"] == trigger_name and self.state in t["source"]), None)
+        # Determine the correct trigger based on state and approval
+        if self.state.endswith("devreview") and is_approved:
+            trigger_name = "human_approve"
+        else:
+            trigger_name = "ai_approve" if is_approved else "request_revision"
+            
+        transition_config = None
+        
+        for t in self.config.hsm.transitions:
+            if t["trigger"] == trigger_name:
+                source = t["source"]
+                if isinstance(source, str) and source == self.state:
+                    transition_config = t
+                    break
+                elif isinstance(source, list) and self.state in source:
+                    transition_config = t
+                    break
 
         if not transition_config:
             return False, f"No valid transition for trigger '{trigger_name}' from state '{self.state}'."

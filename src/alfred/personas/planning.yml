@@ -44,6 +44,7 @@ prompts:
   execution_plan_working: "prompts/planning/execution_plan_work.md"
   execution_plan_aireview: "prompts/planning/execution_plan_ai_review.md"
   execution_plan_devreview: "prompts/planning/execution_plan_dev_review.md"
+  execution_plan_verified: "prompts/verified.md"
 
 artifacts:
   - state: "strategy_working"

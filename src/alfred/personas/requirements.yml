@@ -20,6 +20,7 @@ prompts:
   working_local: "prompts/requirements/local_work.md"
   working_jira: "prompts/requirements/jira_work.md"
   working_linear: "prompts/requirements/linear_work.md"
+  verified: "prompts/verified.md"
 
 artifacts:
   - state: "working"

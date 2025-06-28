@@ -313,11 +313,20 @@ class Orchestrator:
         total_steps = len(steps)
 
         if task_state.current_step >= total_steps:
-            runtime.state = "coding_submission"
-            task_state.persona_state = "coding_submission"
-            self._save_task_state(task_state)
-            message = "All steps complete. Ready for final manifest submission."
-            next_prompt = runtime.get_current_prompt()
+            # Use the state machine to properly transition
+            try:
+                runtime.step_complete()  # This should transition to coding_submission
+                task_state.persona_state = runtime.state
+                self._save_task_state(task_state)
+                message = "All steps complete. Ready for final manifest submission."
+                next_prompt = runtime.get_current_prompt()
+            except Exception as e:
+                # Fallback to direct state assignment if trigger fails
+                runtime.state = f"{runtime.state.split('_')[0]}_submission"
+                task_state.persona_state = runtime.state
+                self._save_task_state(task_state)
+                message = "All steps complete. Ready for final manifest submission."
+                next_prompt = runtime.get_current_prompt()
         else:
             step = steps[task_state.current_step]
             step_context = {

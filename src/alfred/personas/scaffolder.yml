@@ -13,6 +13,7 @@ hsm:
     - "scaffolding_devreview"
     - "scaffolding_verified"
   transitions:
+    - { trigger: "step_complete", source: "scaffolding_working", dest: "scaffolding_submission" }
     - { trigger: "submit_manifest", source: "scaffolding_submission", dest: "scaffolding_aireview" }
     - { trigger: "ai_approve", source: "scaffolding_aireview", dest: "scaffolding_devreview" }
     - { trigger: "human_approve", source: "scaffolding_devreview", dest: "scaffolding_verified" }
@@ -23,6 +24,7 @@ prompts:
   scaffolding_submission: "prompts/scaffolder/submission.md"
   scaffolding_aireview: "prompts/scaffolder/ai_review.md"
   scaffolding_devreview: "prompts/scaffolder/dev_review.md"
+  scaffolding_verified: "prompts/verified.md"
 
 artifacts:
   - state: "scaffolding_submission"

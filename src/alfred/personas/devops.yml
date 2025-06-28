@@ -21,6 +21,7 @@ prompts:
   working: "prompts/devops/work.md"
   aireview: "prompts/devops/ai_review.md"
   devreview: "prompts/devops/dev_review.md"
+  verified: "prompts/verified.md"
 
 artifacts:
   - state: "working"
