@@ -39,6 +39,7 @@ env/
 .coverage
 htmlcov/
 .tox/
+tests/temp_data/
 
 # Project specific
 *.log

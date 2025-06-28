@@ -3,6 +3,7 @@ The central orchestrator for Alfred. Manages tasks and persona runtimes.
 """
 
 import yaml
+from typing import Dict
 
 from src.alfred.config import ConfigManager
 from src.alfred.config.settings import settings
@@ -12,6 +13,7 @@ from src.alfred.models.config import PersonaConfig
 from src.alfred.models.state import StateFile, TaskState
 from src.alfred.orchestration.persona_loader import PersonaLoader
 from src.alfred.orchestration.persona_runtime import PersonaRuntime
+from src.alfred.core.workflow import BaseWorkflowTool
 
 logger = get_logger(__name__)
 
@@ -33,6 +35,7 @@ class Orchestrator:
         self._validate_configuration()
         self.persona_registry = PersonaLoader.load_all()
         self.active_runtimes: dict[str, PersonaRuntime] = {}
+        self.active_tools: Dict[str, BaseWorkflowTool] = {}
         self.config_manager = ConfigManager(settings.alfred_dir)
         self._load_workflow_sequence()
         self._initialized = True
