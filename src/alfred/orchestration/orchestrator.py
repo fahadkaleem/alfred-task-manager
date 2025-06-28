@@ -8,6 +8,7 @@ from src.alfred.config import ConfigManager
 from src.alfred.config.settings import settings
 from src.alfred.lib.artifact_manager import artifact_manager
 from src.alfred.lib.logger import cleanup_task_logging, get_logger, setup_task_logging
+from src.alfred.models.config import PersonaConfig
 from src.alfred.models.state import StateFile, TaskState
 from src.alfred.orchestration.persona_loader import PersonaLoader
 from src.alfred.orchestration.persona_runtime import PersonaRuntime
@@ -29,11 +30,100 @@ class Orchestrator:
     def __init__(self):
         if self._initialized:
             return
+        self._validate_configuration()
         self.persona_registry = PersonaLoader.load_all()
         self.active_runtimes: dict[str, PersonaRuntime] = {}
         self.config_manager = ConfigManager(settings.alfred_dir)
         self._load_workflow_sequence()
         self._initialized = True
+
+    def _validate_configuration(self):
+        """
+        Validates the Alfred configuration during startup.
+        
+        This method:
+        1. Parses workflow.yml to get the persona sequence
+        2. Ensures corresponding persona .yml files exist in the personas/ directory
+        3. Validates that PersonaLoader can parse each required YAML file against PersonaConfig
+        
+        Raises:
+            SystemExit: If any persona is missing or misconfigured
+        """
+        try:
+            # Parse workflow.yml
+            if not settings.packaged_workflow_file.exists():
+                logger.critical(f"workflow.yml not found at: {settings.packaged_workflow_file}")
+                raise SystemExit("CRITICAL ERROR: workflow.yml file is missing. Alfred cannot start.")
+            
+            with settings.packaged_workflow_file.open("r", encoding="utf-8") as f:
+                workflow_data = yaml.safe_load(f)
+            
+            if not workflow_data or "sequence" not in workflow_data:
+                logger.critical("workflow.yml is missing required 'sequence' field")
+                raise SystemExit("CRITICAL ERROR: workflow.yml is malformed - missing 'sequence' field. Alfred cannot start.")
+            
+            sequence = workflow_data["sequence"]
+            if not isinstance(sequence, list) or not sequence:
+                logger.critical("workflow.yml 'sequence' field must be a non-empty list")
+                raise SystemExit("CRITICAL ERROR: workflow.yml 'sequence' field must be a non-empty list. Alfred cannot start.")
+            
+            # Validate personas directory exists
+            if not settings.packaged_personas_dir.exists():
+                logger.critical(f"Personas directory not found at: {settings.packaged_personas_dir}")
+                raise SystemExit(f"CRITICAL ERROR: Personas directory missing at {settings.packaged_personas_dir}. Alfred cannot start.")
+            
+            # Check each persona in the sequence
+            missing_personas = []
+            invalid_personas = []
+            
+            for persona_name in sequence:
+                persona_file = settings.packaged_personas_dir / f"{persona_name}.yml"
+                
+                # Check if persona file exists
+                if not persona_file.exists():
+                    missing_personas.append(persona_name)
+                    continue
+                
+                # Validate persona file can be parsed
+                try:
+                    with persona_file.open("r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f)
+                    
+                    if not data:
+                        invalid_personas.append(f"{persona_name} (empty file)")
+                        continue
+                    
+                    # Validate against PersonaConfig model
+                    PersonaConfig(**data)
+                    logger.debug(f"Successfully validated persona: {persona_name}")
+                    
+                except yaml.YAMLError as e:
+                    invalid_personas.append(f"{persona_name} (YAML parsing error: {e})")
+                except Exception as e:
+                    invalid_personas.append(f"{persona_name} (validation error: {e})")
+            
+            # Report all validation errors
+            if missing_personas or invalid_personas:
+                error_msg = "CRITICAL ERROR: Alfred configuration validation failed:\n"
+                
+                if missing_personas:
+                    error_msg += f"Missing persona files: {', '.join(missing_personas)}\n"
+                    error_msg += f"Expected location: {settings.packaged_personas_dir}/\n"
+                
+                if invalid_personas:
+                    error_msg += f"Invalid persona configurations: {', '.join(invalid_personas)}\n"
+                
+                error_msg += "Alfred cannot start until all personas are properly configured."
+                logger.critical(error_msg)
+                raise SystemExit(error_msg)
+            
+            logger.info(f"Configuration validation successful. Validated {len(sequence)} personas: {', '.join(sequence)}")
+            
+        except SystemExit:
+            raise
+        except Exception as e:
+            logger.critical(f"Unexpected error during configuration validation: {e}")
+            raise SystemExit(f"CRITICAL ERROR: Configuration validation failed with unexpected error: {e}")
 
     def _load_workflow_sequence(self):
         """Loads the persona sequence from workflow.yml and applies configuration."""
@@ -64,7 +154,7 @@ class Orchestrator:
         if task_id in self.active_runtimes:
             return self.active_runtimes[task_id]
 
-        state_file = self._load_state()
+        state_file = self._load_state(task_id)
         task_state = state_file.tasks.get(task_id)
 
         if not task_state:
@@ -89,42 +179,68 @@ class Orchestrator:
         self.active_runtimes[task_id] = runtime
         return runtime
 
-    def _load_state(self) -> StateFile:
-        """Loads the state.json file from the user's project."""
-        if not settings.state_file.exists():
-            return StateFile()
-        return StateFile.model_validate_json(settings.state_file.read_text())
+    def _load_state(self, task_id: str | None = None) -> StateFile:
+        """Loads the state from a per-task state.json file or returns default state."""
+        if task_id:
+            task_state_file = settings.workspace_dir / task_id / "state.json"
+            if task_state_file.exists():
+                try:
+                    task_state = TaskState.model_validate_json(task_state_file.read_text())
+                    return StateFile(tasks={task_id: task_state})
+                except Exception as e:
+                    logger.error(f"Failed to load state for task {task_id}: {e}")
+        
+        # Return empty state file for new tasks or when no task_id provided
+        return StateFile()
 
     def _save_task_state(self, task_state: TaskState):
-        """Saves a single task's state back to the state file."""
-        state_file = self._load_state()
-        state_file.tasks[task_state.task_id] = task_state
-        with settings.state_file.open("w", encoding="utf-8") as f:
-            f.write(state_file.model_dump_json(indent=2))
+        """Saves a single task's state to its dedicated state.json file."""
+        task_dir = settings.workspace_dir / task_state.task_id
+        task_dir.mkdir(parents=True, exist_ok=True)
+        
+        task_state_file = task_dir / "state.json"
+        with task_state_file.open("w", encoding="utf-8") as f:
+            f.write(task_state.model_dump_json(indent=2))
+        
+        logger.debug(f"Saved state for task {task_state.task_id} to {task_state_file}")
 
     def begin_task(self, task_id: str) -> tuple[str, str | None]:
         """Begins or resumes a task, returning an initial prompt."""
         setup_task_logging(task_id)
         logger.info(f"Orchestrator beginning/resuming task {task_id}.")
+        
         runtime = self._get_or_create_runtime(task_id)
         if not runtime:
             logger.error(f"Failed to get or create runtime for task {task_id}.")
             return ("Error: Could not create or find a runtime for this task. Check workflow/persona configuration.", None)
 
+        additional_context = self._build_task_context(runtime, task_id)
+        message = f"Resuming task {task_id} with persona '{runtime.config.name}'. Current state: {runtime.state}"
+        prompt = runtime.get_current_prompt(additional_context=additional_context if additional_context else None)
+        return (message, prompt)
+
+    def _build_task_context(self, runtime, task_id: str) -> dict:
+        """Builds additional context for task execution."""
         additional_context = {}
         
-        # Add provider information for requirements persona
+        self._add_provider_context(runtime, additional_context)
+        self._add_stepwise_context(runtime, task_id, additional_context)
+        
+        return additional_context
+
+    def _add_provider_context(self, runtime, additional_context: dict) -> None:
+        """Adds provider information for requirements persona."""
         if runtime.config.name == "Intake Analyst":
             try:
                 config = self.config_manager.load()
                 additional_context["task_provider"] = config.providers.task_provider.value
             except:
-                # Default to local if config loading fails
                 additional_context["task_provider"] = "local"
-        
-        # Add stepwise execution context
+
+    def _add_stepwise_context(self, runtime, task_id: str, additional_context: dict) -> None:
+        """Adds stepwise execution context for stepwise personas."""
         if runtime.config.execution_mode == "stepwise" and runtime.state.endswith("_working"):
-            task_state = self._load_state().tasks.get(task_id)
+            task_state = self._load_state(task_id).tasks.get(task_id)
             if task_state and task_state.execution_plan:
                 steps = task_state.execution_plan.get("implementation_steps", [])
                 if task_state.current_step < len(steps):
@@ -135,10 +251,6 @@ class Orchestrator:
                         "step_number": task_state.current_step + 1,
                         "total_steps": len(steps),
                     })
-
-        message = f"Resuming task {task_id} with persona '{runtime.config.name}'. Current state: {runtime.state}"
-        prompt = runtime.get_current_prompt(additional_context=additional_context if additional_context else None)
-        return (message, prompt)
 
     def submit_work_for_task(self, task_id: str, artifact_data: dict) -> tuple[str, str | None]:
         """Routes a work submission, validating and persisting the artifact."""
@@ -158,7 +270,7 @@ class Orchestrator:
         if not success:
             return (message, None)
 
-        task_state = self._load_state().tasks.get(task_id)
+        task_state = self._load_state(task_id).tasks.get(task_id)
         if task_state:
             task_state.persona_state = runtime.state
             self._save_task_state(task_state)
@@ -205,7 +317,7 @@ class Orchestrator:
         runtime = self._get_or_create_runtime(task_id)
         if not runtime:
             return "Error: Task runtime not found.", None
-        task_state = self._load_state().tasks.get(task_id)
+        task_state = self._load_state(task_id).tasks.get(task_id)
         if not task_state:
             return "Error: Task state not found.", None
 
@@ -231,7 +343,7 @@ class Orchestrator:
         if not success:
             return message, None
 
-        task_state = self._load_state().tasks.get(task_id)
+        task_state = self._load_state(task_id).tasks.get(task_id)
         if task_state:
             task_state.persona_state = runtime.state
             self._save_task_state(task_state)
@@ -252,7 +364,7 @@ class Orchestrator:
         if not runtime.state.endswith("verified"):
             return f"Error: Handoff requires persona to be in a verified state. Current state: '{runtime.state}'.", None
 
-        task_state = self._load_state().tasks.get(task_id)
+        task_state = self._load_state(task_id).tasks.get(task_id)
         if not task_state:
             return "Error: Cannot find task state to update.", None
 
@@ -281,7 +393,7 @@ class Orchestrator:
         if runtime.config.execution_mode != "stepwise":
             return f"Error: Step completion is not valid for the '{runtime.config.name}' persona.", None
 
-        task_state = self._load_state().tasks.get(task_id)
+        task_state = self._load_state(task_id).tasks.get(task_id)
         if not task_state:
             return "Error: Task state not found.", None
 
@@ -305,39 +417,47 @@ class Orchestrator:
         if not runtime:
             return "Error: Could not get runtime.", None
 
+        self._complete_current_step(task_state, step_id)
+        steps = execution_plan.get("implementation_steps", [])
+        
+        if task_state.current_step >= len(steps):
+            return self._handle_all_steps_complete(runtime, task_state)
+        else:
+            return self._get_next_step_prompt(runtime, task_state, steps, step_id)
+
+    def _complete_current_step(self, task_state, step_id: str) -> None:
+        """Marks the current step as complete and updates state."""
         task_state.completed_steps.append(step_id)
         task_state.current_step += 1
         self._save_task_state(task_state)
 
-        steps = execution_plan.get("implementation_steps", [])
-        total_steps = len(steps)
+    def _handle_all_steps_complete(self, runtime, task_state) -> tuple[str, str | None]:
+        """Handles completion of all steps and transitions to submission state."""
+        try:
+            runtime.step_complete()
+            task_state.persona_state = runtime.state
+            self._save_task_state(task_state)
+            message = "All steps complete. Ready for final manifest submission."
+            next_prompt = runtime.get_current_prompt()
+        except Exception:
+            runtime.state = f"{runtime.state.split('_')[0]}_submission"
+            task_state.persona_state = runtime.state
+            self._save_task_state(task_state)
+            message = "All steps complete. Ready for final manifest submission."
+            next_prompt = runtime.get_current_prompt()
+        return message, next_prompt
 
-        if task_state.current_step >= total_steps:
-            # Use the state machine to properly transition
-            try:
-                runtime.step_complete()  # This should transition to coding_submission
-                task_state.persona_state = runtime.state
-                self._save_task_state(task_state)
-                message = "All steps complete. Ready for final manifest submission."
-                next_prompt = runtime.get_current_prompt()
-            except Exception as e:
-                # Fallback to direct state assignment if trigger fails
-                runtime.state = f"{runtime.state.split('_')[0]}_submission"
-                task_state.persona_state = runtime.state
-                self._save_task_state(task_state)
-                message = "All steps complete. Ready for final manifest submission."
-                next_prompt = runtime.get_current_prompt()
-        else:
-            step = steps[task_state.current_step]
-            step_context = {
-                "step_id": f"step_{task_state.current_step + 1}",
-                "step_instruction": str(step),
-                "step_number": task_state.current_step + 1,
-                "total_steps": total_steps,
-            }
-            message = f"Step '{step_id}' complete."
-            next_prompt = runtime.get_current_prompt(additional_context=step_context)
-
+    def _get_next_step_prompt(self, runtime, task_state, steps: list, completed_step_id: str) -> tuple[str, str | None]:
+        """Gets the prompt for the next step in execution."""
+        step = steps[task_state.current_step]
+        step_context = {
+            "step_id": f"step_{task_state.current_step + 1}",
+            "step_instruction": str(step),
+            "step_number": task_state.current_step + 1,
+            "total_steps": len(steps),
+        }
+        message = f"Step '{completed_step_id}' complete."
+        next_prompt = runtime.get_current_prompt(additional_context=step_context)
         return message, next_prompt
 
 

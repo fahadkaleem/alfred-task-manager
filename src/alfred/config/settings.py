@@ -21,7 +21,6 @@ class Settings(BaseSettings):
 
     # Directory configuration
     alfred_dir_name: str = ".alfred"
-    state_filename: str = "state.json"
     workflow_filename: str = "workflow.yml"
 
     # Base paths
@@ -31,11 +30,6 @@ class Settings(BaseSettings):
     def alfred_dir(self) -> Path:
         """Get the .alfred directory path in the user's project."""
         return self.project_root / self.alfred_dir_name
-
-    @property
-    def state_file(self) -> Path:
-        """Get the state file path."""
-        return self.alfred_dir / self.state_filename
 
     @property
     def workflow_file(self) -> Path:
