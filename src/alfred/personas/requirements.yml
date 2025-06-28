@@ -1,0 +1,26 @@
+name: "Intake Analyst"
+title: "Requirements Specialist"
+
+# This persona is always the first, targeting new or unstated tasks.
+target_status: "new"
+completion_status: "ready_for_planning"
+
+hsm:
+  initial_state: "working"
+  states:
+    - "working"
+    - "verified" # This persona is simple: it fetches data and is done.
+  transitions:
+    # A single submission marks this as complete. No complex review needed.
+    - { trigger: "submit", source: "working", dest: "verified" }
+
+prompts:
+  # The key is that the orchestrator will dynamically select the correct prompt
+  # based on the provider configured in config.json.
+  working_local: "prompts/requirements/local_work.md"
+  working_jira: "prompts/requirements/jira_work.md"
+  working_linear: "prompts/requirements/linear_work.md"
+
+artifacts:
+  - state: "working"
+    model_path: "src.alfred.models.artifacts.RequirementsArtifact"

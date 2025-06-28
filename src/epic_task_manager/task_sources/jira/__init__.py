@@ -1,0 +1,3 @@
+"""
+Jira task source implementation
+"""

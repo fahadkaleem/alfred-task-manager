@@ -1,0 +1,27 @@
+name: "Commander"
+title: "DevOps Engineer"
+target_status: "ready_for_devops"
+completion_status: "done" # The final status
+
+hsm:
+  initial_state: "working"
+  states:
+    - "working"
+    - "aireview"
+    - "devreview"
+    - "verified" # Terminal state for this persona
+
+  transitions:
+    - { trigger: "submit", source: "working", dest: "aireview" }
+    - { trigger: "ai_approve", source: "aireview", dest: "devreview" }
+    - { trigger: "human_approve", source: "devreview", dest: "verified" }
+    - { trigger: "request_revision", source: ["aireview", "devreview"], dest: "working" }
+
+prompts:
+  working: "prompts/devops/work.md"
+  aireview: "prompts/devops/ai_review.md"
+  devreview: "prompts/devops/dev_review.md"
+
+artifacts:
+  - state: "working"
+    model_path: "src.alfred.models.artifacts.FinalizeArtifact"

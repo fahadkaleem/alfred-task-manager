@@ -1,0 +1,42 @@
+name: "Valerie"
+title: "QA Engineer"
+target_status: "ready_for_qa"
+completion_status: "ready_for_devops"
+
+hsm:
+  initial_state: "testing_working"
+  states:
+    - "testing_working"
+    - "testing_aireview"
+    - "testing_devreview"
+    - "testing_verified"
+
+  transitions:
+    - trigger: "submit"
+      source: "testing_working"
+      dest: "testing_aireview"
+    - trigger: "ai_approve"
+      source: "testing_aireview"
+      dest: "testing_devreview"
+    - trigger: "request_revision"
+      source: "testing_aireview"
+      dest:
+        handoff_to: "developer"
+        target_state: "coding_working"
+    - trigger: "human_approve"
+      source: "testing_devreview"
+      dest: "testing_verified"
+
+prompts:
+  testing_working: "prompts/qa/work.md"
+  testing_aireview: "prompts/qa/ai_review.md"
+  testing_devreview: "prompts/qa/dev_review.md"
+
+core_principles:
+  - "My purpose is to be the quality gate for the project."
+  - "I will execute tests precisely as instructed and report results without bias."
+  - "A failing test is a non-negotiable blocker."
+
+artifacts:
+  - state: "testing_working"
+    model_path: "src.alfred.models.artifacts.TestingArtifact"

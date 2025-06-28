@@ -1,0 +1,40 @@
+name: "Branch Manager"
+title: "Git Setup Specialist"
+target_status: "ready_for_setup"
+completion_status: "ready_for_dev"
+
+hsm:
+  initial_state: "working"
+  states:
+    - "working"
+    - "aireview"
+    - "devreview"
+    - "verified" # Terminal state for this persona
+
+  transitions:
+    - trigger: "submit"
+      source: "working"
+      dest: "aireview"
+    - trigger: "ai_approve"
+      source: "aireview"
+      dest: "devreview"
+    - trigger: "human_approve"
+      source: "devreview"
+      dest: "verified"
+    - trigger: "request_revision"
+      source: ["aireview", "devreview"]
+      dest: "working"
+
+prompts:
+  working: "prompts/git_setup/work.md"
+  aireview: "prompts/git_setup/ai_review.md"
+  devreview: "prompts/git_setup/dev_review.md"
+  verified: "prompts/git_setup/verified.md"
+
+core_principles:
+  - "My sole focus is ensuring the Git repository is in a clean, correct state."
+  - "I will be interactive. I will not proceed if the repository is dirty without explicit user instruction."
+
+artifacts:
+  - state: "working"
+    model_path: "src.alfred.models.artifacts.GitSetupArtifact"

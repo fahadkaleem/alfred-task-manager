@@ -1,0 +1,8 @@
+# The default sequence of personas for a task workflow.
+sequence:
+  - requirements
+  - planning
+  - git_setup
+  - developer
+  - qa
+  - devops

@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "epic-task-manager"
+version = "0.1.0"
+description = "An MCP server for epic software development workflow management"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "transitions>=0.9.0",
+    "python-dateutil>=2.8.0",
+    "aiofiles>=23.0.0",
+    "jira>=3.5.0",
+    "python-dotenv>=1.1.0",
+    "PyYAML>=6.0.0",
+    "Jinja2>=3.0.0",
+    "tabulate>=0.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["epic_task_manager*", "alfred*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.ruff]
+line-length = 200
+fix = true
+exclude = [
+    "venv/",
+    ".venv/",
+    "__pycache__/",
+    "*.egg-info/",
+]
+
+[tool.ruff.lint]
+# Enable auto-fixing for these rule categories
+select = ["E", "F", "I", "UP", "N", "W", "B", "A", "C4", "ICN", "PIE", "T20", "RET", "SIM", "TID", "ARG", "PTH", "ERA", "PD", "PGH", "PL", "TRY", "NPY", "RUF"]
+ignore = [
+    "PLR2004",  # Magic value used in comparison - too noisy for tests
+    "ARG002",   # Unused method argument - common in test fixtures
+    "ARG001",   # Unused function argument - common in test fixtures
+    "E501",     # Line too long - ignore line length checks
+    "W293",     # Blank line contains whitespace - ignore blank lines with whitespace
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.isort]
+# Configure import sorting
+known-first-party = ["epic_task_manager"]
+force-sort-within-sections = true
+split-on-trailing-comma = true
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Use spaces around operators
+indent-style = "space"
+# Respect magic trailing commas
+skip-magic-trailing-comma = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+norecursedirs = ["reference_code", "temp_scripts", ".git", "__pycache__", "*.egg", "build", "dist"]
+asyncio_default_fixture_loop_scope = "function"
+
+[dependency-groups]
+dev = [
+    "pip-audit>=2.9.0",
+    "pre-commit>=4.2.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+    "pytest-mock>=3.14.1",
+]
