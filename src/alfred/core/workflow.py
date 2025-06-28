@@ -17,8 +17,10 @@ class PlanTaskState(str, Enum):
 
 class BaseWorkflowTool:
     """A base class providing shared State Machine logic for Alfred's tools."""
-    def __init__(self, task_id: str):
+    def __init__(self, task_id: str, tool_name: str = None, persona_name: str = None):
         self.task_id = task_id
+        self.tool_name = tool_name or self.__class__.__name__.lower().replace('tool', '')
+        self.persona_name = persona_name
         self.state = None  # Will be set by the Machine instance
         self.machine = None
 
@@ -43,8 +45,8 @@ class BaseWorkflowTool:
 
 class PlanTaskTool(BaseWorkflowTool):
     """Encapsulates the state and logic for the `plan_task` command."""
-    def __init__(self, task_id: str):
-        super().__init__(task_id)
+    def __init__(self, task_id: str, persona_name: str = "planning"):
+        super().__init__(task_id, tool_name="plan_task", persona_name=persona_name)
         
         # Use the PlanTaskState Enum for state definitions - convert to string values
         states = [state.value for state in PlanTaskState]

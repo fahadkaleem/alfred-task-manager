@@ -212,6 +212,154 @@ class Settings(BaseSettings):
 settings = Settings()
 
 ``````
+------ src/alfred/core/__init__.py ------
+``````
+# src/alfred/core/__init__.py
+from .workflow import BaseWorkflowTool, PlanTaskTool, PlanTaskState
+from .prompter import Prompter, prompter
+
+__all__ = ["BaseWorkflowTool", "PlanTaskTool", "PlanTaskState", "Prompter", "prompter"]
+``````
+------ src/alfred/core/prompter.py ------
+``````
+# src/alfred/core/prompter.py
+from jinja2 import Environment, FileSystemLoader
+from pathlib import Path
+from enum import Enum
+from typing import Dict, Any, Optional
+
+from src.alfred.config.settings import settings
+from src.alfred.models.schemas import Task
+
+
+class Prompter:
+    """Generates persona-driven, state-aware prompts for the AI agent."""
+
+    def __init__(self):
+        # Reuse existing settings to find the templates directory
+        search_paths = []
+        
+        # Check for user-initialized templates first
+        user_templates_path = settings.alfred_dir / "templates"
+        if user_templates_path.exists():
+            search_paths.append(str(user_templates_path))
+        
+        # Always include packaged templates as fallback
+        search_paths.append(str(settings.packaged_templates_dir))
+
+        self.template_loader = FileSystemLoader(searchpath=search_paths)
+        self.jinja_env = Environment(loader=self.template_loader, trim_blocks=True, lstrip_blocks=True)
+
+    def generate_prompt(
+        self,
+        task: Task,
+        tool_name: str,
+        state: Enum,
+        persona_config: Dict[str, Any],
+        additional_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Generates a prompt by rendering a template with the given context.
+
+        Args:
+            task: The full structured Task object.
+            tool_name: The name of the active tool (e.g., 'plan_task').
+            state: The current state from the tool's SM.
+            persona_config: The loaded YAML config for the tool's persona.
+            additional_context: Ad-hoc data like review feedback.
+
+        Returns:
+            The rendered prompt string.
+        """
+        template_path = f"prompts/{tool_name}/{state.value}.md"
+        
+        try:
+            template = self.jinja_env.get_template(template_path)
+        except Exception as e:
+            # Proper error handling is crucial
+            error_message = f"CRITICAL ERROR: Prompt template not found at '{template_path}'. Details: {e}"
+            print(error_message)  # Or use logger
+            return error_message
+
+        # Build the comprehensive context for the template
+        render_context = {
+            "task": task,
+            "tool_name": tool_name,
+            "state": state.value,
+            "persona": persona_config,
+            **(additional_context or {})
+        }
+
+        return template.render(render_context)
+
+
+# Singleton instance to be used across the application
+prompter = Prompter()
+``````
+------ src/alfred/core/workflow.py ------
+``````
+# src/alfred/core/workflow.py
+from transitions.core import Machine
+from typing import List, Dict, Any
+from enum import Enum
+
+class PlanTaskState(str, Enum):
+    """States for the PlanTaskTool's internal State Machine."""
+    CONTEXTUALIZE = "contextualize"
+    REVIEW_CONTEXT = "review_context"
+    STRATEGIZE = "strategize"
+    REVIEW_STRATEGY = "review_strategy"
+    DESIGN = "design"
+    REVIEW_DESIGN = "review_design"
+    GENERATE_SLOTS = "generate_slots"
+    REVIEW_PLAN = "review_plan"
+    VERIFIED = "verified"  # The final, terminal state for the tool.
+
+class BaseWorkflowTool:
+    """A base class providing shared State Machine logic for Alfred's tools."""
+    def __init__(self, task_id: str, tool_name: str = None, persona_name: str = None):
+        self.task_id = task_id
+        self.tool_name = tool_name or self.__class__.__name__.lower().replace('tool', '')
+        self.persona_name = persona_name
+        self.state = None  # Will be set by the Machine instance
+        self.machine = None
+
+    @property
+    def is_terminal(self) -> bool:
+        """
+        Checks if the current state is a terminal (final) state.
+        Override in subclasses to define terminal states.
+        """
+        return self.state == "verified"
+
+    def _create_review_transitions(self, source_state: Enum, review_state: Enum, success_destination_state: Enum) -> List[Dict[str, Any]]:
+        """Factory for creating the standard two-step (AI, Human) review transitions."""
+        return [
+            # Submit work, transition into the review state for AI self-review
+            {'trigger': f'submit_{source_state.value}', 'source': source_state.value, 'dest': review_state.value},
+            # AI self-approves, moves to human review
+            {'trigger': 'ai_approve', 'source': review_state.value, 'dest': success_destination_state.value},
+            # A rejection from AI review goes back to the source state to be reworked
+            {'trigger': 'request_revision', 'source': review_state.value, 'dest': source_state.value},
+        ]
+
+class PlanTaskTool(BaseWorkflowTool):
+    """Encapsulates the state and logic for the `plan_task` command."""
+    def __init__(self, task_id: str, persona_name: str = "planning"):
+        super().__init__(task_id, tool_name="plan_task", persona_name=persona_name)
+        
+        # Use the PlanTaskState Enum for state definitions - convert to string values
+        states = [state.value for state in PlanTaskState]
+
+        transitions = [
+            *self._create_review_transitions(PlanTaskState.CONTEXTUALIZE, PlanTaskState.REVIEW_CONTEXT, PlanTaskState.STRATEGIZE),
+            *self._create_review_transitions(PlanTaskState.STRATEGIZE, PlanTaskState.REVIEW_STRATEGY, PlanTaskState.DESIGN),
+            *self._create_review_transitions(PlanTaskState.DESIGN, PlanTaskState.REVIEW_DESIGN, PlanTaskState.GENERATE_SLOTS),
+            *self._create_review_transitions(PlanTaskState.GENERATE_SLOTS, PlanTaskState.REVIEW_PLAN, PlanTaskState.VERIFIED),
+        ]
+        
+        self.machine = Machine(model=self, states=states, transitions=transitions, initial=PlanTaskState.CONTEXTUALIZE.value)
+``````
 ------ src/alfred/lib/artifact_manager.py ------
 ``````
 """
@@ -232,7 +380,12 @@ logger = get_logger(__name__)
 
 
 class ArtifactManager:
-    """Handles all file system I/O for task artifacts."""
+    """
+    Handles all file system I/O for task artifacts.
+    
+    Note: This class is responsible for artifact rendering (scratchpad content),
+    NOT prompt generation. Prompt generation is handled by the Prompter class.
+    """
 
     def __init__(self):
         self.template_loader = FileSystemLoader(searchpath=str(settings.packaged_templates_dir))
@@ -279,7 +432,7 @@ class ArtifactManager:
         self._get_archive_dir(task_id).mkdir(exist_ok=True)
         logger.info(f"Created workspace for task {task_id} at {task_dir}")
 
-    def append_to_scratchpad(self, task_id: str, artifact_type: str, artifact_model: BaseModel, persona_config):
+    def append_to_scratchpad(self, task_id: str, content_or_artifact_type: str, artifact_model: BaseModel = None, persona_config = None):
         """Renders an artifact based on its type and appends it to the scratchpad."""
         # Ensure the task workspace exists (in case of resumed tasks)
         task_dir = self._get_task_dir(task_id)
@@ -287,7 +440,18 @@ class ArtifactManager:
             self.create_task_workspace(task_id)
 
         scratchpad_path = self._get_scratchpad_path(task_id)
+        
+        # If we get raw content (string), append it directly
+        if artifact_model is None and persona_config is None:
+            with scratchpad_path.open("a", encoding="utf-8") as f:
+                if scratchpad_path.stat().st_size > 0:
+                    f.write("\n\n---\n\n")
+                f.write(content_or_artifact_type)
+            logger.info(f"Appended raw content to scratchpad for task {task_id}")
+            return
 
+        # Otherwise, use the original template-based approach
+        artifact_type = content_or_artifact_type
         template_name = persona_config.name.replace(" ", "_")
         template_path = f"artifacts/{template_name}.md"
 
@@ -406,6 +570,65 @@ def cleanup_task_logging(task_id: str) -> None:
         logging.getLogger().removeHandler(handler)
         handler.close()
 
+``````
+------ src/alfred/lib/task_utils.py ------
+``````
+# src/alfred/lib/task_utils.py
+from pathlib import Path
+from src.alfred.config.settings import settings, Settings
+from src.alfred.models.schemas import Task, TaskStatus
+
+
+def load_task(task_id: str, root_dir: Path | None = None) -> Task | None:
+    """Loads a Task object from its JSON file in the workspace.
+    
+    Args:
+        task_id: The ID of the task to load
+        root_dir: Optional root directory to use instead of default settings
+    """
+    if root_dir is not None:
+        workspace_dir = root_dir / settings.alfred_dir_name / "workspace"
+    else:
+        workspace_dir = settings.workspace_dir
+        
+    task_file = workspace_dir / task_id / "task.json"
+    if not task_file.exists():
+        return None
+    return Task.model_validate_json(task_file.read_text())
+
+
+def save_task(task: Task, root_dir: Path | None = None) -> None:
+    """Saves a Task object to its JSON file.
+    
+    Args:
+        task: The task object to save
+        root_dir: Optional root directory to use instead of default settings
+    """
+    if root_dir is not None:
+        workspace_dir = root_dir / settings.alfred_dir_name / "workspace"
+    else:
+        workspace_dir = settings.workspace_dir
+        
+    task_dir = workspace_dir / task.task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    task_file = task_dir / "task.json"
+    task_file.write_text(task.model_dump_json(indent=2))
+
+
+def update_task_status(task_id: str, new_status: TaskStatus, root_dir: Path | None = None) -> Task:
+    """Loads a task, updates its status, and saves it.
+    
+    Args:
+        task_id: The ID of the task to update
+        new_status: The new status for the task
+        root_dir: Optional root directory to use instead of default settings
+    """
+    task = load_task(task_id, root_dir)
+    if not task:
+        raise FileNotFoundError(f"Task {task_id} not found.")
+    task.task_status = new_status
+    save_task(task, root_dir)
+    return task
 ``````
 ------ src/alfred/lib/transaction_logger.py ------
 ``````
@@ -662,10 +885,11 @@ class PersonaConfig(BaseModel):
 ------ src/alfred/models/schemas.py ------
 ``````
 """
-Pydantic models for Alfred tool responses.
+Pydantic models for Alfred tool responses and core workflow data models.
 """
 
-from typing import Any
+from typing import Any, List, Optional
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -677,6 +901,57 @@ class ToolResponse(BaseModel):
     message: str = Field(description="A clear, human-readable message describing the result.")
     data: dict[str, Any] | None = Field(default=None)
     next_prompt: str | None = Field(default=None)
+
+
+class TaskStatus(str, Enum):
+    """Enumeration for the high-level status of a Task."""
+    NEW = "new"
+    PLANNING = "planning"
+    READY_FOR_DEVELOPMENT = "ready_for_development"
+    IN_DEVELOPMENT = "in_development"
+    READY_FOR_REVIEW = "ready_for_review"
+    IN_REVIEW = "in_review"
+    REVISIONS_REQUESTED = "revisions_requested"
+    READY_FOR_TESTING = "ready_for_testing"
+    IN_TESTING = "in_testing"
+    READY_FOR_FINALIZATION = "ready_for_finalization"
+    DONE = "done"
+
+
+class OperationType(str, Enum):
+    """Enumeration for the type of file system operation in a SLOT."""
+    CREATE = "create"
+    MODIFY = "modify"
+    DELETE = "delete"
+    REVIEW = "review"  # For tasks that only involve reviewing code, not changing it.
+
+
+class Task(BaseModel):
+    """Represents a single, well-defined unit of work (a user story or engineering task)."""
+    task_id: str = Field(description="The unique identifier, e.g., 'TS-01'.")
+    title: str = Field(description="A short, human-readable title for the task.")
+    context: str = Field(description="The background for this task, explaining the 'why'.")
+    implementation_details: str = Field(description="A high-level overview of the proposed 'how'.")
+    dev_notes: Optional[str] = Field(None, description="Optional notes for the developer.")
+    acceptance_criteria: List[str] = Field(default_factory=list)
+    ac_verification_steps: List[str] = Field(default_factory=list)
+    task_status: TaskStatus = Field(default=TaskStatus.NEW)
+
+
+class Taskflow(BaseModel):
+    """Defines the step-by-step procedure and verification for a SLOT."""
+    procedural_steps: List[str] = Field(description="Sequential steps for the AI to execute.")
+    verification_steps: List[str] = Field(description="Checks or tests to verify the SLOT is complete.")
+
+
+class SLOT(BaseModel):
+    """The core, self-contained, and atomic unit of technical work."""
+    slot_id: str = Field(description="A unique ID for this SLOT, e.g., 'slot_1.1'.")
+    title: str = Field(description="A short, human-readable title for the SLOT.")
+    spec: str = Field(description="The detailed specification for this change.")
+    location: str = Field(description="The primary file path or directory for the work.")
+    operation: OperationType = Field(description="The type of file system operation.")
+    taskflow: Taskflow = Field(description="The detailed workflow for execution and testing.")
 
 ``````
 ------ src/alfred/models/state.py ------
@@ -718,6 +993,7 @@ The central orchestrator for Alfred. Manages tasks and persona runtimes.
 """
 
 import yaml
+from typing import Dict
 
 from src.alfred.config import ConfigManager
 from src.alfred.config.settings import settings
@@ -727,6 +1003,7 @@ from src.alfred.models.config import PersonaConfig
 from src.alfred.models.state import StateFile, TaskState
 from src.alfred.orchestration.persona_loader import PersonaLoader
 from src.alfred.orchestration.persona_runtime import PersonaRuntime
+from src.alfred.core.workflow import BaseWorkflowTool
 
 logger = get_logger(__name__)
 
@@ -748,6 +1025,7 @@ class Orchestrator:
         self._validate_configuration()
         self.persona_registry = PersonaLoader.load_all()
         self.active_runtimes: dict[str, PersonaRuntime] = {}
+        self.active_tools: Dict[str, BaseWorkflowTool] = {}
         self.config_manager = ConfigManager(settings.alfred_dir)
         self._load_workflow_sequence()
         self._initialized = True
@@ -1229,6 +1507,29 @@ class PersonaLoader:
 
         return personas
 
+
+def load_persona(persona_name: str) -> dict[str, any]:
+    """Loads and parses a persona YAML file.
+    
+    Args:
+        persona_name: Name of the persona file (without .yml extension)
+        
+    Returns:
+        Dict containing the parsed persona configuration
+        
+    Raises:
+        FileNotFoundError: If the persona file doesn't exist
+    """
+    persona_file = settings.alfred_dir / "personas" / f"{persona_name}.yml"
+    if not persona_file.exists():
+        # Fallback to packaged personas
+        persona_file = settings.packaged_personas_dir / f"{persona_name}.yml"
+        if not persona_file.exists():
+            raise FileNotFoundError(f"Persona config '{persona_name}.yml' not found.")
+    
+    with open(persona_file, 'r') as f:
+        return yaml.safe_load(f)
+
 ``````
 ------ src/alfred/orchestration/persona_runtime.py ------
 ``````
@@ -1708,12 +2009,16 @@ from src.alfred.config.settings import settings
 from src.alfred.lib.transaction_logger import transaction_logger
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
-from src.alfred.tools.progress_tools import mark_step_complete as mark_step_complete_impl
-from src.alfred.tools.review_tools import approve_and_advance_stage as approve_and_advance_stage_impl
-from src.alfred.tools.review_tools import approve_and_handoff as approve_and_handoff_impl
-from src.alfred.tools.review_tools import provide_review as provide_review_impl
-from src.alfred.tools.task_tools import begin_task as begin_task_impl
-from src.alfred.tools.task_tools import submit_work as submit_work_impl
+from src.alfred.tools.plan_task import plan_task_impl
+# --- COMMENTED OUT LEGACY TOOL IMPORTS ---
+# from src.alfred.tools.progress_tools import mark_step_complete as mark_step_complete_impl
+# from src.alfred.tools.review_tools import approve_and_advance_stage as approve_and_advance_stage_impl
+# from src.alfred.tools.review_tools import approve_and_handoff as approve_and_handoff_impl
+# from src.alfred.tools.task_tools import begin_task as begin_task_impl
+
+# New generic state-advancing tool implementations
+from src.alfred.tools.submit_work import submit_work_impl
+from src.alfred.tools.provide_review import provide_review_impl
 
 app = FastMCP(settings.server_name)
 
@@ -1747,8 +2052,99 @@ async def initialize_project(provider: str | None = None) -> ToolResponse:
 
 
 @app.tool()
-async def begin_task(task_id: str) -> ToolResponse:
+async def plan_task(task_id: str) -> ToolResponse:
     """
+    Initiates the detailed technical planning for a specific task.
+
+    This is the primary tool for transforming a high-level task or user story
+    into a concrete, machine-executable 'Execution Plan' composed of SLOTs.
+    A SLOT (Spec, Location, Operation, Taskflow) is an atomic unit of work.
+
+    This tool manages a multi-step, interactive planning process:
+    1. **Contextualize**: Deep analysis of the task requirements and codebase context
+    2. **Strategize**: High-level technical approach and architecture decisions  
+    3. **Design**: Detailed technical design and component specifications
+    4. **Generate SLOTs**: Break down into atomic, executable work units
+
+    Each step includes AI self-review followed by human approval gates to ensure quality.
+    The final output is a validated execution plan ready for implementation.
+
+    Args:
+        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+
+    Returns:
+        ToolResponse: Contains success/error status and the next prompt to guide planning
+
+    Preconditions:
+        - Task must exist and be in 'new' or 'planning' status
+        - Project must be initialized with Alfred
+
+    Postconditions:
+        - Task status updated to 'planning'
+        - Planning tool instance registered and active
+        - First planning prompt returned for contextualization phase
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id}
+    
+    response = await plan_task_impl(task_id)
+    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    return response
+
+
+@app.tool()
+async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
+    """
+    Submits a structured work artifact for the current step of a workflow tool.
+
+    This is the generic state-advancing tool that handles work submission for any active workflow tool.
+    It automatically determines the correct state transition based on the current state and advances 
+    the tool's state machine accordingly.
+
+    Args:
+        task_id (str): The unique identifier for the task
+        artifact (dict): A dictionary containing the structured work data
+
+    Returns:
+        ToolResponse: Contains success/error status and the next prompt
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id, "artifact": artifact}
+    response = submit_work_impl(task_id, artifact)
+    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    return response
+
+
+@app.tool()
+async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
+    """
+    Provides feedback on a work artifact during a review step.
+
+    This is the generic state-advancing tool that handles review feedback for any active workflow tool.
+    It automatically determines the correct state transition based on the approval status and advances
+    the tool's state machine accordingly.
+
+    Args:
+        task_id (str): The unique identifier for the task
+        is_approved (bool): True to approve, False to request revisions
+        feedback_notes (str): Specific feedback for revision (required if is_approved=False)
+
+    Returns:
+        ToolResponse: Contains success/error status and the next prompt
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id, "is_approved": is_approved, "feedback_notes": feedback_notes}
+    response = provide_review_impl(task_id, is_approved, feedback_notes)
+    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    return response
+
+
+# --- LEGACY TOOLS COMMENTED OUT ---
+
+"""
+@app.tool()
+async def begin_task(task_id: str) -> ToolResponse:
+    '''
     Begins or resumes a task in the Alfred workflow, activating the correct persona based on the task's current state.
 
     - **Primary Function**: This is the main entry point for starting or continuing work on a specific task.
@@ -1765,7 +2161,7 @@ async def begin_task(task_id: str) -> ToolResponse:
 
     ## Parameters
     - **task_id** `[string]` (required): The unique identifier for the task (e.g., "PROJ-123").
-    """
+    '''
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
     response = begin_task_impl(task_id)
@@ -1773,61 +2169,11 @@ async def begin_task(task_id: str) -> ToolResponse:
     return response
 
 
-@app.tool()
-async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
-    """
-    Submits a structured work artifact for the current step of a persona's workflow.
-
-    - **Primary Function**: Takes a structured dictionary of work, validates it, saves it as the official artifact for the current step, and advances the internal state.
-    - **Key Features**:
-      - Validates the submitted `artifact` against the Pydantic model defined in the active persona's configuration.
-      - Persists the work by appending a rendered version to the task's `scratchpad.md`.
-      - Triggers the `submit` transition in the persona's state machine, moving it from a `_working` state to a `_aireview` state.
-    - **Use this tool when**: The server's `next_prompt` has instructed you to perform a task and submit the result.
-    - **CRITICAL GUARDRAILS**:
-      - The `artifact` dictionary MUST have the exact keys and data types specified in the prompt's `<required_artifact_structure>` block.
-      - This tool must only be called from a `_working` state. Calling it from a review state will fail.
-
-    ## Parameters
-    - **task_id** `[string]` (required): The task identifier.
-    - **artifact** `[dict]` (required): A dictionary containing the structured work data. The required fields are defined by the active persona and will be specified in the prompt.
-    """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "artifact": artifact}
-    response = submit_work_impl(task_id, artifact)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
-    return response
-
-
-@app.tool()
-async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
-    """
-    Provides feedback on a work artifact during a review step, either approving it or requesting revisions.
-
-    - **Primary Function**: This tool drives the internal review cycle of a persona (`aireview` -> `devreview`).
-    - **Key Features**:
-      - `is_approved=True`: Triggers an `ai_approve` transition, moving the task to the next review step (typically `devreview`).
-      - `is_approved=False`: Triggers a `request_revision` transition, moving the task back to the `_working` state for corrections.
-    - **Use this tool when**: The server's `next_prompt` has instructed you to review an artifact and provide feedback (e.g., from an `_aireview` state).
-    - **CRITICAL GUARDRAILS**:
-      - **NEVER** call this tool with `is_approved=True` if you have not thoroughly validated the artifact against the criteria in the prompt.
-      - You **MUST** provide clear, actionable `feedback_notes` when `is_approved` is `false`.
-
-    ## Parameters
-    - **task_id** `[string]` (required): The task identifier.
-    - **is_approved** `[boolean]` (required): `true` to approve, `false` to request revisions.
-    - **feedback_notes** `[string]` (optional, but required if `is_approved=false`): Specific feedback for revision.
-    """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "is_approved": is_approved, "feedback_notes": feedback_notes}
-    response = provide_review_impl(task_id, is_approved, feedback_notes)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
-    return response
 
 
 @app.tool()
 async def approve_and_handoff(task_id: str) -> ToolResponse:
-    """
+    '''
     Gives final approval for a persona's entire workflow and hands the task off to the next persona in the sequence.
 
     - **Primary Function**: This is the "human approval" gate for an entire persona's completed work. It archives the current persona's work and activates the next persona.
@@ -1841,7 +2187,7 @@ async def approve_and_handoff(task_id: str) -> ToolResponse:
 
     ## Parameters
     - **task_id** `[string]` (required): The task identifier.
-    """
+    '''
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
     response = approve_and_handoff_impl(task_id)
@@ -1851,7 +2197,7 @@ async def approve_and_handoff(task_id: str) -> ToolResponse:
 
 @app.tool()
 async def approve_and_advance_stage(task_id: str) -> ToolResponse:
-    """
+    '''
     Gives human approval to an internal stage and advances to the next stage *within the same persona*.
 
     - **Primary Function**: This is the "human approval" gate for multi-stage personas like Planning. It triggers the `human_approve` transition.
@@ -1865,7 +2211,7 @@ async def approve_and_advance_stage(task_id: str) -> ToolResponse:
 
     ## Parameters
     - **task_id** `[string]` (required): The task identifier.
-    """
+    '''
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
     response = approve_and_advance_stage_impl(task_id)
@@ -1875,7 +2221,7 @@ async def approve_and_advance_stage(task_id: str) -> ToolResponse:
 
 @app.tool()
 async def mark_step_complete(task_id: str, step_id: str) -> ToolResponse:
-    """
+    '''
     Marks a single execution step as complete during a multi-step ("stepwise") persona workflow, like coding.
 
     - **Primary Function**: Acts as a checkpoint. Persists the completion of one atomic step and provides the prompt for the very next step.
@@ -1885,17 +2231,17 @@ async def mark_step_complete(task_id: str, step_id: str) -> ToolResponse:
     ## Parameters
     - **task_id** `[string]` (required): The task identifier.
     - **step_id** `[string]` (required): The unique ID of the step that has just been completed. The ID will be in the prompt.
-    """
+    '''
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id, "step_id": step_id}
     response = mark_step_complete_impl(task_id, step_id)
     transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
     return response
+"""
 
 
 if __name__ == "__main__":
     app.run()
-
 ``````
 ------ src/alfred/templates/__init__.py ------
 ``````
@@ -2329,6 +2675,45 @@ Your task is to prepare the git branch for task `{task_id}`.
 
 Please check the repository status and create the feature branch `feature/{task_id}`. When complete, submit your work.
 
+``````
+------ src/alfred/templates/prompts/plan_task/strategize.md ------
+``````
+# Strategy Phase - {{ persona.name }}
+
+## Task Overview
+**Task ID:** {{ task.task_id }}
+**Title:** {{ task.title }}
+
+## Context
+{{ task.context }}
+
+## Implementation Details
+{{ task.implementation_details }}
+
+{% if task.dev_notes %}
+## Developer Notes
+{{ task.dev_notes }}
+{% endif %}
+
+## Acceptance Criteria
+{% for criteria in task.acceptance_criteria %}
+- {{ criteria }}
+{% endfor %}
+
+## Current Tool: {{ tool_name }}
+## Current State: {{ state }}
+
+## Persona Configuration
+**Name:** {{ persona.name }}
+**Description:** {{ persona.description }}
+
+{% if additional_context %}
+## Additional Context
+{{ additional_context }}
+{% endif %}
+
+---
+*This is a test template for the Prompter engine verification.*
 ``````
 ------ src/alfred/templates/prompts/planning/execution_plan_ai_review.md ------
 ``````
@@ -3303,18 +3688,19 @@ from src.alfred.models.alfred_config import AlfredConfig, ProviderConfig, TaskPr
 from src.alfred.models.schemas import ToolResponse
 
 
-def initialize_project(provider: str | None = None) -> ToolResponse:
+def initialize_project(provider: str | None = None, test_dir: Path | None = None) -> ToolResponse:
     """
     Initializes the project workspace by creating the .alfred directory with
     provider-specific configuration.
     
     Args:
         provider: Provider choice ('jira', 'linear', or 'local'). If None, returns available choices.
+        test_dir: Optional test directory for testing purposes. If provided, will use this instead of settings.alfred_dir.
         
     Returns:
         ToolResponse: Standardized response object.
     """
-    alfred_dir = settings.alfred_dir
+    alfred_dir = test_dir if test_dir is not None else settings.alfred_dir
     
     # Check if already initialized
     if alfred_dir.exists() and (alfred_dir / "workflow.yml").exists():
@@ -3335,11 +3721,16 @@ def initialize_project(provider: str | None = None) -> ToolResponse:
         alfred_dir.mkdir(parents=True, exist_ok=True)
 
         # Copy default workflow file
-        shutil.copyfile(settings.packaged_workflow_file, settings.workflow_file)
+        workflow_file = alfred_dir / settings.workflow_filename
+        shutil.copyfile(settings.packaged_workflow_file, workflow_file)
 
         # Copy default persona and template directories
         shutil.copytree(settings.packaged_personas_dir, alfred_dir / "personas")
         shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates")
+        
+        # Create workspace directory
+        workspace_dir = alfred_dir / "workspace"
+        workspace_dir.mkdir(exist_ok=True)
 
         # Create configuration with selected provider
         config_manager = ConfigManager(alfred_dir)
@@ -3435,6 +3826,54 @@ When you run `begin_task("TASK-ID")`, Alfred will read the corresponding file an
 """
         readme_path.write_text(readme_content, encoding="utf-8")
 ``````
+------ src/alfred/tools/plan_task.py ------
+``````
+# src/alfred/tools/plan_task.py
+from src.alfred.models.schemas import ToolResponse, TaskStatus
+from src.alfred.lib.task_utils import load_task, update_task_status
+from src.alfred.orchestration.persona_loader import load_persona
+from src.alfred.core.workflow import PlanTaskTool, PlanTaskState
+from src.alfred.core.prompter import prompter
+from src.alfred.orchestration.orchestrator import orchestrator
+
+
+async def plan_task_impl(task_id: str) -> ToolResponse:
+    """Implementation logic for the plan_task tool."""
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    # Precondition Check
+    if task.task_status != TaskStatus.NEW:
+        return ToolResponse(
+            status="error",
+            message=f"Task '{task_id}' has status '{task.task_status.value}'. Planning can only start on a 'new' task."
+        )
+
+    tool_instance = PlanTaskTool(task_id=task_id)
+    orchestrator.active_tools[task_id] = tool_instance
+    
+    try:
+        # The persona for plan_task is 'planning'
+        persona_config = load_persona("planning") 
+    except FileNotFoundError as e:
+        return ToolResponse(status="error", message=str(e))
+
+    initial_prompt = prompter.generate_prompt(
+        task=task,
+        tool_name="plan_task",
+        state=PlanTaskState.CONTEXTUALIZE,
+        persona_config=persona_config
+    )
+
+    update_task_status(task_id, TaskStatus.PLANNING)
+
+    return ToolResponse(
+        status="success",
+        message=f"Planning initiated for task '{task_id}'.",
+        next_prompt=initial_prompt
+    )
+``````
 ------ src/alfred/tools/progress_tools.py ------
 ``````
 """
@@ -3455,6 +3894,81 @@ def mark_step_complete(task_id: str, step_id: str) -> ToolResponse:
         return ToolResponse(status="error", message=message)
     return ToolResponse(status="success", message=message, next_prompt=next_prompt)
 
+``````
+------ src/alfred/tools/provide_review.py ------
+``````
+# src/alfred/tools/provide_review.py
+import json
+from src.alfred.models.schemas import ToolResponse, Task, TaskStatus
+from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.lib.task_utils import load_task, update_task_status
+from src.alfred.core.prompter import prompter
+from src.alfred.orchestration.persona_loader import load_persona
+from src.alfred.lib.logger import get_logger
+
+logger = get_logger(__name__)
+
+def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
+    """
+    Processes review feedback, advancing the active tool's State Machine.
+    Handles both mid-workflow reviews and final tool completion.
+    """
+    if task_id not in orchestrator.active_tools:
+        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
+
+    active_tool = orchestrator.active_tools[task_id]
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    # Determine the trigger and advance the state machine
+    trigger = "ai_approve" if is_approved else "request_revision"
+    if not hasattr(active_tool, trigger):
+        return ToolResponse(status="error", message=f"Invalid action: cannot trigger '{trigger}' from state '{active_tool.state}'.")
+    
+    getattr(active_tool, trigger)()
+    logger.info(f"Task {task_id}: State transitioned via trigger '{trigger}' to '{active_tool.state}'.")
+
+    # Check if the new state is the tool's terminal state
+    if active_tool.is_terminal:
+        # --- TOOL COMPLETION LOGIC ---
+        # This logic must be extensible for different tools in the future.
+        # For now, we hardcode the outcome for plan_task.
+        final_task_status = TaskStatus.READY_FOR_DEVELOPMENT
+        handoff_message = (
+            f"Planning for task {task_id} is complete and verified. "
+            f"The task is now '{final_task_status.value}'.\n\n"
+            f"To begin implementation, run `alfred.implement_task(task_id='{task_id}')`."
+        )
+        
+        update_task_status(task_id, final_task_status)
+        del orchestrator.active_tools[task_id]
+        logger.info(f"Tool '{active_tool.tool_name}' for task {task_id} completed. Task status updated to '{final_task_status.value}'.")
+
+        return ToolResponse(
+            status="success",
+            message=f"Tool '{active_tool.tool_name}' completed successfully.",
+            next_prompt=handoff_message
+        )
+    else:
+        # --- MID-WORKFLOW REVIEW LOGIC ---
+        try:
+            persona_config = load_persona(active_tool.persona_name)
+        except FileNotFoundError as e:
+            return ToolResponse(status="error", message=str(e))
+        
+        additional_context = {"feedback_notes": feedback_notes} if not is_approved and feedback_notes else None
+        
+        next_prompt = prompter.generate_prompt(
+            task=task,
+            tool_name=active_tool.tool_name,
+            state=active_tool.state,
+            persona_config=persona_config,
+            additional_context=additional_context
+        )
+        
+        message = "Review approved. Proceeding to next step." if is_approved else "Revision requested."
+        return ToolResponse(status="success", message=message, next_prompt=next_prompt)
 ``````
 ------ src/alfred/tools/review_tools.py ------
 ``````
@@ -3497,6 +4011,68 @@ def approve_and_handoff(task_id: str) -> ToolResponse:
     if not next_prompt:
         return ToolResponse(status="error", message=message)
     return ToolResponse(status="success", message=message, next_prompt=next_prompt)
+
+``````
+------ src/alfred/tools/submit_work.py ------
+``````
+# src/alfred/tools/submit_work.py
+import json
+
+from src.alfred.core.prompter import prompter
+from src.alfred.lib.artifact_manager import artifact_manager
+from src.alfred.lib.logger import get_logger
+from src.alfred.lib.task_utils import load_task
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.orchestration.persona_loader import load_persona
+
+logger = get_logger(__name__)
+
+def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
+    """
+    Implements the logic for submitting a work artifact to the active tool.
+    """
+    if task_id not in orchestrator.active_tools:
+        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'. Cannot submit work.")
+    
+    active_tool = orchestrator.active_tools[task_id]
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    # --- Artifact Persistence ---
+    # Reuse the existing ArtifactManager to append to the human-readable scratchpad.
+    # We create a simple, clean representation of the submitted artifact.
+    rendered_artifact = f"### Submission for State: `{active_tool.state}`\n\n```json\n{json.dumps(artifact, indent=2)}\n```"
+    artifact_manager.append_to_scratchpad(task_id, rendered_artifact)
+    
+    # --- State Transition ---
+    current_state_val = active_tool.state.value if hasattr(active_tool.state, 'value') else active_tool.state
+    trigger = f"submit_{current_state_val}"
+    
+    if not hasattr(active_tool, trigger):
+        return ToolResponse(status="error", message=f"Invalid action: cannot submit from state '{current_state_val}'. No trigger '{trigger}' exists.")
+    
+    # Trigger the state transition (e.g., tool.submit_contextualize())
+    getattr(active_tool, trigger)()
+    logger.info(f"Task {task_id}: State transitioned via trigger '{trigger}' to '{active_tool.state}'.")
+    
+    # --- Generate Next Prompt for the new review state ---
+    try:
+        persona_config = load_persona(active_tool.persona_name)
+    except FileNotFoundError as e:
+        return ToolResponse(status="error", message=str(e))
+        
+    next_prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=active_tool.tool_name,
+        state=active_tool.state,
+        persona_config=persona_config,
+        # Pass the submitted artifact into the context for the AI review prompt
+        additional_context={"artifact_content": json.dumps(artifact, indent=2)}
+    )
+
+    return ToolResponse(status="success", message="Work submitted. Awaiting review.", next_prompt=next_prompt)
 
 ``````
 ------ src/alfred/tools/task_tools.py ------
@@ -3552,75 +4128,5 @@ sequence:
   - developer
   - qa
   - devops
-
-``````
------- src/epic_task_manager.egg-info/SOURCES.txt ------
-``````
-README.md
-pyproject.toml
-src/alfred/__init__.py
-src/alfred/server.py
-src/alfred/config/__init__.py
-src/alfred/config/manager.py
-src/alfred/config/settings.py
-src/alfred/lib/artifact_manager.py
-src/alfred/lib/logger.py
-src/alfred/lib/transaction_logger.py
-src/alfred/models/__init__.py
-src/alfred/models/alfred_config.py
-src/alfred/models/artifacts.py
-src/alfred/models/config.py
-src/alfred/models/schemas.py
-src/alfred/models/state.py
-src/alfred/orchestration/__init__.py
-src/alfred/orchestration/orchestrator.py
-src/alfred/orchestration/persona_loader.py
-src/alfred/orchestration/persona_runtime.py
-src/alfred/personas/__init__.py
-src/alfred/templates/__init__.py
-src/alfred/templates/prompts/__init__.py
-src/alfred/templates/prompts/developer/__init__.py
-src/alfred/templates/prompts/git_setup/__init__.py
-src/alfred/templates/prompts/requirements/__init__.py
-src/alfred/tools/__init__.py
-src/alfred/tools/initialize.py
-src/alfred/tools/progress_tools.py
-src/alfred/tools/review_tools.py
-src/alfred/tools/task_tools.py
-src/epic_task_manager.egg-info/PKG-INFO
-src/epic_task_manager.egg-info/SOURCES.txt
-src/epic_task_manager.egg-info/dependency_links.txt
-src/epic_task_manager.egg-info/requires.txt
-src/epic_task_manager.egg-info/top_level.txt
-``````
------- src/epic_task_manager.egg-info/dependency_links.txt ------
-``````
-
-
-``````
------- src/epic_task_manager.egg-info/requires.txt ------
-``````
-fastmcp>=2.0.0
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-transitions>=0.9.0
-python-dateutil>=2.8.0
-aiofiles>=23.0.0
-jira>=3.5.0
-python-dotenv>=1.1.0
-PyYAML>=6.0.0
-Jinja2>=3.0.0
-tabulate>=0.9.0
-
-[dev]
-pytest>=7.0.0
-pytest-asyncio>=0.21.0
-ruff>=0.1.0
-pre-commit>=3.0.0
-
-``````
------- src/epic_task_manager.egg-info/top_level.txt ------
-``````
-alfred
 
 ``````
