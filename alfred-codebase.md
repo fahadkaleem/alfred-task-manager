@@ -227,6 +227,7 @@ from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 from enum import Enum
 from typing import Dict, Any, Optional
+import json
 
 from src.alfred.config.settings import settings
 from src.alfred.models.schemas import Task
@@ -249,12 +250,15 @@ class Prompter:
 
         self.template_loader = FileSystemLoader(searchpath=search_paths)
         self.jinja_env = Environment(loader=self.template_loader, trim_blocks=True, lstrip_blocks=True)
+        
+        # Add custom filters
+        self.jinja_env.filters['fromjson'] = json.loads
 
     def generate_prompt(
         self,
         task: Task,
         tool_name: str,
-        state: Enum,
+        state,  # Can be Enum or str
         persona_config: Dict[str, Any],
         additional_context: Optional[Dict[str, Any]] = None
     ) -> str:
@@ -264,14 +268,16 @@ class Prompter:
         Args:
             task: The full structured Task object.
             tool_name: The name of the active tool (e.g., 'plan_task').
-            state: The current state from the tool's SM.
+            state: The current state from the tool's SM (Enum or str).
             persona_config: The loaded YAML config for the tool's persona.
             additional_context: Ad-hoc data like review feedback.
 
         Returns:
             The rendered prompt string.
         """
-        template_path = f"prompts/{tool_name}/{state.value}.md"
+        # Handle both Enum and string state values
+        state_value = state.value if hasattr(state, 'value') else state
+        template_path = f"prompts/{tool_name}/{state_value}.md"
         
         try:
             template = self.jinja_env.get_template(template_path)
@@ -285,7 +291,7 @@ class Prompter:
         render_context = {
             "task": task,
             "tool_name": tool_name,
-            "state": state.value,
+            "state": state_value,
             "persona": persona_config,
             **(additional_context or {})
         }
@@ -300,8 +306,9 @@ prompter = Prompter()
 ``````
 # src/alfred/core/workflow.py
 from transitions.core import Machine
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Type
 from enum import Enum
+from pydantic import BaseModel
 
 class PlanTaskState(str, Enum):
     """States for the PlanTaskTool's internal State Machine."""
@@ -323,6 +330,8 @@ class BaseWorkflowTool:
         self.persona_name = persona_name
         self.state = None  # Will be set by the Machine instance
         self.machine = None
+        # Add a new attribute for artifact mapping
+        self.artifact_map: Dict[Enum, Type[BaseModel]] = {}
 
     @property
     def is_terminal(self) -> bool:
@@ -347,6 +356,22 @@ class PlanTaskTool(BaseWorkflowTool):
     """Encapsulates the state and logic for the `plan_task` command."""
     def __init__(self, task_id: str, persona_name: str = "planning"):
         super().__init__(task_id, tool_name="plan_task", persona_name=persona_name)
+        
+        # Import the new artifact models
+        from src.alfred.models.planning_artifacts import (
+            ContextAnalysisArtifact, 
+            StrategyArtifact, 
+            DesignArtifact, 
+            ExecutionPlanArtifact
+        )
+        
+        # Define the artifact validation map for this tool
+        self.artifact_map = {
+            PlanTaskState.CONTEXTUALIZE: ContextAnalysisArtifact,
+            PlanTaskState.STRATEGIZE: StrategyArtifact,
+            PlanTaskState.DESIGN: DesignArtifact,
+            PlanTaskState.GENERATE_SLOTS: ExecutionPlanArtifact,
+        }
         
         # Use the PlanTaskState Enum for state definitions - convert to string values
         states = [state.value for state in PlanTaskState]
@@ -881,6 +906,36 @@ class PersonaConfig(BaseModel):
     artifacts: list[ArtifactValidationConfig] = Field(default_factory=list)
     execution_mode: str = Field(default="sequential")  # sequential or stepwise
 
+``````
+------ src/alfred/models/planning_artifacts.py ------
+``````
+# src/alfred/models/planning_artifacts.py
+from pydantic import BaseModel, Field
+from typing import List, Dict, Literal
+from .schemas import SLOT
+
+class ContextAnalysisArtifact(BaseModel):
+    context_summary: str
+    affected_files: List[str]
+    questions_for_developer: List[str]
+
+class StrategyArtifact(BaseModel):
+    high_level_strategy: str
+    key_components: List[str]
+    new_dependencies: List[str] = Field(default_factory=list)
+    risk_analysis: str | None = None
+
+class FileChange(BaseModel):
+    file_path: str = Field(description="The full path to the file that will be created or modified.")
+    change_summary: str = Field(description="A detailed description of the new content or changes for this file.")
+    operation: Literal["create", "modify"] = Field(description="Whether the file will be created or modified.")
+
+class DesignArtifact(BaseModel):
+    design_summary: str = Field(description="A high-level summary of the implementation design.")
+    file_breakdown: List[FileChange] = Field(description="A file-by-file breakdown of all required changes.")
+
+# The Execution Plan is simply a list of SLOTs
+ExecutionPlanArtifact = List[SLOT]
 ``````
 ------ src/alfred/models/schemas.py ------
 ``````
@@ -2676,44 +2731,273 @@ Your task is to prepare the git branch for task `{task_id}`.
 Please check the repository status and create the feature branch `feature/{task_id}`. When complete, submit your work.
 
 ``````
------- src/alfred/templates/prompts/plan_task/strategize.md ------
+------ src/alfred/templates/prompts/plan_task/contextualize.md ------
 ``````
-# Strategy Phase - {{ persona.name }}
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: contextualize
 
-## Task Overview
-**Task ID:** {{ task.task_id }}
-**Title:** {{ task.title }}
+I am beginning the planning process for '{{ task.title }}'.
 
-## Context
-{{ task.context }}
-
-## Implementation Details
-{{ task.implementation_details }}
-
-{% if task.dev_notes %}
-## Developer Notes
-{{ task.dev_notes }}
-{% endif %}
-
-## Acceptance Criteria
-{% for criteria in task.acceptance_criteria %}
-- {{ criteria }}
+**Task Context:**
+- **Goal:** {{ task.context }}
+- **Implementation Overview:** {{ task.implementation_details }}
+- **Acceptance Criteria:**
+{% for criterion in task.acceptance_criteria %}
+  - {{ criterion }}
 {% endfor %}
 
-## Current Tool: {{ tool_name }}
-## Current State: {{ state }}
+---
+### **Directive: Codebase Analysis & Ambiguity Detection**
 
-## Persona Configuration
-**Name:** {{ persona.name }}
-**Description:** {{ persona.description }}
-
-{% if additional_context %}
-## Additional Context
-{{ additional_context }}
-{% endif %}
+Your mission is to become the expert on this task. You must:
+1.  **Analyze the existing codebase.** Start from the project root. Identify all files and code blocks relevant to the provided Task Context.
+2.  **Identify Ambiguities.** Compare the task goal with your code analysis. Create a list of precise questions for the human developer to resolve any uncertainties or missing requirements.
 
 ---
-*This is a test template for the Prompter engine verification.*
+### **Required Action**
+
+You MUST now call `alfred.submit_work` with a `ContextAnalysisArtifact`.
+
+**Required Artifact Structure:**
+```json
+{
+  "context_summary": "string - A summary of your understanding of the existing code and how the new feature will integrate.",
+  "affected_files": ["string - A list of files you have identified as relevant."],
+  "questions_for_developer": ["string - Your list of precise questions for the human developer."]
+}
+```
+``````
+------ src/alfred/templates/prompts/plan_task/design.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: design
+
+The technical strategy has been approved. Now, you must translate this strategy into a detailed, file-level implementation design.
+
+**Approved Strategy:**
+```json
+{{ additional_context.strategy_artifact | tojson(indent=2) }}
+```
+
+---
+### **Directive: Create Detailed Design**
+
+Based on the approved strategy, create a comprehensive, file-by-file breakdown of all necessary changes. For each file that needs to be created or modified, provide a clear summary of the required changes.
+
+---
+### **Required Action**
+
+You MUST now call `alfred.submit_work` with a `DesignArtifact`.
+
+**Required Artifact Structure:**
+```json
+{
+  "design_summary": "string",
+  "file_breakdown": [
+    {
+      "file_path": "string",
+      "change_summary": "string",
+      "operation": "create | modify"
+    }
+  ]
+}
+```
+``````
+------ src/alfred/templates/prompts/plan_task/generate_slots.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: generate_slots
+
+The detailed implementation design has been approved. Your final task is to convert this design into a machine-executable `ExecutionPlan` composed of `SLOT`s.
+
+**Approved Design:**
+```json
+{{ additional_context.design_artifact | tojson(indent=2) }}
+```
+
+---
+### **Directive: Generate SLOTs**
+
+Mechanically translate each item in the `file_breakdown` into one or more `SLOT` objects.
+
+For each `SLOT`, you must define:
+- `slot_id`: A unique, sequential ID (e.g., "slot-1", "slot-2").
+- `title`: A concise title.
+- `spec`: A detailed specification, derived from the `change_summary`.
+- `location`: The `file_path`.
+- `operation`: The `operation`.
+- `taskflow`: A detailed `procedural_steps` and `verification_steps` (unit tests) for this specific SLOT.
+
+**CRITICAL: Use `delegation` for complex SLOTs.** If a SLOT's `spec` involves complex logic, security considerations, or significant architectural work, you MUST add a `delegation` field to it. The `delegation` spec should instruct a specialist sub-agent on how to approach the task.
+
+---
+### **Required Action**
+
+You MUST now call `alfred.submit_work` with the final `ExecutionPlanArtifact` (the list of `SLOT`s).
+
+**Required Artifact Structure:** `List[SLOT]`
+``````
+------ src/alfred/templates/prompts/plan_task/review_context.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: review_context
+
+My initial analysis has generated the following questions. I must now clarify these with the human developer to ensure my understanding is complete before proceeding with the technical strategy.
+
+---
+### **Directive: User Clarification**
+
+Present these questions to the human developer and await their answers.
+
+**My Questions:**
+{% set artifact = artifact_content | fromjson %}
+{% for question in artifact.questions_for_developer %}
+- {{ question }}
+{% endfor %}
+
+---
+### **Required Action**
+
+Once you have the developer's answers, you MUST call `alfred.provide_review` with `is_approved=True` and include the developer's answers in the `feedback_notes`. Format the notes as a clear Q&A string.
+
+If the developer rejects the context and wants you to re-analyze, call `provide_review` with `is_approved=False`.
+``````
+------ src/alfred/templates/prompts/plan_task/review_design.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: review_design
+
+The detailed design has been drafted. I will now perform a self-review to ensure it fully implements the approved strategy.
+
+---
+### **Directive: AI Self-Review**
+
+Critically evaluate the design against the original strategy.
+
+**Review Checklist:**
+1. **Strategy Coverage:** Does the `file_breakdown` fully and accurately implement every `key_component` mentioned in the strategy?
+2. **Clarity:** Is the `change_summary` for each file clear, specific, and actionable?
+3. **Correctness:** Are the file paths and proposed operations logical and correct?
+
+---
+### **Required Action**
+
+If the design is sound, call `alfred.provide_review` with `is_approved=True` and a brief confirmation in `feedback_notes`.
+
+If the design is flawed or incomplete, call `alfred.provide_review` with `is_approved=False` and detailed `feedback_notes` on the necessary corrections.
+``````
+------ src/alfred/templates/prompts/plan_task/review_plan.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: review_plan
+
+The complete `ExecutionPlan` has been generated. I will now perform a final holistic review before presenting it for human sign-off.
+
+---
+### **Directive: Final Plan Review**
+
+Review the generated `list[SLOT]` against the original `Task` context.
+
+**Review Checklist:**
+1. **Coverage:** Is every `acceptance_criterion` from the original task fully addressed by the combination of all SLOTs?
+2. **Completeness:** Is the plan comprehensive? Are there any missing steps or logical gaps between SLOTs?
+3. **Traceability:** Does the plan clearly and logically derive from the approved `strategy` and `design`?
+4. **Delegation:** Have complex tasks been appropriately marked with a `delegation` spec?
+
+---
+### **Required Action**
+
+If the `ExecutionPlan` is complete and correct, call `alfred.provide_review` with `is_approved=True` to send it for final human approval.
+
+If the plan is flawed, call `provide_review` with `is_approved=False` and detailed `feedback_notes` explaining the required changes.
+``````
+------ src/alfred/templates/prompts/plan_task/review_strategy.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: review_strategy
+
+The initial technical strategy has been drafted. I will now perform a self-review to ensure its quality and alignment with the project goals before presenting it for human approval.
+
+---
+### **Directive: AI Self-Review**
+
+Critically evaluate the strategy you just created.
+
+**Review Checklist:**
+1.  **Goal Alignment:** Does the strategy directly address all acceptance criteria for '{{ task.title }}'?
+2.  **Feasibility:** Is the strategy technically sound and achievable within a reasonable scope?
+3.  **Completeness:** Are all key components and potential dependencies identified?
+4.  **Simplicity:** Is this the simplest viable approach, or is there a less complex alternative?
+
+---
+### **Required Action**
+
+If the strategy passes your self-review, call `alfred.provide_review` with `is_approved=True`. The `feedback_notes` should contain a brief summary of your review (e.g., "Strategy is sound and covers all ACs.").
+
+If the strategy is flawed, call `alfred.provide_review` with `is_approved=False` and provide detailed `feedback_notes` on what needs to be corrected. You will then be prompted to create a new strategy.
+``````
+------ src/alfred/templates/prompts/plan_task/strategize.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: strategize
+
+Context is verified. The human developer has provided all necessary clarifications. We will now create the high-level technical strategy for '{{ task.title }}'. This strategy will serve as the guiding principle for the detailed design.
+
+---
+### **Thinking Methodology**
+{% for principle in persona.thinking_methodology %}
+- {{ principle }}
+{% endfor %}
+
+---
+### **Directive: Develop Technical Strategy**
+
+Based on the full task context, develop a concise technical strategy.
+
+- **Strategy:** Define the overall technical approach (e.g., "Create a new microservice," "Refactor the existing `UserService`," "Add a new middleware layer").
+- **Components:** List the major new or modified components, classes, or modules.
+- **Dependencies (Optional):** List any new third-party libraries that will be required.
+- **Risks (Optional):** Note any potential risks or important architectural trade-offs.
+
+---
+### **Required Action**
+
+You MUST now call `alfred.submit_work` with a `StrategyArtifact`.
+
+**Required Artifact Structure:**
+```json
+{
+  "high_level_strategy": "string",
+  "key_components": ["string"],
+  "new_dependencies": ["string", "Optional"],
+  "risk_analysis": "string", "Optional"
+}
+```
+``````
+------ src/alfred/templates/prompts/plan_task/verified.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.plan_task`
+# TASK: {{ task.task_id }}
+# STATE: verified
+
+# TODO: Implement full prompt.
 ``````
 ------ src/alfred/templates/prompts/planning/execution_plan_ai_review.md ------
 ``````
@@ -4018,6 +4302,7 @@ def approve_and_handoff(task_id: str) -> ToolResponse:
 # src/alfred/tools/submit_work.py
 import json
 
+from pydantic import ValidationError
 from src.alfred.core.prompter import prompter
 from src.alfred.lib.artifact_manager import artifact_manager
 from src.alfred.lib.logger import get_logger
@@ -4039,6 +4324,21 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     task = load_task(task_id)
     if not task:
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    # --- NEW: Artifact Validation ---
+    current_state = active_tool.state
+    artifact_model = active_tool.artifact_map.get(current_state)
+
+    if artifact_model:
+        try:
+            # Validate the submitted dictionary against the Pydantic model
+            validated_artifact = artifact_model.model_validate(artifact)
+            logger.info(f"Artifact for state '{current_state.value if hasattr(current_state, 'value') else current_state}' validated successfully against {artifact_model.__name__}.")
+        except ValidationError as e:
+            error_msg = f"Artifact validation failed for state '{current_state.value if hasattr(current_state, 'value') else current_state}'. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
+            return ToolResponse(status="error", message=error_msg)
+    else:
+        validated_artifact = artifact  # No validator for this state, proceed
 
     # --- Artifact Persistence ---
     # Reuse the existing ArtifactManager to append to the human-readable scratchpad.
