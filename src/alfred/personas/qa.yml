@@ -31,6 +31,7 @@ prompts:
   testing_working: "prompts/qa/work.md"
   testing_aireview: "prompts/qa/ai_review.md"
   testing_devreview: "prompts/qa/dev_review.md"
+  testing_verified: "prompts/verified.md"
 
 core_principles:
   - "My purpose is to be the quality gate for the project."

@@ -14,6 +14,9 @@ hsm:
     - "coding_verified"
 
   transitions:
+    - trigger: "step_complete"
+      source: "coding_working"
+      dest: "coding_submission"
     - trigger: "submit_manifest"
       source: "coding_submission"
       dest: "coding_aireview"
@@ -32,6 +35,7 @@ prompts:
   coding_submission: "prompts/developer/coding_submission.md"
   coding_aireview: "prompts/developer/ai_review.md"
   coding_devreview: "prompts/developer/dev_review.md"
+  coding_verified: "prompts/verified.md"
 
 artifacts:
   - state: "coding_submission"
