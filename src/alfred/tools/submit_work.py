@@ -1,6 +1,7 @@
 # src/alfred/tools/submit_work.py
 import json
 
+from pydantic import ValidationError
 from src.alfred.core.prompter import prompter
 from src.alfred.lib.artifact_manager import artifact_manager
 from src.alfred.lib.logger import get_logger
@@ -22,6 +23,21 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     task = load_task(task_id)
     if not task:
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    # --- NEW: Artifact Validation ---
+    current_state = active_tool.state
+    artifact_model = active_tool.artifact_map.get(current_state)
+
+    if artifact_model:
+        try:
+            # Validate the submitted dictionary against the Pydantic model
+            validated_artifact = artifact_model.model_validate(artifact)
+            logger.info(f"Artifact for state '{current_state.value if hasattr(current_state, 'value') else current_state}' validated successfully against {artifact_model.__name__}.")
+        except ValidationError as e:
+            error_msg = f"Artifact validation failed for state '{current_state.value if hasattr(current_state, 'value') else current_state}'. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
+            return ToolResponse(status="error", message=error_msg)
+    else:
+        validated_artifact = artifact  # No validator for this state, proceed
 
     # --- Artifact Persistence ---
     # Reuse the existing ArtifactManager to append to the human-readable scratchpad.

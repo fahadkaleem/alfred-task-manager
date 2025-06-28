@@ -3,6 +3,7 @@ from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 from enum import Enum
 from typing import Dict, Any, Optional
+import json
 
 from src.alfred.config.settings import settings
 from src.alfred.models.schemas import Task
@@ -25,12 +26,15 @@ class Prompter:
 
         self.template_loader = FileSystemLoader(searchpath=search_paths)
         self.jinja_env = Environment(loader=self.template_loader, trim_blocks=True, lstrip_blocks=True)
+        
+        # Add custom filters
+        self.jinja_env.filters['fromjson'] = json.loads
 
     def generate_prompt(
         self,
         task: Task,
         tool_name: str,
-        state: Enum,
+        state,  # Can be Enum or str
         persona_config: Dict[str, Any],
         additional_context: Optional[Dict[str, Any]] = None
     ) -> str:
@@ -40,14 +44,16 @@ class Prompter:
         Args:
             task: The full structured Task object.
             tool_name: The name of the active tool (e.g., 'plan_task').
-            state: The current state from the tool's SM.
+            state: The current state from the tool's SM (Enum or str).
             persona_config: The loaded YAML config for the tool's persona.
             additional_context: Ad-hoc data like review feedback.
 
         Returns:
             The rendered prompt string.
         """
-        template_path = f"prompts/{tool_name}/{state.value}.md"
+        # Handle both Enum and string state values
+        state_value = state.value if hasattr(state, 'value') else state
+        template_path = f"prompts/{tool_name}/{state_value}.md"
         
         try:
             template = self.jinja_env.get_template(template_path)
@@ -61,7 +67,7 @@ class Prompter:
         render_context = {
             "task": task,
             "tool_name": tool_name,
-            "state": state.value,
+            "state": state_value,
             "persona": persona_config,
             **(additional_context or {})
         }

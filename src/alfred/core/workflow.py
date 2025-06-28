@@ -1,7 +1,8 @@
 # src/alfred/core/workflow.py
 from transitions.core import Machine
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Type
 from enum import Enum
+from pydantic import BaseModel
 
 class PlanTaskState(str, Enum):
     """States for the PlanTaskTool's internal State Machine."""
@@ -23,6 +24,8 @@ class BaseWorkflowTool:
         self.persona_name = persona_name
         self.state = None  # Will be set by the Machine instance
         self.machine = None
+        # Add a new attribute for artifact mapping
+        self.artifact_map: Dict[Enum, Type[BaseModel]] = {}
 
     @property
     def is_terminal(self) -> bool:
@@ -47,6 +50,22 @@ class PlanTaskTool(BaseWorkflowTool):
     """Encapsulates the state and logic for the `plan_task` command."""
     def __init__(self, task_id: str, persona_name: str = "planning"):
         super().__init__(task_id, tool_name="plan_task", persona_name=persona_name)
+        
+        # Import the new artifact models
+        from src.alfred.models.planning_artifacts import (
+            ContextAnalysisArtifact, 
+            StrategyArtifact, 
+            DesignArtifact, 
+            ExecutionPlanArtifact
+        )
+        
+        # Define the artifact validation map for this tool
+        self.artifact_map = {
+            PlanTaskState.CONTEXTUALIZE: ContextAnalysisArtifact,
+            PlanTaskState.STRATEGIZE: StrategyArtifact,
+            PlanTaskState.DESIGN: DesignArtifact,
+            PlanTaskState.GENERATE_SLOTS: ExecutionPlanArtifact,
+        }
         
         # Use the PlanTaskState Enum for state definitions - convert to string values
         states = [state.value for state in PlanTaskState]
