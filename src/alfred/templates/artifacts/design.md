@@ -1,12 +1,13 @@
-### Design for `{{ task.task_id }}`
-*State: `design`*
+## {{ state_description }}
 
-**Design Summary:**
+**Task:** {{ task.task_id }} - {{ task.title }}
+
+### Design Summary
 {{ artifact.design_summary }}
 
-**File Breakdown:**
+### File-Level Implementation
 {% for file_change in artifact.file_breakdown -%}
-**{{ file_change.file_path }}** ({{ file_change.operation }})
+#### {{ file_change.file_path }} ({{ file_change.operation }})
 {{ file_change.change_summary }}
 
 {% endfor %}
