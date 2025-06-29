@@ -31,3 +31,15 @@ class DesignArtifact(BaseModel):
 # The Execution Plan is a collection of Subtasks
 class ExecutionPlanArtifact(BaseModel):
     subtasks: List[Subtask] = Field(description="The ordered list of Subtasks that form the execution plan")
+
+
+class GitStatusArtifact(BaseModel):
+    is_clean: bool
+    current_branch: str
+    uncommitted_files: List[str]
+
+
+class BranchCreationArtifact(BaseModel):
+    branch_name: str
+    success: bool
+    details: str

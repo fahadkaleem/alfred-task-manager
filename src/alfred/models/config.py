@@ -1,22 +1,50 @@
 # src/alfred/models/config.py
 """
-Pydantic models for parsing persona configurations.
-This has been simplified to only contain conversational and identity fields.
+Pydantic models for parsing persona configurations, including the
+new dual-mode (Human/AI) interaction structure.
 """
+from typing import Dict, List
 
 from pydantic import BaseModel, Field
-from typing import List, Optional
+
+
+class HumanInteraction(BaseModel):
+    """Configuration for human-facing communication."""
+
+    greeting: str = Field(description="The persona's introductory greeting.")
+    communication_style: str = Field(
+        description="A description of the persona's conversational style and tone with humans."
+    )
+
+
+class AIInteraction(BaseModel):
+    """Configuration for AI agent directives."""
+
+    style: str = Field(
+        default="precise, technical, directive",
+        description="The persona's communication style when issuing instructions to the AI agent.",
+    )
+    analysis_patterns: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="A dictionary mapping a tool's state to a list of specific analysis commands or patterns for the AI.",
+    )
+    validation_criteria: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="A dictionary mapping a tool's state to a list of specific validation criteria for AI self-review.",
+    )
+
 
 class PersonaConfig(BaseModel):
     """
-    Represents the validated configuration of a single persona.yml file.
-    Its sole purpose is to define the "character" and "voice" of the AI for a given tool.
+    Represents the validated configuration of a single persona.yml file,
+    supporting dual-mode communication.
     """
+
     name: str = Field(description="The persona's first name, e.g., 'Alex'.")
     title: str = Field(description="The persona's job title, e.g., 'Solution Architect'.")
-    
-    greeting: Optional[str] = Field(None, description="An example greeting the persona can use to introduce itself.")
-    communication_style: Optional[str] = Field(None, description="A description of the persona's conversational style and tone.")
-    
-    thinking_methodology: List[str] = Field(default_factory=list, description="A list of core principles that guide the persona's reasoning.")
-    personality_traits: List[str] = Field(default_factory=list, description="A list of traits that define the persona's character.")
+    thinking_methodology: List[str] = Field(
+        default_factory=list,
+        description="A list of core principles that guide the persona's reasoning.",
+    )
+    human: HumanInteraction
+    ai: AIInteraction

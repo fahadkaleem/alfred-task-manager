@@ -16,6 +16,23 @@ Critically evaluate the strategy you just created.
 3.  **Completeness:** Are all key components and potential dependencies identified?
 4.  **Simplicity:** Is this the simplest viable approach, or is there a less complex alternative?
 
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
 ---
 ### **Required Action**
 

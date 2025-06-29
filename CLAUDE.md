@@ -17,3 +17,7 @@
 
 - Debug logs are stored in `.alfred/debug` directory
 - Logs are organized by task ID for easy tracking
+
+# Task Management
+
+- New tasks should always be created inside .alfred/tasks directory in the format mentioned in md_parser.py

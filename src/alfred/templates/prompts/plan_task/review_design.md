@@ -15,6 +15,23 @@ Critically evaluate the design against the original strategy.
 2. **Clarity:** Is the `change_summary` for each file clear, specific, and actionable?
 3. **Correctness:** Are the file paths and proposed operations logical and correct?
 
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
 ---
 ### **Required Action**
 

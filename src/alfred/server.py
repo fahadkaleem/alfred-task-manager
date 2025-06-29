@@ -1,7 +1,9 @@
+# src/alfred/server.py
 """
 MCP Server for Alfred
+This version preserves the original comprehensive docstrings while maintaining
+the clean V2 Alfred architecture.
 """
-
 import inspect
 
 from fastmcp import FastMCP
@@ -11,11 +13,10 @@ from src.alfred.lib.transaction_logger import transaction_logger
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
 from src.alfred.tools.plan_task import plan_task_impl
-
-# New generic state-advancing tool implementations
-from src.alfred.tools.submit_work import submit_work_impl
-from src.alfred.tools.provide_review import provide_review_impl
 from src.alfred.tools.progress import mark_subtask_complete_impl
+from src.alfred.tools.provide_review import provide_review_impl
+from src.alfred.tools.start_task import start_task_impl
+from src.alfred.tools.submit_work import submit_work_impl
 
 app = FastMCP(settings.server_name)
 
@@ -44,7 +45,37 @@ async def initialize_project(provider: str | None = None) -> ToolResponse:
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"provider": provider} if provider else {}
     response = initialize_project_impl(provider)
-    transaction_logger.log(task_id=None, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=None, tool_name=tool_name, request_data=request_data, response=response
+    )
+    return response
+
+
+@app.tool()
+async def start_task(task_id: str) -> ToolResponse:
+    """
+    Initializes the workspace for a specific task, making it ready for planning.
+
+    This is the first command to run for any given task. It sets up the necessary
+    directory structure and state files. If the task is new, its status will be
+    set to 'planning'. If the task already exists, it simply ensures the workspace
+    is ready for the next command.
+
+    Args:
+        task_id (str): The unique identifier for the task (e.g., "TS-01").
+
+    Returns:
+        ToolResponse: Contains success/error status and a prompt guiding the user to call 'plan_task'.
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id}
+    response = start_task_impl(task_id)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
@@ -83,9 +114,13 @@ async def plan_task(task_id: str) -> ToolResponse:
     """
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
-
     response = await plan_task_impl(task_id)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
@@ -108,7 +143,12 @@ async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id, "artifact": artifact}
     response = submit_work_impl(task_id, artifact)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
@@ -130,9 +170,18 @@ async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = 
         ToolResponse: Contains success/error status and the next prompt
     """
     tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "is_approved": is_approved, "feedback_notes": feedback_notes}
+    request_data = {
+        "task_id": task_id,
+        "is_approved": is_approved,
+        "feedback_notes": feedback_notes,
+    }
     response = provide_review_impl(task_id, is_approved, feedback_notes)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
@@ -167,7 +216,12 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id, "subtask_id": subtask_id}
     response = mark_subtask_complete_impl(task_id, subtask_id)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 

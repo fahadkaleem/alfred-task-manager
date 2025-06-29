@@ -9,7 +9,7 @@ My initial analysis has generated a list of questions that must be answered to p
 ### **Persona Guidelines**
 
 **Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {{ persona.communication_style }}
+**Communication Style:** {% if persona.human %}{{ persona.human.communication_style }}{% else %}{{ persona.communication_style }}{% endif %}
 
 You are now in a **Clarification Loop**. Your goal is to get complete answers for all your questions from the human developer.
 ---
@@ -26,6 +26,23 @@ You are now in a **Clarification Loop**. Your goal is to get complete answers fo
 {% for question in artifact.questions_for_developer %}
 - [ ] {{ question }}
 {% endfor %}
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**

@@ -1,0 +1,37 @@
+# Default Alfred workflow configuration
+# This file defines the workflow structure and persona mappings
+
+tools:
+  start_task:
+    persona: onboarding
+    states:
+      - initialized
+      - git_status_checked
+      - branch_created
+      - awaiting_ai_review
+      - awaiting_human_review
+      - completed
+      
+  plan_task:
+    persona: planning
+    states:
+      - contextualize
+      - review_context
+      - strategize
+      - review_strategy
+      - design
+      - review_design
+      - generate_subtasks
+      - review_plan
+      - awaiting_ai_review
+      - awaiting_human_review
+      - verified
+      
+  implement_task:
+    persona: implementation
+    states:
+      - initialized
+      - in_progress
+      - awaiting_ai_review
+      - awaiting_human_review
+      - completed
