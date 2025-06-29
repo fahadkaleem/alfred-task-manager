@@ -58,11 +58,20 @@ class StateManager:
         from src.alfred.models.state import WorkflowState
         
         # Create the state data
+        # Convert any Pydantic models in context_store to dicts
+        serializable_context = {}
+        for key, value in tool.context_store.items():
+            if hasattr(value, 'model_dump'):
+                # It's a Pydantic model, convert to dict
+                serializable_context[key] = value.model_dump()
+            else:
+                serializable_context[key] = value
+        
         state_data = WorkflowState(
             task_id=task_id,
             tool_name=tool.tool_name,
             current_state=str(tool.state),  # Convert enum to string
-            context_store=tool.context_store.copy(),
+            context_store=serializable_context,
             persona_name=tool.persona_name,
             artifact_map_states=[str(state) for state in tool.artifact_map.keys()],
             updated_at=datetime.utcnow().isoformat()
