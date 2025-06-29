@@ -93,10 +93,35 @@ async def plan_task_impl(task_id: str) -> ToolResponse:
         # Try to reconstruct artifact_content from the previous state's artifact
         prev_state = _get_previous_state(tool_instance.state)
         if prev_state:
-            artifact_key = f"{prev_state}_artifact"
+            # Map state names to cleaner artifact names (same as in submit_work)
+            artifact_name_map = {
+                "contextualize": "context",
+                "strategize": "strategy", 
+                "design": "design",
+                "generate_slots": "execution_plan"
+            }
+            
+            # Try both naming conventions for backward compatibility
+            artifact_name = artifact_name_map.get(prev_state, prev_state)
+            artifact_key = f"{artifact_name}_artifact"
+            old_artifact_key = f"{prev_state}_artifact"
+            
+            # Check both keys
             if artifact_key in prompt_context:
-                prompt_context["artifact_content"] = json.dumps(prompt_context[artifact_key], indent=2)
-                logger.info(f"[PLAN_TASK] Reconstructed artifact_content from {artifact_key}")
+                artifact_data = prompt_context[artifact_key]
+            elif old_artifact_key in prompt_context:
+                artifact_data = prompt_context[old_artifact_key]
+            else:
+                artifact_data = None
+                
+            if artifact_data:
+                # Handle both dict and Pydantic model
+                if hasattr(artifact_data, 'model_dump'):
+                    artifact_dict = artifact_data.model_dump()
+                else:
+                    artifact_dict = artifact_data
+                prompt_context["artifact_content"] = json.dumps(artifact_dict, indent=2)
+                logger.info(f"[PLAN_TASK] Reconstructed artifact_content from artifact")
     
     prompt = prompter.generate_prompt(
         task=task,

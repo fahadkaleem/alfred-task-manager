@@ -77,8 +77,20 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
         
         # Prepare additional context for prompt generation
         temp_context = active_tool.context_store.copy()
-        state_key = f"{current_state_val}_artifact"
-        temp_context[state_key] = validated_artifact
+        
+        # Map state names to cleaner artifact names
+        artifact_name_map = {
+            "contextualize": "context",
+            "strategize": "strategy", 
+            "design": "design",
+            "generate_slots": "execution_plan"
+        }
+        
+        # Use cleaner artifact name if available, otherwise fall back to state_artifact pattern
+        artifact_key = artifact_name_map.get(current_state_val, current_state_val)
+        artifact_key = f"{artifact_key}_artifact"
+        
+        temp_context[artifact_key] = validated_artifact
         temp_context["artifact_content"] = json.dumps(artifact, indent=2)
         
         # Generate prompt for the NEXT state (most likely to fail)
@@ -92,12 +104,12 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
         
         # PHASE 2: Commit - only if everything succeeded
         
-        # Store validated artifact in the tool's context
-        active_tool.context_store[state_key] = validated_artifact
+        # Store validated artifact in the tool's context using the same clean name
+        active_tool.context_store[artifact_key] = validated_artifact
         # Convert Pydantic model to dict for JSON serialization
         artifact_dict = validated_artifact.model_dump() if hasattr(validated_artifact, 'model_dump') else validated_artifact
         active_tool.context_store["artifact_content"] = json.dumps(artifact_dict, indent=2)
-        logger.info(f"Stored artifact in context_store with key '{state_key}' and artifact_content.")
+        logger.info(f"Stored artifact in context_store with key '{artifact_key}' and artifact_content.")
         
         # Persist artifact to scratchpad
         artifact_manager.append_to_scratchpad(
