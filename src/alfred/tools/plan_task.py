@@ -1,4 +1,6 @@
 # src/alfred/tools/plan_task.py
+import json
+from typing import Optional
 from src.alfred.models.schemas import ToolResponse, TaskStatus
 from src.alfred.lib.task_utils import load_task, update_task_status
 from src.alfred.orchestration.persona_loader import load_persona
@@ -10,6 +12,17 @@ from src.alfred.state.recovery import ToolRecovery
 from src.alfred.state.manager import state_manager
 
 logger = get_logger(__name__)
+
+
+def _get_previous_state(current_state: str) -> Optional[str]:
+    """Helper to get the previous state for a review state"""
+    state_map = {
+        "review_context": "contextualize",
+        "review_strategy": "strategize",
+        "review_design": "design",
+        "review_plan": "generate_slots"
+    }
+    return state_map.get(current_state)
 
 
 async def plan_task_impl(task_id: str) -> ToolResponse:
@@ -69,12 +82,28 @@ async def plan_task_impl(task_id: str) -> ToolResponse:
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
     
     # Generate appropriate prompt for current state
+    logger.info(f"[PLAN_TASK] Generating prompt for state: {tool_instance.state}")
+    logger.info(f"[PLAN_TASK] Context store keys: {list(tool_instance.context_store.keys())}")
+    
+    # Prepare context for prompt generation
+    prompt_context = tool_instance.context_store.copy()
+    
+    # For review states, ensure artifact_content is available
+    if "review" in tool_instance.state and "artifact_content" not in prompt_context:
+        # Try to reconstruct artifact_content from the previous state's artifact
+        prev_state = _get_previous_state(tool_instance.state)
+        if prev_state:
+            artifact_key = f"{prev_state}_artifact"
+            if artifact_key in prompt_context:
+                prompt_context["artifact_content"] = json.dumps(prompt_context[artifact_key], indent=2)
+                logger.info(f"[PLAN_TASK] Reconstructed artifact_content from {artifact_key}")
+    
     prompt = prompter.generate_prompt(
         task=task,
         tool_name=tool_instance.tool_name,
         state=tool_instance.state,
         persona_config=persona_config,
-        additional_context=tool_instance.context_store
+        additional_context=prompt_context
     )
     
     # Determine appropriate message based on whether we're resuming

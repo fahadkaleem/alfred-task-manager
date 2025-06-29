@@ -52,6 +52,9 @@ class StateManager:
             task_id: The task identifier
             tool: The workflow tool instance to persist
         """
+        logger.info(f"[STATE_MANAGER] save_tool_state called for task {task_id}")
+        logger.info(f"[STATE_MANAGER] Tool info - name: {tool.tool_name}, state: {tool.state}, context_keys: {list(tool.context_store.keys())}")
+        
         from src.alfred.models.state import WorkflowState
         
         # Create the state data
@@ -68,15 +71,16 @@ class StateManager:
         # Ensure directory exists
         state_file = self.get_task_state_file(task_id)
         state_file.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"[STATE_MANAGER] Writing state to {state_file}")
         
         # Atomic write with temp file
         temp_file = state_file.with_suffix('.tmp')
         try:
             temp_file.write_text(state_data.model_dump_json(indent=2))
             temp_file.replace(state_file)
-            logger.debug(f"Saved tool state for task {task_id} in state {tool.state}")
+            logger.info(f"[STATE_MANAGER] Successfully saved tool state for task {task_id} in state {tool.state}")
         except Exception as e:
-            logger.error(f"Failed to save tool state for task {task_id}: {e}")
+            logger.error(f"[STATE_MANAGER] Failed to save tool state for task {task_id}: {e}")
             if temp_file.exists():
                 temp_file.unlink()
             raise

@@ -94,7 +94,10 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
         
         # Store validated artifact in the tool's context
         active_tool.context_store[state_key] = validated_artifact
-        logger.info(f"Stored artifact in context_store with key '{state_key}'.")
+        # Convert Pydantic model to dict for JSON serialization
+        artifact_dict = validated_artifact.model_dump() if hasattr(validated_artifact, 'model_dump') else validated_artifact
+        active_tool.context_store["artifact_content"] = json.dumps(artifact_dict, indent=2)
+        logger.info(f"Stored artifact in context_store with key '{state_key}' and artifact_content.")
         
         # Persist artifact to scratchpad
         artifact_manager.append_to_scratchpad(
