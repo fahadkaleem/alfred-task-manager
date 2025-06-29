@@ -39,14 +39,29 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     else:
         validated_artifact = artifact  # No validator for this state, proceed
 
+    # --- NEW: Store validated artifact in the tool's context ---
+    state_key = f"{current_state.value if hasattr(current_state, 'value') else current_state}_artifact"
+    active_tool.context_store[state_key] = validated_artifact
+    logger.info(f"Stored artifact in context_store with key '{state_key}'.")
+
+    # --- Load persona config (used for both persistence and prompt generation) ---
+    try:
+        persona_config = load_persona(active_tool.persona_name)
+    except FileNotFoundError as e:
+        return ToolResponse(status="error", message=str(e))
+        
     # --- Artifact Persistence ---
-    # Reuse the existing ArtifactManager to append to the human-readable scratchpad.
-    # We create a simple, clean representation of the submitted artifact.
-    rendered_artifact = f"### Submission for State: `{active_tool.state}`\n\n```json\n{json.dumps(artifact, indent=2)}\n```"
-    artifact_manager.append_to_scratchpad(task_id, rendered_artifact)
+    # The tool no longer renders anything. It just passes the validated
+    # artifact model to the manager.
+    current_state_val = active_tool.state.value if hasattr(active_tool.state, 'value') else active_tool.state
+    artifact_manager.append_to_scratchpad(
+        task_id=task_id,
+        state_name=current_state_val,
+        artifact=validated_artifact,
+        persona_config=persona_config
+    )
     
     # --- State Transition ---
-    current_state_val = active_tool.state.value if hasattr(active_tool.state, 'value') else active_tool.state
     trigger = f"submit_{current_state_val}"
     
     if not hasattr(active_tool, trigger):
@@ -57,18 +72,17 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     logger.info(f"Task {task_id}: State transitioned via trigger '{trigger}' to '{active_tool.state}'.")
     
     # --- Generate Next Prompt for the new review state ---
-    try:
-        persona_config = load_persona(active_tool.persona_name)
-    except FileNotFoundError as e:
-        return ToolResponse(status="error", message=str(e))
         
+    # For review states, we need to provide the artifact_content and context_store
+    additional_context = active_tool.context_store.copy()
+    additional_context["artifact_content"] = json.dumps(artifact, indent=2)
+    
     next_prompt = prompter.generate_prompt(
         task=task,
         tool_name=active_tool.tool_name,
         state=active_tool.state,
         persona_config=persona_config,
-        # Pass the submitted artifact into the context for the AI review prompt
-        additional_context={"artifact_content": json.dumps(artifact, indent=2)}
+        additional_context=additional_context
     )
 
     return ToolResponse(status="success", message="Work submitted. Awaiting review.", next_prompt=next_prompt)

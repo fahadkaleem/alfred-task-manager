@@ -18,12 +18,12 @@ __all__ = ["ConfigManager", "AlfredConfig", "FeaturesConfig"]
 """Configuration manager for Alfred."""
 
 import json
+import logging
 from pathlib import Path
 
-from src.alfred.lib.logger import get_logger
 from src.alfred.models.alfred_config import AlfredConfig
 
-logger = get_logger("alfred.config.manager")
+logger = logging.getLogger("alfred.config.manager")
 
 
 class ConfigManager:
@@ -400,6 +400,7 @@ from pydantic import BaseModel
 
 from src.alfred.config.settings import settings
 from src.alfred.lib.logger import get_logger
+from src.alfred.lib.task_utils import load_task
 
 logger = get_logger(__name__)
 
@@ -457,8 +458,8 @@ class ArtifactManager:
         self._get_archive_dir(task_id).mkdir(exist_ok=True)
         logger.info(f"Created workspace for task {task_id} at {task_dir}")
 
-    def append_to_scratchpad(self, task_id: str, content_or_artifact_type: str, artifact_model: BaseModel = None, persona_config = None):
-        """Renders an artifact based on its type and appends it to the scratchpad."""
+    def append_to_scratchpad(self, task_id: str, state_name: str = None, artifact: BaseModel = None, persona_config = None, content: str = None):
+        """Renders a structured artifact to markdown and appends it to the scratchpad."""
         # Ensure the task workspace exists (in case of resumed tasks)
         task_dir = self._get_task_dir(task_id)
         if not task_dir.exists():
@@ -466,41 +467,50 @@ class ArtifactManager:
 
         scratchpad_path = self._get_scratchpad_path(task_id)
         
-        # If we get raw content (string), append it directly
-        if artifact_model is None and persona_config is None:
+        # If we get raw content (string), append it directly for backward compatibility
+        if content is not None:
             with scratchpad_path.open("a", encoding="utf-8") as f:
                 if scratchpad_path.stat().st_size > 0:
                     f.write("\n\n---\n\n")
-                f.write(content_or_artifact_type)
+                f.write(content)
             logger.info(f"Appended raw content to scratchpad for task {task_id}")
             return
 
-        # Otherwise, use the original template-based approach
-        artifact_type = content_or_artifact_type
-        template_name = persona_config.name.replace(" ", "_")
-        template_path = f"artifacts/{template_name}.md"
+        # New template-based approach
+        if artifact is None:
+            logger.error("No artifact provided for template rendering")
+            return
+
+        # Dynamically determine template name from artifact class name
+        # e.g., ContextAnalysisArtifact -> context_analysis.md
+        # Handle special case for ExecutionPlanArtifact (List[SLOT])
+        if isinstance(artifact, list) and state_name == "generate_slots":
+            template_name_snake = "execution_plan"
+        else:
+            artifact_type_name = artifact.__class__.__name__
+            template_name_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', artifact_type_name).lower().replace('_artifact', '')
+        
+        template_path = f"artifacts/{template_name_snake}.md"
 
         try:
             template = self.jinja_env.get_template(template_path)
-        except Exception:
-            logger.exception(f"Could not find artifact template '{template_path}'")
-            # As a fallback, try to find a generic template for the artifact type.
-            fallback_path = f"artifacts/{artifact_type}.md"
-            logger.info(f"Trying fallback artifact template: '{fallback_path}'")
-            try:
-                template = self.jinja_env.get_template(fallback_path)
-            except Exception:
-                logger.exception(f"Fallback template '{fallback_path}' also not found. Cannot render artifact.")
-                return
-
-        context = {"task_id": task_id, "artifact": artifact_model, "persona": persona_config}
-        rendered_content = template.render(context)
+        except Exception as e:
+            logger.error(f"Could not find artifact template '{template_path}': {e}. Falling back to raw JSON.")
+            rendered_content = f"### Submission for State: `{state_name}`\n\n```json\n{artifact.model_dump_json(indent=2)}\n```"
+        else:
+            context = {
+                "task": load_task(task_id),  # Load task for context
+                "state_name": state_name,
+                "artifact": artifact,
+                "persona": persona_config
+            }
+            rendered_content = template.render(context)
 
         with scratchpad_path.open("a", encoding="utf-8") as f:
             if scratchpad_path.stat().st_size > 0:
                 f.write("\n\n---\n\n")
             f.write(rendered_content)
-        logger.info(f"Appended artifact to scratchpad for task {task_id}")
+        logger.info(f"Appended rendered artifact '{template_name_snake}' to scratchpad for task {task_id}")
 
     def archive_scratchpad(self, task_id: str, persona_name: str, workflow_step: int):
         """Moves the current scratchpad to a versioned file in the archive and creates a new empty scratchpad."""
@@ -584,6 +594,10 @@ def setup_task_logging(task_id: str) -> None:
     # Add the handler to the root logger to capture logs from all modules
     root_logger = logging.getLogger()
     root_logger.addHandler(handler)
+    
+    # Ensure the root logger level allows INFO messages to pass through
+    if root_logger.level > logging.INFO:
+        root_logger.setLevel(logging.INFO)
 
     _task_handlers[task_id] = handler
 
@@ -596,52 +610,139 @@ def cleanup_task_logging(task_id: str) -> None:
         handler.close()
 
 ``````
+------ src/alfred/lib/md_parser.py ------
+``````
+# src/alfred/lib/md_parser.py
+import re
+from typing import Dict, List
+
+
+class MarkdownTaskParser:
+    """Parses a task definition from a markdown string."""
+
+    def parse(self, markdown_content: str) -> Dict:
+        """Parses the markdown content into a dictionary."""
+        data = {}
+        
+        # Extract the task_id from the first line, e.g., '# TASK: TS-01'
+        task_id_match = re.search(r"^#\s*TASK:\s*(\S+)", markdown_content, re.MULTILINE)
+        if task_id_match:
+            data['task_id'] = task_id_match.group(1).strip()
+
+        # Parse text-based sections
+        sections = {
+            "title": r"##\s*Title\s*\n(.*?)(?=\n##|$)",
+            "priority": r"##\s*Priority\s*\n(.*?)(?=\n##|$)",
+            "context": r"##\s*Context\s*\n(.*?)(?=\n##|$)",
+            "implementation_details": r"##\s*Implementation Details\s*\n(.*?)(?=\n##|$)",
+            "dev_notes": r"##\s*Dev Notes\s*\n(.*?)(?=\n##|$)",
+        }
+
+        for key, pattern in sections.items():
+            match = re.search(pattern, markdown_content, re.DOTALL | re.IGNORECASE)
+            if match:
+                data[key] = match.group(1).strip()
+
+        # Parse list-based sections
+        list_sections = {
+            "dependencies": r"##\s*Dependencies\s*\n(.*?)(?=\n##|$)",
+            "acceptance_criteria": r"##\s*Acceptance Criteria\s*\n(.*?)(?=\n##|$)",
+            "ac_verification_steps": r"##\s*AC Verification\s*\n(.*?)(?=\n##|$)",
+        }
+
+        for key, pattern in list_sections.items():
+            match = re.search(pattern, markdown_content, re.DOTALL | re.IGNORECASE)
+            if match:
+                content = match.group(1).strip()
+                if not content:
+                    data[key] = []
+                    continue
+                
+                # Parse list items properly - each item starts with '-' 
+                list_items = []
+                current_item = ""
+                
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith('##'):  # Stop at next section
+                        break
+                    if line.startswith('- '):
+                        # Start of new list item
+                        if current_item:
+                            list_items.append(current_item.strip())
+                        current_item = line[2:].strip()  # Remove '- '
+                    elif current_item:
+                        # Continuation of current item
+                        current_item += " " + line
+                
+                # Add the last item
+                if current_item:
+                    list_items.append(current_item.strip())
+                
+                data[key] = list_items
+            
+        return data
+``````
 ------ src/alfred/lib/task_utils.py ------
 ``````
 # src/alfred/lib/task_utils.py
+import json
 from pathlib import Path
+from typing import Optional
 from src.alfred.config.settings import settings, Settings
 from src.alfred.models.schemas import Task, TaskStatus
+from .md_parser import MarkdownTaskParser
 
 
-def load_task(task_id: str, root_dir: Path | None = None) -> Task | None:
-    """Loads a Task object from its JSON file in the workspace.
+def load_task(task_id: str, root_dir: Optional[Path] = None) -> Task | None:
+    """Loads a Task by parsing its .md file and merging with its state.json.
     
     Args:
         task_id: The ID of the task to load
         root_dir: Optional root directory to use instead of default settings
     """
-    if root_dir is not None:
-        workspace_dir = root_dir / settings.alfred_dir_name / "workspace"
-    else:
-        workspace_dir = settings.workspace_dir
-        
-    task_file = workspace_dir / task_id / "task.json"
-    if not task_file.exists():
+    alfred_dir = root_dir / settings.alfred_dir_name if root_dir else settings.alfred_dir
+    task_md_path = alfred_dir / "tasks" / f"{task_id}.md"
+
+    if not task_md_path.exists():
         return None
-    return Task.model_validate_json(task_file.read_text())
+
+    # Parse the markdown definition
+    parser = MarkdownTaskParser()
+    task_data = parser.parse(task_md_path.read_text())
+    task_model = Task(**task_data)
+
+    # Load the dynamic state
+    state_file = alfred_dir / "workspace" / task_id / "state.json"
+    if state_file.exists():
+        state_data = json.loads(state_file.read_text())
+        # Update the model with the persisted state
+        task_model.task_status = TaskStatus(state_data.get("task_status", "new"))
+    
+    return task_model
 
 
-def save_task(task: Task, root_dir: Path | None = None) -> None:
-    """Saves a Task object to its JSON file.
+def save_task_state(task_id: str, status: TaskStatus, root_dir: Optional[Path] = None):
+    """Saves only the dynamic state of a task.
     
     Args:
-        task: The task object to save
+        task_id: The ID of the task to save state for
+        status: The task status to save
         root_dir: Optional root directory to use instead of default settings
     """
-    if root_dir is not None:
-        workspace_dir = root_dir / settings.alfred_dir_name / "workspace"
-    else:
-        workspace_dir = settings.workspace_dir
-        
-    task_dir = workspace_dir / task.task_id
-    task_dir.mkdir(parents=True, exist_ok=True)
-    task_file = task_dir / "task.json"
-    task_file.write_text(task.model_dump_json(indent=2))
+    alfred_dir = root_dir / settings.alfred_dir_name if root_dir else settings.alfred_dir
+    state_dir = alfred_dir / "workspace" / task_id
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / "state.json"
+    
+    state_data = {"task_status": status.value}
+    state_file.write_text(json.dumps(state_data, indent=2))
 
 
-def update_task_status(task_id: str, new_status: TaskStatus, root_dir: Path | None = None) -> Task:
-    """Loads a task, updates its status, and saves it.
+def update_task_status(task_id: str, new_status: TaskStatus, root_dir: Optional[Path] = None) -> Task:
+    """Loads a task, updates its status, and saves the state.
     
     Args:
         task_id: The ID of the task to update
@@ -652,7 +753,7 @@ def update_task_status(task_id: str, new_status: TaskStatus, root_dir: Path | No
     if not task:
         raise FileNotFoundError(f"Task {task_id} not found.")
     task.task_status = new_status
-    save_task(task, root_dir)
+    save_task_state(task_id, new_status, root_dir)
     return task
 ``````
 ------ src/alfred/lib/transaction_logger.py ------
@@ -1310,8 +1411,12 @@ class Orchestrator:
         if not validated_artifact:
             return f"Artifact validation failed for state '{runtime.state}'.", None
 
-        artifact_type = type(validated_artifact).__name__.lower().replace("artifact", "")
-        artifact_manager.append_to_scratchpad(task_id, artifact_type, validated_artifact, runtime.config)
+        artifact_manager.append_to_scratchpad(
+            task_id=task_id,
+            state_name=runtime.state,
+            artifact=validated_artifact,
+            persona_config=runtime.config
+        )
         runtime.submitted_artifact_data = artifact_data
 
         success, message = runtime.trigger_submission()
@@ -1882,6 +1987,16 @@ target_status: "ready_for_planning"
 completion_status: "ready_for_setup"
 execution_mode: "batch"
 
+# --- NEW FIELDS ---
+greeting: "Hey there! I'm Alex. I'll be your solution architect for this task. My job is to help you create a rock-solid technical plan before we write any code. Let's get the ball rolling."
+
+communication_style: "Professional yet approachable. I explain complex technical concepts in simple terms. I am proactive in identifying risks and dependencies. I focus on the 'why' behind the architecture, not just the 'what'."
+
+thinking_methodology:
+  - "Always start with the business goal and work backwards to the technical solution."
+  - "Favor simplicity and clarity over unnecessary complexity."
+  - "Ensure every part of the plan is testable and verifiable."
+
 hsm:
   initial_state: "strategy_working"
   states:
@@ -2065,11 +2180,6 @@ from src.alfred.lib.transaction_logger import transaction_logger
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
 from src.alfred.tools.plan_task import plan_task_impl
-# --- COMMENTED OUT LEGACY TOOL IMPORTS ---
-# from src.alfred.tools.progress_tools import mark_step_complete as mark_step_complete_impl
-# from src.alfred.tools.review_tools import approve_and_advance_stage as approve_and_advance_stage_impl
-# from src.alfred.tools.review_tools import approve_and_handoff as approve_and_handoff_impl
-# from src.alfred.tools.task_tools import begin_task as begin_task_impl
 
 # New generic state-advancing tool implementations
 from src.alfred.tools.submit_work import submit_work_impl
@@ -2113,7 +2223,7 @@ async def plan_task(task_id: str) -> ToolResponse:
 
     This is the primary tool for transforming a high-level task or user story
     into a concrete, machine-executable 'Execution Plan' composed of SLOTs.
-    A SLOT (Spec, Location, Operation, Taskflow) is an atomic unit of work.
+    A SLOT (Specification, Location, Operation, Task) is an atomic unit of work.
 
     This tool manages a multi-step, interactive planning process:
     1. **Contextualize**: Deep analysis of the task requirements and codebase context
@@ -2194,105 +2304,6 @@ async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = 
     return response
 
 
-# --- LEGACY TOOLS COMMENTED OUT ---
-
-"""
-@app.tool()
-async def begin_task(task_id: str) -> ToolResponse:
-    '''
-    Begins or resumes a task in the Alfred workflow, activating the correct persona based on the task's current state.
-
-    - **Primary Function**: This is the main entry point for starting or continuing work on a specific task.
-    - **Key Features**:
-      - Creates a new task record and workspace if the task is new.
-      - Resumes an existing task from its last saved state, loading the correct persona and phase.
-      - Returns a `ToolResponse` containing the `next_prompt` to guide the AI's first action on the task.
-    - **Use this tool EXCLUSIVELY when**:
-      - You are beginning work on a task for the very first time.
-      - You are returning to a task after a break and need to re-establish your context.
-    - **CRITICAL GUARDRAILS**:
-      - **This is your ENTRY POINT:** Call this tool first when interacting with a `task_id`.
-      - **Do NOT call this repeatedly:** Once a task is started, follow the instructions from the server's `next_prompt`. Do not call `begin_task` again for the same task unless you are intentionally resuming a session.
-
-    ## Parameters
-    - **task_id** `[string]` (required): The unique identifier for the task (e.g., "PROJ-123").
-    '''
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id}
-    response = begin_task_impl(task_id)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
-    return response
-
-
-
-
-@app.tool()
-async def approve_and_handoff(task_id: str) -> ToolResponse:
-    '''
-    Gives final approval for a persona's entire workflow and hands the task off to the next persona in the sequence.
-
-    - **Primary Function**: This is the "human approval" gate for an entire persona's completed work. It archives the current persona's work and activates the next persona.
-    - **Use this tool when**: A persona has reached its final `_devreview` or `_verified` state, and the user has approved all work done by that persona.
-    - **Distinction**: This tool moves *between personas*. Use `approve_and_advance_stage` for internal stage progression.
-
-    ## Example
-    - The Developer persona is in the `coding_devreview` state. User says "The code is perfect, hand it off to QA."
-    - You call `approve_and_handoff(task_id="...")`.
-    - The task status becomes `ready_for_qa`, and the next prompt will be from the QA persona.
-
-    ## Parameters
-    - **task_id** `[string]` (required): The task identifier.
-    '''
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id}
-    response = approve_and_handoff_impl(task_id)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
-    return response
-
-
-@app.tool()
-async def approve_and_advance_stage(task_id: str) -> ToolResponse:
-    '''
-    Gives human approval to an internal stage and advances to the next stage *within the same persona*.
-
-    - **Primary Function**: This is the "human approval" gate for multi-stage personas like Planning. It triggers the `human_approve` transition.
-    - **Use this tool when**: You are in a `_devreview` state within a multi-stage persona (e.g., `strategy_devreview`) and the user has explicitly approved the work for that stage.
-    - **Distinction**: This tool advances *internally*. Use `approve_and_handoff` to move to a completely new persona.
-
-    ## Example
-    - State is `strategy_devreview`. User says "The strategy looks good, proceed."
-    - You call `approve_and_advance_stage(task_id="...")`.
-    - State becomes `solution_design_working`. The persona is still "Alex" the Planner.
-
-    ## Parameters
-    - **task_id** `[string]` (required): The task identifier.
-    '''
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id}
-    response = approve_and_advance_stage_impl(task_id)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
-    return response
-
-
-@app.tool()
-async def mark_step_complete(task_id: str, step_id: str) -> ToolResponse:
-    '''
-    Marks a single execution step as complete during a multi-step ("stepwise") persona workflow, like coding.
-
-    - **Primary Function**: Acts as a checkpoint. Persists the completion of one atomic step and provides the prompt for the very next step.
-    - **Use this tool when**: You are in a `stepwise` persona (like Developer) and have just executed a single step from the plan.
-    - **CRITICAL GUARDRAILS**: This tool MUST be called for each step in the exact order they are provided by the server.
-
-    ## Parameters
-    - **task_id** `[string]` (required): The task identifier.
-    - **step_id** `[string]` (required): The unique ID of the step that has just been completed. The ID will be in the prompt.
-    '''
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "step_id": step_id}
-    response = mark_step_complete_impl(task_id, step_id)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
-    return response
-"""
 
 
 if __name__ == "__main__":
@@ -2485,6 +2496,87 @@ status: verified
 ```
 {{ artifact.test_results.full_output }}
 ```
+``````
+------ src/alfred/templates/artifacts/context_analysis.md ------
+``````
+### Context Analysis for `{{ task.task_id }}`
+*State: `contextualize`*
+
+**Analysis Summary:**
+{{ artifact.context_summary }}
+
+**Identified Affected Files:**
+{% for file in artifact.affected_files -%}
+- `{{ file }}`
+{% endfor %}
+**Questions for Developer:**
+{% for question in artifact.questions_for_developer -%}
+- {{ question }}
+{% endfor %}
+``````
+------ src/alfred/templates/artifacts/design.md ------
+``````
+### Design for `{{ task.task_id }}`
+*State: `design`*
+
+**Design Summary:**
+{{ artifact.design_summary }}
+
+**File Breakdown:**
+{% for file_change in artifact.file_breakdown -%}
+**{{ file_change.file_path }}** ({{ file_change.operation }})
+{{ file_change.change_summary }}
+
+{% endfor %}
+``````
+------ src/alfred/templates/artifacts/execution_plan.md ------
+``````
+### Execution Plan for `{{ task.task_id }}`
+*State: `generate_slots`*
+
+**Implementation Plan:**
+
+{% for slot in artifact %}
+#### Slot {{ slot.slot_id }}: {{ slot.title }}
+
+**Specification:**
+{{ slot.spec }}
+
+**Acceptance Criteria:**
+{% for criteria in slot.acceptance_criteria -%}
+- {{ criteria }}
+{% endfor %}
+
+**Task Flow:** {{ slot.taskflow.value }}
+{% if slot.dependencies %}
+**Dependencies:** {{ slot.dependencies|join(", ") }}
+{% endif %}
+
+{% endfor %}
+``````
+------ src/alfred/templates/artifacts/strategy.md ------
+``````
+### Strategy for `{{ task.task_id }}`
+*State: `strategize`*
+
+**High-Level Strategy:**
+{{ artifact.high_level_strategy }}
+
+**Key Components:**
+{% for component in artifact.key_components -%}
+- {{ component }}
+{% endfor %}
+{% if artifact.new_dependencies %}
+**New Dependencies:**
+{% for dependency in artifact.new_dependencies -%}
+- {{ dependency }}
+{% endfor %}
+{% endif %}
+
+{% if artifact.risk_analysis %}
+**Risk Analysis:**
+{{ artifact.risk_analysis }}
+{% endif %}
 ``````
 ------ src/alfred/templates/prompts/__init__.py ------
 ``````
@@ -2740,6 +2832,15 @@ Please check the repository status and create the feature branch `feature/{task_
 
 I am beginning the planning process for '{{ task.title }}'.
 
+---
+### **Persona Guidelines**
+
+**Your Persona:** {{ persona.name }}, {{ persona.title }}.
+**Communication Style:** {{ persona.communication_style }}
+
+You MUST embody this persona. **Do not use repetitive, canned phrases.** Your first message to the user should be a unique greeting based on the persona's `greeting` and `style`. For example: `{{ persona.greeting }}`. Adapt your language to feel like a genuine, collaborative partner.
+---
+
 **Task Context:**
 - **Goal:** {{ task.context }}
 - **Implementation Overview:** {{ task.implementation_details }}
@@ -2850,25 +2951,37 @@ You MUST now call `alfred.submit_work` with the final `ExecutionPlanArtifact` (t
 # TASK: {{ task.task_id }}
 # STATE: review_context
 
-My initial analysis has generated the following questions. I must now clarify these with the human developer to ensure my understanding is complete before proceeding with the technical strategy.
+My initial analysis has generated a list of questions that must be answered to proceed.
 
 ---
-### **Directive: User Clarification**
+### **Persona Guidelines**
 
-Present these questions to the human developer and await their answers.
+**Your Persona:** {{ persona.name }}, {{ persona.title }}.
+**Communication Style:** {{ persona.communication_style }}
 
-**My Questions:**
+You are now in a **Clarification Loop**. Your goal is to get complete answers for all your questions from the human developer.
+---
+### **Directive: Manage Clarification Dialogue**
+
+1.  **Maintain a checklist** of the questions below in your context.
+2.  **Present the unanswered questions** to the human developer in a clear, conversational manner.
+3.  **Receive their response.** They may not answer all questions at once.
+4.  **Check your list.** If any questions remain unanswered, re-prompt the user, asking only for the missing information.
+5.  **Repeat until all questions are answered.**
+
+**My Questions Checklist:**
 {% set artifact = artifact_content | fromjson %}
 {% for question in artifact.questions_for_developer %}
-- {{ question }}
+- [ ] {{ question }}
 {% endfor %}
 
 ---
 ### **Required Action**
 
-Once you have the developer's answers, you MUST call `alfred.provide_review` with `is_approved=True` and include the developer's answers in the `feedback_notes`. Format the notes as a clear Q&A string.
+**ONLY when all questions have been answered**, you MUST call `alfred.provide_review`.
 
-If the developer rejects the context and wants you to re-analyze, call `provide_review` with `is_approved=False`.
+- Set `is_approved=True`.
+- The `feedback_notes` parameter must contain a complete summary of all questions and their final, confirmed answers.
 ``````
 ------ src/alfred/templates/prompts/plan_task/review_design.md ------
 ``````
@@ -2958,6 +3071,17 @@ If the strategy is flawed, call `alfred.provide_review` with `is_approved=False`
 # STATE: strategize
 
 Context is verified. The human developer has provided all necessary clarifications. We will now create the high-level technical strategy for '{{ task.title }}'. This strategy will serve as the guiding principle for the detailed design.
+
+---
+### **Clarifications from Developer**
+{% if additional_context.feedback_notes %}
+The following clarifications were provided and MUST be incorporated into your strategy:
+```
+{{ additional_context.feedback_notes }}
+```
+{% else %}
+No specific clarifications were provided. Proceed based on the original task context.
+{% endif %}
 
 ---
 ### **Thinking Methodology**
@@ -4119,10 +4243,14 @@ from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.core.workflow import PlanTaskTool, PlanTaskState
 from src.alfred.core.prompter import prompter
 from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.lib.logger import setup_task_logging
 
 
 async def plan_task_impl(task_id: str) -> ToolResponse:
     """Implementation logic for the plan_task tool."""
+    # --- ADD LOGGING INITIATION ---
+    setup_task_logging(task_id)
+    
     task = load_task(task_id)
     if not task:
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
@@ -4188,7 +4316,7 @@ from src.alfred.orchestration.orchestrator import orchestrator
 from src.alfred.lib.task_utils import load_task, update_task_status
 from src.alfred.core.prompter import prompter
 from src.alfred.orchestration.persona_loader import load_persona
-from src.alfred.lib.logger import get_logger
+from src.alfred.lib.logger import get_logger, cleanup_task_logging
 
 logger = get_logger(__name__)
 
@@ -4227,6 +4355,10 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
         
         update_task_status(task_id, final_task_status)
         del orchestrator.active_tools[task_id]
+        
+        # --- ADD LOGGING CLEANUP ---
+        cleanup_task_logging(task_id)
+        
         logger.info(f"Tool '{active_tool.tool_name}' for task {task_id} completed. Task status updated to '{final_task_status.value}'.")
 
         return ToolResponse(
@@ -4241,7 +4373,7 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
         except FileNotFoundError as e:
             return ToolResponse(status="error", message=str(e))
         
-        additional_context = {"feedback_notes": feedback_notes} if not is_approved and feedback_notes else None
+        additional_context = {"feedback_notes": feedback_notes} if not is_approved and feedback_notes else {}
         
         next_prompt = prompter.generate_prompt(
             task=task,
@@ -4340,14 +4472,24 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     else:
         validated_artifact = artifact  # No validator for this state, proceed
 
+    # --- Load persona config (used for both persistence and prompt generation) ---
+    try:
+        persona_config = load_persona(active_tool.persona_name)
+    except FileNotFoundError as e:
+        return ToolResponse(status="error", message=str(e))
+        
     # --- Artifact Persistence ---
-    # Reuse the existing ArtifactManager to append to the human-readable scratchpad.
-    # We create a simple, clean representation of the submitted artifact.
-    rendered_artifact = f"### Submission for State: `{active_tool.state}`\n\n```json\n{json.dumps(artifact, indent=2)}\n```"
-    artifact_manager.append_to_scratchpad(task_id, rendered_artifact)
+    # The tool no longer renders anything. It just passes the validated
+    # artifact model to the manager.
+    current_state_val = active_tool.state.value if hasattr(active_tool.state, 'value') else active_tool.state
+    artifact_manager.append_to_scratchpad(
+        task_id=task_id,
+        state_name=current_state_val,
+        artifact=validated_artifact,
+        persona_config=persona_config
+    )
     
     # --- State Transition ---
-    current_state_val = active_tool.state.value if hasattr(active_tool.state, 'value') else active_tool.state
     trigger = f"submit_{current_state_val}"
     
     if not hasattr(active_tool, trigger):
@@ -4358,10 +4500,6 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     logger.info(f"Task {task_id}: State transitioned via trigger '{trigger}' to '{active_tool.state}'.")
     
     # --- Generate Next Prompt for the new review state ---
-    try:
-        persona_config = load_persona(active_tool.persona_name)
-    except FileNotFoundError as e:
-        return ToolResponse(status="error", message=str(e))
         
     next_prompt = prompter.generate_prompt(
         task=task,

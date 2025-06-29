@@ -1,12 +1,12 @@
 """Configuration manager for Alfred."""
 
 import json
+import logging
 from pathlib import Path
 
-from src.alfred.lib.logger import get_logger
 from src.alfred.models.alfred_config import AlfredConfig
 
-logger = get_logger("alfred.config.manager")
+logger = logging.getLogger("alfred.config.manager")
 
 
 class ConfigManager:

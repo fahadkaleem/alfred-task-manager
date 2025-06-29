@@ -6,6 +6,17 @@
 Context is verified. The human developer has provided all necessary clarifications. We will now create the high-level technical strategy for '{{ task.title }}'. This strategy will serve as the guiding principle for the detailed design.
 
 ---
+### **Clarifications from Developer**
+{% if additional_context.feedback_notes %}
+The following clarifications were provided and MUST be incorporated into your strategy:
+```
+{{ additional_context.feedback_notes }}
+```
+{% else %}
+No specific clarifications were provided. Proceed based on the original task context.
+{% endif %}
+
+---
 ### **Thinking Methodology**
 {% for principle in persona.thinking_methodology %}
 - {{ principle }}
