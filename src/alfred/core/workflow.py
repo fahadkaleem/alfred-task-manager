@@ -36,6 +36,24 @@ class BaseWorkflowTool:
         Override in subclasses to define terminal states.
         """
         return self.state == "verified"
+    
+    @classmethod
+    def get_state_from_string(cls, state_string: str) -> str:
+        """
+        Convert a string state back to the appropriate enum value.
+        
+        This is used during tool recovery to restore the state from
+        persisted string values.
+        
+        Args:
+            state_string: The state as a string
+            
+        Returns:
+            The state string (for now, states are already strings)
+        """
+        # For now, our states are already strings due to the Enum.value usage
+        # This method provides a hook for future enum handling if needed
+        return state_string
 
     def _create_review_transitions(self, source_state: Enum, review_state: Enum, success_destination_state: Enum) -> List[Dict[str, Any]]:
         """Factory for creating the standard two-step (AI, Human) review transitions."""
