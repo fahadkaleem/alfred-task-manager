@@ -5,7 +5,7 @@ from src.alfred.orchestration.orchestrator import orchestrator
 from src.alfred.lib.task_utils import load_task, update_task_status
 from src.alfred.core.prompter import prompter
 from src.alfred.orchestration.persona_loader import load_persona
-from src.alfred.lib.logger import get_logger
+from src.alfred.lib.logger import get_logger, cleanup_task_logging
 
 logger = get_logger(__name__)
 
@@ -44,6 +44,10 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
         
         update_task_status(task_id, final_task_status)
         del orchestrator.active_tools[task_id]
+        
+        # --- ADD LOGGING CLEANUP ---
+        cleanup_task_logging(task_id)
+        
         logger.info(f"Tool '{active_tool.tool_name}' for task {task_id} completed. Task status updated to '{final_task_status.value}'.")
 
         return ToolResponse(
@@ -58,7 +62,7 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
         except FileNotFoundError as e:
             return ToolResponse(status="error", message=str(e))
         
-        additional_context = {"feedback_notes": feedback_notes} if not is_approved and feedback_notes else None
+        additional_context = {"feedback_notes": feedback_notes} if not is_approved and feedback_notes else {}
         
         next_prompt = prompter.generate_prompt(
             task=task,

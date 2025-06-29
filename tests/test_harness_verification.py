@@ -49,8 +49,8 @@ def test_task_file_operations(alfred_test_project: AlfredTestProject):
     # Save the task using the test project
     alfred_test_project.create_task_file(test_task)
     
-    # Verify the task file was created in the correct location
-    expected_task_file = alfred_test_project.settings.workspace_dir / "TEST-001" / "task.json"
+    # Verify the task markdown file was created in the correct location
+    expected_task_file = alfred_test_project.alfred_dir / "tasks" / "TEST-001.md"
     assert expected_task_file.exists()
     
     # Load the task back and verify it's correct

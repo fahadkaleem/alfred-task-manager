@@ -3,13 +3,24 @@ import pytest
 import os
 import shutil
 import uuid
+import logging
 from pathlib import Path
 from typing import Generator
+from unittest.mock import Mock, patch
 
 from src.alfred.tools.initialize import initialize_project
 from src.alfred.models.schemas import Task
-from src.alfred.lib.task_utils import save_task
+from src.alfred.lib.task_utils import save_task_state, load_task
 from src.alfred.config.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def mock_logging_for_tests():
+    """Mock only the specific logging setup that creates files during tests."""
+    # Only mock the setup_task_logging function to prevent file creation
+    with patch('src.alfred.lib.logger.setup_task_logging'), \
+         patch('src.alfred.lib.logger.cleanup_task_logging'):
+        yield
 
 
 class AlfredTestProject:
@@ -30,19 +41,54 @@ class AlfredTestProject:
         return result
     
     def create_task_file(self, task: Task):
-        """Create a task file in the test workspace."""
-        # Use test-specific workspace directory
-        task_dir = self.settings.workspace_dir / task.task_id
-        task_dir.mkdir(parents=True, exist_ok=True)
-        task_file = task_dir / "task.json"
-        task_file.write_text(task.model_dump_json(indent=2))
+        """Create a task markdown file in the test workspace."""
+        # Create the tasks directory
+        tasks_dir = self.alfred_dir / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create the markdown file
+        task_file = tasks_dir / f"{task.task_id}.md"
+        markdown_content = f"""# TASK: {task.task_id}
+
+## Title
+{task.title}
+
+## Context
+{task.context}
+
+## Implementation Details
+{task.implementation_details}
+"""
+        
+        if task.dev_notes:
+            markdown_content += f"""
+## Dev Notes
+{task.dev_notes}
+"""
+        
+        if task.acceptance_criteria:
+            markdown_content += "\n## Acceptance Criteria\n"
+            for criterion in task.acceptance_criteria:
+                markdown_content += f"- {criterion}\n"
+        
+        if task.ac_verification_steps:
+            markdown_content += "\n## AC Verification\n"
+            for step in task.ac_verification_steps:
+                markdown_content += f"- {step}\n"
+        
+        task_file.write_text(markdown_content)
+        
+        # Save the task state using the test project's settings
+        from unittest.mock import patch
+        with patch('src.alfred.lib.task_utils.settings', self.settings):
+            save_task_state(task.task_id, task.task_status, self.root)
     
     def load_task(self, task_id: str) -> Task | None:
         """Load a task from the test workspace."""
-        task_file = self.settings.workspace_dir / task_id / "task.json"
-        if not task_file.exists():
-            return None
-        return Task.model_validate_json(task_file.read_text())
+        # Use the test project's settings by patching during the load
+        from unittest.mock import patch
+        with patch('src.alfred.lib.task_utils.settings', self.settings):
+            return load_task(task_id, self.root)
     
     def get_task_state(self, task_id: str) -> Task | None:
         """Helper to get the current task state."""

@@ -28,6 +28,7 @@ class TestProvideReview:
         mock_tool.ai_approve = Mock()
         mock_tool.tool_name = "plan_task"
         mock_tool.persona_name = "planning"
+        mock_tool.context_store = {"test_key": "test_value"}
         
         # Mock task
         mock_task = Mock(spec=Task)
@@ -70,6 +71,7 @@ class TestProvideReview:
         mock_tool.request_revision = Mock()
         mock_tool.tool_name = "plan_task"
         mock_tool.persona_name = "planning"
+        mock_tool.context_store = {"test_key": "test_value"}
         
         # Mock task
         mock_task = Mock(spec=Task)
@@ -111,6 +113,7 @@ class TestProvideReview:
         mock_tool.is_terminal = True
         mock_tool.ai_approve = Mock()
         mock_tool.tool_name = "plan_task"
+        mock_tool.context_store = {"test_key": "test_value"}
         
         # Mock task
         mock_task = Mock(spec=Task)
@@ -237,6 +240,7 @@ class TestFullPlanningLifecycle:
             mock_tool = Mock(spec=PlanTaskTool)
             mock_tool.tool_name = "plan_task"
             mock_tool.persona_name = "planning"
+            mock_tool.context_store = {"test_key": "test_value"}
             mock_orchestrator.active_tools = {task_id: mock_tool}
             
             # Mock task
@@ -294,6 +298,7 @@ class TestFullPlanningLifecycle:
         mock_tool.is_terminal = False
         mock_tool.request_revision = Mock()
         mock_tool.tool_name = "plan_task"
+        mock_tool.context_store = {"test_key": "test_value"}
         mock_tool.persona_name = "planning"
         
         # Mock task

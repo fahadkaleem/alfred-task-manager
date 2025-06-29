@@ -70,9 +70,9 @@ class TestSubmitWork:
             # 7. Verify artifact was persisted
             mock_artifact_manager.append_to_scratchpad.assert_called_once()
             call_args = mock_artifact_manager.append_to_scratchpad.call_args
-            assert call_args[0][0] == task_id  # task_id argument
-            assert "### Submission for State: `contextualize`" in call_args[0][1]  # rendered content
-            assert json.dumps(test_artifact, indent=2) in call_args[0][1]
+            assert call_args.kwargs["task_id"] == task_id  # task_id argument
+            assert call_args.kwargs["state_name"] == "contextualize"  # state_name argument
+            assert call_args.kwargs["artifact"] is not None  # artifact was passed
             
             # 8. Verify prompter was called with artifact content
             mock_prompter.generate_prompt.assert_called_once()

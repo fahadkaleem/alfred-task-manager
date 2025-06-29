@@ -26,6 +26,8 @@ class BaseWorkflowTool:
         self.machine = None
         # Add a new attribute for artifact mapping
         self.artifact_map: Dict[Enum, Type[BaseModel]] = {}
+        # Context store for persisting artifacts between state transitions
+        self.context_store: Dict[str, Any] = {}
 
     @property
     def is_terminal(self) -> bool:

@@ -265,8 +265,12 @@ class Orchestrator:
         if not validated_artifact:
             return f"Artifact validation failed for state '{runtime.state}'.", None
 
-        artifact_type = type(validated_artifact).__name__.lower().replace("artifact", "")
-        artifact_manager.append_to_scratchpad(task_id, artifact_type, validated_artifact, runtime.config)
+        artifact_manager.append_to_scratchpad(
+            task_id=task_id,
+            state_name=runtime.state,
+            artifact=validated_artifact,
+            persona_config=runtime.config
+        )
         runtime.submitted_artifact_data = artifact_data
 
         success, message = runtime.trigger_submission()

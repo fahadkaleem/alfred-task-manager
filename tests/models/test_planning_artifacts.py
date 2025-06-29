@@ -104,28 +104,45 @@ class TestDesignArtifact:
     def test_valid_design_artifact(self):
         """Test that a valid DesignArtifact can be created."""
         data = {
-            "detailed_design": "The OAuth system will consist of three main components...",
+            "design_summary": "The OAuth system will consist of three main components...",
             "file_breakdown": [
-                {"file": "src/auth/oauth.py", "purpose": "Main OAuth implementation"},
-                {"file": "src/auth/tokens.py", "purpose": "Token validation and management"}
+                {
+                    "file_path": "src/auth/oauth.py", 
+                    "change_summary": "Main OAuth implementation",
+                    "operation": "create"
+                },
+                {
+                    "file_path": "src/auth/tokens.py", 
+                    "change_summary": "Token validation and management",
+                    "operation": "modify"
+                }
             ]
         }
         
         artifact = DesignArtifact.model_validate(data)
         
-        assert artifact.detailed_design == data["detailed_design"]
-        assert artifact.file_breakdown == data["file_breakdown"]
+        assert artifact.design_summary == data["design_summary"]
+        assert len(artifact.file_breakdown) == 2
+        assert artifact.file_breakdown[0].file_path == "src/auth/oauth.py"
+        assert artifact.file_breakdown[0].change_summary == "Main OAuth implementation"
+        assert artifact.file_breakdown[0].operation == "create"
     
     def test_missing_required_field_detailed_design(self):
-        """Test that ValidationError is raised when detailed_design is missing."""
+        """Test that ValidationError is raised when design_summary is missing."""
         data = {
-            "file_breakdown": [{"file": "src/auth.py", "purpose": "Authentication"}]
+            "file_breakdown": [
+                {
+                    "file_path": "src/auth.py", 
+                    "change_summary": "Authentication implementation",
+                    "operation": "create"
+                }
+            ]
         }
         
         with pytest.raises(ValidationError) as exc_info:
             DesignArtifact.model_validate(data)
         
-        assert "detailed_design" in str(exc_info.value)
+        assert "design_summary" in str(exc_info.value)
 
 
 class TestExecutionPlanArtifact:
