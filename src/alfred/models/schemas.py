@@ -19,6 +19,7 @@ class ToolResponse(BaseModel):
 
 class TaskStatus(str, Enum):
     """Enumeration for the high-level status of a Task."""
+
     NEW = "new"
     PLANNING = "planning"
     READY_FOR_DEVELOPMENT = "ready_for_development"
@@ -33,15 +34,17 @@ class TaskStatus(str, Enum):
 
 
 class OperationType(str, Enum):
-    """Enumeration for the type of file system operation in a SLOT."""
-    CREATE = "create"
-    MODIFY = "modify"
-    DELETE = "delete"
-    REVIEW = "review"  # For tasks that only involve reviewing code, not changing it.
+    """Enumeration for the type of file system operation in a Subtask."""
+
+    CREATE = "CREATE"
+    MODIFY = "MODIFY"
+    DELETE = "DELETE"
+    REVIEW = "REVIEW"  # For tasks that only involve reviewing code, not changing it.
 
 
 class Task(BaseModel):
     """Represents a single, well-defined unit of work (a user story or engineering task)."""
+
     task_id: str = Field(description="The unique identifier, e.g., 'TS-01'.")
     title: str = Field(description="A short, human-readable title for the task.")
     context: str = Field(description="The background for this task, explaining the 'why'.")
@@ -52,17 +55,23 @@ class Task(BaseModel):
     task_status: TaskStatus = Field(default=TaskStatus.NEW)
 
 
-class Taskflow(BaseModel):
-    """Defines the step-by-step procedure and verification for a SLOT."""
-    procedural_steps: List[str] = Field(description="Sequential steps for the AI to execute.")
-    verification_steps: List[str] = Field(description="Checks or tests to verify the SLOT is complete.")
+class Subtask(BaseModel):
+    """The core, self-contained unit of work, based on the LOST framework."""
 
+    subtask_id: str = Field(description="A unique ID for this Subtask, e.g., 'ST-1'.")
+    title: str = Field(description="A short, human-readable title for the Subtask.")
+    summary: Optional[str] = Field(None, description="Optional summary when title isn't sufficient to explain the changes.")
 
-class SLOT(BaseModel):
-    """The core, self-contained, and atomic unit of technical work."""
-    slot_id: str = Field(description="A unique ID for this SLOT, e.g., 'slot_1.1'.")
-    title: str = Field(description="A short, human-readable title for the SLOT.")
-    spec: str = Field(description="The detailed specification for this change.")
+    # L: Location
     location: str = Field(description="The primary file path or directory for the work.")
+
+    # O: Operation
     operation: OperationType = Field(description="The type of file system operation.")
-    taskflow: Taskflow = Field(description="The detailed workflow for execution and testing.")
+
+    # S: Specification
+    specification: List[str] = Field(description="An ordered list of procedural steps for the AI to execute.")
+
+    # T: Test
+    test: List[str] = Field(description="A list of concrete verification steps or unit tests to confirm success.")
+
+    model_config = {"use_enum_values": True}

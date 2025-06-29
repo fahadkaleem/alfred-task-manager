@@ -19,7 +19,7 @@ class PersonaRuntime:
     def __init__(self, task_id: str, config: PersonaConfig):
         self.task_id = task_id
         self.config = config
-        
+
         # Ensure transitions have source as list
         transitions = []
         for t in config.hsm.transitions:
@@ -27,7 +27,7 @@ class PersonaRuntime:
             if isinstance(transition.get("source"), str):
                 transition["source"] = [transition["source"]]
             transitions.append(transition)
-        
+
         self.machine = HierarchicalMachine(
             model=self,
             states=config.hsm.states,
@@ -43,7 +43,7 @@ class PersonaRuntime:
         now with support for additional, ad-hoc context.
         """
         prompt_template_path = self.config.prompts.get(self.state)
-        
+
         # Special handling for requirements persona to select provider-specific prompt
         if self.config.name == "Intake Analyst" and additional_context and "task_provider" in additional_context:
             provider = additional_context["task_provider"]
@@ -88,6 +88,7 @@ class PersonaRuntime:
         if not validator_config:
             # If no validator is defined for this state, return the raw data as a simple namespace
             from types import SimpleNamespace
+
             return SimpleNamespace(**artifact_data)
         try:
             module_path, class_name = validator_config.model_path.rsplit(".", 1)
@@ -123,9 +124,9 @@ class PersonaRuntime:
             trigger_name = "human_approve"
         else:
             trigger_name = "ai_approve" if is_approved else "request_revision"
-            
+
         transition_config = None
-        
+
         for t in self.config.hsm.transitions:
             if t["trigger"] == trigger_name:
                 source = t["source"]

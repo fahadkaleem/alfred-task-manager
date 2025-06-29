@@ -43,12 +43,12 @@ class Orchestrator:
     def _validate_configuration(self):
         """
         Validates the Alfred configuration during startup.
-        
+
         This method:
         1. Parses workflow.yml to get the persona sequence
         2. Ensures corresponding persona .yml files exist in the personas/ directory
         3. Validates that PersonaLoader can parse each required YAML file against PersonaConfig
-        
+
         Raises:
             SystemExit: If any persona is missing or misconfigured
         """
@@ -57,71 +57,71 @@ class Orchestrator:
             if not settings.packaged_workflow_file.exists():
                 logger.critical(f"workflow.yml not found at: {settings.packaged_workflow_file}")
                 raise SystemExit("CRITICAL ERROR: workflow.yml file is missing. Alfred cannot start.")
-            
+
             with settings.packaged_workflow_file.open("r", encoding="utf-8") as f:
                 workflow_data = yaml.safe_load(f)
-            
+
             if not workflow_data or "sequence" not in workflow_data:
                 logger.critical("workflow.yml is missing required 'sequence' field")
                 raise SystemExit("CRITICAL ERROR: workflow.yml is malformed - missing 'sequence' field. Alfred cannot start.")
-            
+
             sequence = workflow_data["sequence"]
             if not isinstance(sequence, list) or not sequence:
                 logger.critical("workflow.yml 'sequence' field must be a non-empty list")
                 raise SystemExit("CRITICAL ERROR: workflow.yml 'sequence' field must be a non-empty list. Alfred cannot start.")
-            
+
             # Validate personas directory exists
             if not settings.packaged_personas_dir.exists():
                 logger.critical(f"Personas directory not found at: {settings.packaged_personas_dir}")
                 raise SystemExit(f"CRITICAL ERROR: Personas directory missing at {settings.packaged_personas_dir}. Alfred cannot start.")
-            
+
             # Check each persona in the sequence
             missing_personas = []
             invalid_personas = []
-            
+
             for persona_name in sequence:
                 persona_file = settings.packaged_personas_dir / f"{persona_name}.yml"
-                
+
                 # Check if persona file exists
                 if not persona_file.exists():
                     missing_personas.append(persona_name)
                     continue
-                
+
                 # Validate persona file can be parsed
                 try:
                     with persona_file.open("r", encoding="utf-8") as f:
                         data = yaml.safe_load(f)
-                    
+
                     if not data:
                         invalid_personas.append(f"{persona_name} (empty file)")
                         continue
-                    
+
                     # Validate against PersonaConfig model
                     PersonaConfig(**data)
                     logger.debug(f"Successfully validated persona: {persona_name}")
-                    
+
                 except yaml.YAMLError as e:
                     invalid_personas.append(f"{persona_name} (YAML parsing error: {e})")
                 except Exception as e:
                     invalid_personas.append(f"{persona_name} (validation error: {e})")
-            
+
             # Report all validation errors
             if missing_personas or invalid_personas:
                 error_msg = "CRITICAL ERROR: Alfred configuration validation failed:\n"
-                
+
                 if missing_personas:
                     error_msg += f"Missing persona files: {', '.join(missing_personas)}\n"
                     error_msg += f"Expected location: {settings.packaged_personas_dir}/\n"
-                
+
                 if invalid_personas:
                     error_msg += f"Invalid persona configurations: {', '.join(invalid_personas)}\n"
-                
+
                 error_msg += "Alfred cannot start until all personas are properly configured."
                 logger.critical(error_msg)
                 raise SystemExit(error_msg)
-            
+
             logger.info(f"Configuration validation successful. Validated {len(sequence)} personas: {', '.join(sequence)}")
-            
+
         except SystemExit:
             raise
         except Exception as e:
@@ -192,7 +192,7 @@ class Orchestrator:
                     return StateFile(tasks={task_id: task_state})
                 except Exception as e:
                     logger.error(f"Failed to load state for task {task_id}: {e}")
-        
+
         # Return empty state file for new tasks or when no task_id provided
         return StateFile()
 
@@ -200,18 +200,18 @@ class Orchestrator:
         """Saves a single task's state to its dedicated state.json file."""
         task_dir = settings.workspace_dir / task_state.task_id
         task_dir.mkdir(parents=True, exist_ok=True)
-        
+
         task_state_file = task_dir / "state.json"
         with task_state_file.open("w", encoding="utf-8") as f:
             f.write(task_state.model_dump_json(indent=2))
-        
+
         logger.debug(f"Saved state for task {task_state.task_id} to {task_state_file}")
 
     def begin_task(self, task_id: str) -> tuple[str, str | None]:
         """Begins or resumes a task, returning an initial prompt."""
         setup_task_logging(task_id)
         logger.info(f"Orchestrator beginning/resuming task {task_id}.")
-        
+
         runtime = self._get_or_create_runtime(task_id)
         if not runtime:
             logger.error(f"Failed to get or create runtime for task {task_id}.")
@@ -225,10 +225,10 @@ class Orchestrator:
     def _build_task_context(self, runtime, task_id: str) -> dict:
         """Builds additional context for task execution."""
         additional_context = {}
-        
+
         self._add_provider_context(runtime, additional_context)
         self._add_stepwise_context(runtime, task_id, additional_context)
-        
+
         return additional_context
 
     def _add_provider_context(self, runtime, additional_context: dict) -> None:
@@ -248,12 +248,14 @@ class Orchestrator:
                 steps = task_state.execution_plan.get("implementation_steps", [])
                 if task_state.current_step < len(steps):
                     step = steps[task_state.current_step]
-                    additional_context.update({
-                        "step_id": f"step_{task_state.current_step + 1}",
-                        "step_instruction": str(step),
-                        "step_number": task_state.current_step + 1,
-                        "total_steps": len(steps),
-                    })
+                    additional_context.update(
+                        {
+                            "step_id": f"step_{task_state.current_step + 1}",
+                            "step_instruction": str(step),
+                            "step_number": task_state.current_step + 1,
+                            "total_steps": len(steps),
+                        }
+                    )
 
     def submit_work_for_task(self, task_id: str, artifact_data: dict) -> tuple[str, str | None]:
         """Routes a work submission, validating and persisting the artifact."""
@@ -265,12 +267,7 @@ class Orchestrator:
         if not validated_artifact:
             return f"Artifact validation failed for state '{runtime.state}'.", None
 
-        artifact_manager.append_to_scratchpad(
-            task_id=task_id,
-            state_name=runtime.state,
-            artifact=validated_artifact,
-            persona_config=runtime.config
-        )
+        artifact_manager.append_to_scratchpad(task_id=task_id, state_name=runtime.state, artifact=validated_artifact, persona_config=runtime.config)
         runtime.submitted_artifact_data = artifact_data
 
         success, message = runtime.trigger_submission()
@@ -426,7 +423,7 @@ class Orchestrator:
 
         self._complete_current_step(task_state, step_id)
         steps = execution_plan.get("implementation_steps", [])
-        
+
         if task_state.current_step >= len(steps):
             return self._handle_all_steps_complete(runtime, task_state)
         else:

@@ -8,11 +8,11 @@ The complete `ExecutionPlan` has been generated. I will now perform a final holi
 ---
 ### **Directive: Final Plan Review**
 
-Review the generated `list[SLOT]` against the original `Task` context.
+Review the generated `list[Subtask]` against the original `Task` context.
 
 **Review Checklist:**
-1. **Coverage:** Is every `acceptance_criterion` from the original task fully addressed by the combination of all SLOTs?
-2. **Completeness:** Is the plan comprehensive? Are there any missing steps or logical gaps between SLOTs?
+1. **Coverage:** Is every `acceptance_criterion` from the original task fully addressed by the combination of all Subtasks?
+2. **Completeness:** Is the plan comprehensive? Are there any missing steps or logical gaps between Subtasks?
 3. **Traceability:** Does the plan clearly and logically derive from the approved `strategy` and `design`?
 4. **Delegation:** Have complex tasks been appropriately marked with a `delegation` spec?
 

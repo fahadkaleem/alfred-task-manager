@@ -1,0 +1,171 @@
+"""
+Central constants and configuration values for Alfred.
+
+This module contains all magic strings and hardcoded values used throughout
+the codebase, organized by category for easy maintenance and consistency.
+"""
+
+from enum import Enum
+from typing import Final
+
+
+# Tool Names
+class ToolName:
+    """Tool name constants."""
+
+    PLAN_TASK: Final[str] = "plan_task"
+    IMPLEMENT_TASK: Final[str] = "implement_task"
+
+
+# Directory and File Names
+class Paths:
+    """File system path constants."""
+
+    # Directories
+    ALFRED_DIR: Final[str] = ".alfred"
+    WORKSPACE_DIR: Final[str] = "workspace"
+    PERSONAS_DIR: Final[str] = "personas"
+    TEMPLATES_DIR: Final[str] = "templates"
+    ARCHIVE_DIR: Final[str] = "archive"
+    DEBUG_DIR: Final[str] = "debug"
+    TASKS_DIR: Final[str] = "tasks"
+
+    # Files
+    SCRATCHPAD_FILE: Final[str] = "scratchpad.md"
+    EXECUTION_PLAN_FILE: Final[str] = "execution_plan.json"
+    TOOL_STATE_FILE: Final[str] = "tool_state.json"
+    WORKFLOW_FILE: Final[str] = "workflow.yml"
+    STATE_FILE: Final[str] = "state.json"
+    TASK_FILE: Final[str] = "task.json"
+
+    # Extensions
+    TMP_EXTENSION: Final[str] = ".tmp"
+    MD_EXTENSION: Final[str] = ".md"
+    JSON_EXTENSION: Final[str] = ".json"
+
+
+# Template Paths
+class TemplatePaths:
+    """Template path patterns."""
+
+    PROMPT_PATTERN: Final[str] = "prompts/{tool_name}/{state}.md"
+    ARTIFACT_PATTERN: Final[str] = "artifacts/{template_name}.md"
+
+
+# Plan Task State Names (as strings for transitions)
+class PlanTaskStates:
+    """Plan task state string constants."""
+
+    INITIAL: Final[str] = "initial"
+    CONTEXTUALIZE: Final[str] = "contextualize"
+    REVIEW_CONTEXT: Final[str] = "review_context"
+    STRATEGIZE: Final[str] = "strategize"
+    REVIEW_STRATEGY: Final[str] = "review_strategy"
+    DESIGN: Final[str] = "design"
+    REVIEW_DESIGN: Final[str] = "review_design"
+    GENERATE_SUBTASKS: Final[str] = "generate_subtasks"
+    REVIEW_PLAN: Final[str] = "review_plan"
+    VERIFIED: Final[str] = "verified"
+
+
+# Artifact Keys and Mappings
+class ArtifactKeys:
+    """Artifact storage key constants."""
+
+    # State to artifact name mapping
+    STATE_TO_ARTIFACT_MAP: Final[dict] = {
+        PlanTaskStates.CONTEXTUALIZE: "context",
+        PlanTaskStates.STRATEGIZE: "strategy",
+        PlanTaskStates.DESIGN: "design",
+        PlanTaskStates.GENERATE_SUBTASKS: "execution_plan",
+    }
+
+    ARTIFACT_SUFFIX: Final[str] = "_artifact"
+    ARTIFACT_CONTENT_KEY: Final[str] = "artifact_content"
+
+    @staticmethod
+    def get_artifact_key(state: str) -> str:
+        """Get the artifact key for a given state."""
+        artifact_name = ArtifactKeys.STATE_TO_ARTIFACT_MAP.get(state, state)
+        return f"{artifact_name}{ArtifactKeys.ARTIFACT_SUFFIX}"
+
+
+# State Descriptions for Documentation
+class StateDescriptions:
+    """Human-readable state descriptions."""
+
+    DESCRIPTIONS: Final[dict] = {
+        PlanTaskStates.CONTEXTUALIZE: "Understanding the Requirements and Codebase",
+        PlanTaskStates.STRATEGIZE: "Technical Strategy and Approach",
+        PlanTaskStates.DESIGN: "Detailed Implementation Design",
+        PlanTaskStates.GENERATE_SUBTASKS: "Execution Plan",
+    }
+
+
+# Trigger Names
+class Triggers:
+    """State machine trigger constants."""
+
+    AI_APPROVE: Final[str] = "ai_approve"
+    REQUEST_REVISION: Final[str] = "request_revision"
+
+    @staticmethod
+    def submit_trigger(state: str) -> str:
+        """Generate submit trigger name for a state."""
+        return f"submit_{state}"
+
+
+# Response Status Values
+class ResponseStatus:
+    """Tool response status constants."""
+
+    SUCCESS: Final[str] = "success"
+    ERROR: Final[str] = "error"
+    CHOICES_NEEDED: Final[str] = "choices_needed"
+
+
+# Task Provider Names
+class TaskProviders:
+    """Task provider type constants."""
+
+    JIRA: Final[str] = "jira"
+    LINEAR: Final[str] = "linear"
+    LOCAL: Final[str] = "local"
+
+    ALL_PROVIDERS: Final[list] = [JIRA, LINEAR, LOCAL]
+
+
+# Subtask ID Format
+class SubtaskFormat:
+    """Subtask formatting constants."""
+
+    ID_PREFIX: Final[str] = "ST"
+    ID_PATTERN: Final[str] = "{prefix}-{number}"
+
+    @staticmethod
+    def format_id(number: int) -> str:
+        """Format a subtask ID."""
+        return SubtaskFormat.ID_PATTERN.format(prefix=SubtaskFormat.ID_PREFIX, number=number)
+
+
+# Log Messages
+class LogMessages:
+    """Standardized log message templates."""
+
+    TASK_NOT_FOUND: Final[str] = "Task '{task_id}' not found."
+    NO_ACTIVE_TOOL: Final[str] = "No active tool found for task '{task_id}'."
+    STATE_TRANSITION: Final[str] = "Task {task_id}: State transitioned via trigger '{trigger}' to '{state}'."
+    ARTIFACT_VALIDATED: Final[str] = "Artifact for state '{state}' validated successfully against {model}."
+    EXECUTION_PLAN_SAVED: Final[str] = "Successfully saved execution plan to {path}"
+    EXECUTION_PLAN_SAVE_FAILED: Final[str] = "Failed to save execution plan JSON: {error}"
+
+
+# Error Messages
+class ErrorMessages:
+    """Standardized error message templates."""
+
+    INVALID_STATE: Final[str] = "Invalid state: {state}"
+    VALIDATION_FAILED: Final[str] = "Artifact validation failed for state '{state}'"
+    FILE_NOT_FOUND: Final[str] = "File not found: {path}"
+    PERMISSION_DENIED: Final[str] = "Permission denied: {path}"
+    INVALID_TASK_FORMAT: Final[str] = "Invalid task format: {reason}"

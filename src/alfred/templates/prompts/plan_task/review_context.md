@@ -22,7 +22,7 @@ You are now in a **Clarification Loop**. Your goal is to get complete answers fo
 5.  **Repeat until all questions are answered.**
 
 **My Questions Checklist:**
-{% set artifact = artifact_content | fromjson %}
+{% set artifact = additional_context.artifact_content | fromjson %}
 {% for question in artifact.questions_for_developer %}
 - [ ] {{ question }}
 {% endfor %}

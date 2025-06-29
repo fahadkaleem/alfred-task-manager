@@ -5,6 +5,7 @@ Configuration settings for Alfred using pydantic_settings
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from src.alfred.constants import Paths
 
 
 class Settings(BaseSettings):
@@ -20,8 +21,8 @@ class Settings(BaseSettings):
     version: str = "2.0.0"
 
     # Directory configuration
-    alfred_dir_name: str = ".alfred"
-    workflow_filename: str = "workflow.yml"
+    alfred_dir_name: str = Paths.ALFRED_DIR
+    workflow_filename: str = Paths.WORKFLOW_FILE
 
     # Base paths
     project_root: Path = Path.cwd()
@@ -39,22 +40,22 @@ class Settings(BaseSettings):
     @property
     def packaged_workflow_file(self) -> Path:
         """Get the path to the default workflow file inside the package."""
-        return Path(__file__).parent.parent / "workflow.yml"
+        return Path(__file__).parent.parent / Paths.WORKFLOW_FILE
 
     @property
     def packaged_personas_dir(self) -> Path:
         """Get the path to the default personas directory inside the package."""
-        return Path(__file__).parent.parent / "personas"
+        return Path(__file__).parent.parent / Paths.PERSONAS_DIR
 
     @property
     def packaged_templates_dir(self) -> Path:
         """Get the path to the default templates directory inside the package."""
-        return Path(__file__).parent.parent / "templates"
+        return Path(__file__).parent.parent / Paths.TEMPLATES_DIR
 
     @property
     def workspace_dir(self) -> Path:
         """Get the workspace directory path."""
-        return self.alfred_dir / "workspace"
+        return self.alfred_dir / Paths.WORKSPACE_DIR
 
 
 # Global settings instance
