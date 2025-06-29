@@ -359,6 +359,23 @@ Each subtask includes:
 {{ additional_context.design_artifact | tojson(indent=2) }}
 ```
 
+{% if additional_context.feedback_notes %}
+---
+### **Refining Your Execution Plan**
+
+Your ExecutionPlan has been reviewed with a focus on precision and implementability. Here's your current subtask breakdown:
+
+```json
+{{ additional_context.execution_plan_artifact | tojson(indent=2) if additional_context.execution_plan_artifact else "No artifact data available" }}
+```
+
+The review identified opportunities to enhance your plan:
+
+> {{ additional_context.feedback_notes }}
+
+Please revise your ExecutionPlan by incorporating these insights. Focus on making your subtasks even more precise, atomic, and actionable while maintaining the solid structure you've established. Remember, each subtask should be executable in complete isolation.
+
+{% endif %}
 ---
 ### **Your Mission**
 
@@ -370,6 +387,23 @@ Transform the approved design into subtasks that are:
 5. **Complete** - When all done, the feature works perfectly
 
 Remember: You are writing instructions for agents who know nothing about the project except what you tell them. Every detail matters.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**

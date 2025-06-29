@@ -13,6 +13,7 @@ from typing import Final
 class ToolName:
     """Tool name constants."""
 
+    START_TASK: Final[str] = "start_task"
     PLAN_TASK: Final[str] = "plan_task"
     IMPLEMENT_TASK: Final[str] = "implement_task"
 

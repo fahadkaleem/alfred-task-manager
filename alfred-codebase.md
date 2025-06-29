@@ -230,6 +230,7 @@ from typing import Final
 class ToolName:
     """Tool name constants."""
 
+    START_TASK: Final[str] = "start_task"
     PLAN_TASK: Final[str] = "plan_task"
     IMPLEMENT_TASK: Final[str] = "implement_task"
 
@@ -397,6 +398,109 @@ from .prompter import Prompter, prompter
 __all__ = ["BaseWorkflowTool", "PlanTaskTool", "PlanTaskState", "Prompter", "prompter"]
 
 ``````
+------ src/alfred/core/context_builder.py ------
+``````
+# src/alfred/core/context_builder.py
+"""
+Context assembly for template rendering during state transitions.
+
+This module ensures proper context is built for both forward progression
+and backward revision flows in the feedback loop.
+"""
+from typing import Dict, Any, Optional
+from src.alfred.constants import ArtifactKeys
+from src.alfred.lib.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class ContextBuilder:
+    """Builds proper context for template rendering based on state transitions."""
+    
+    @staticmethod
+    def build_feedback_context(tool: Any, state: str, feedback_notes: str) -> Dict[str, Any]:
+        """
+        Build context when returning to a work state with feedback.
+        
+        This ensures the rejected artifact is available under the correct key
+        for the destination state's template to render properly.
+        
+        Args:
+            tool: The active workflow tool instance
+            state: The destination state (work state we're returning to)
+            feedback_notes: The feedback from the reviewer
+            
+        Returns:
+            Dictionary with complete context for template rendering
+        """
+        context = tool.context_store.copy()
+        context["feedback_notes"] = feedback_notes
+        
+        # Get the expected artifact key for this state
+        artifact_key = ArtifactKeys.get_artifact_key(state)
+        logger.debug(f"Building feedback context for state '{state}', expecting artifact key '{artifact_key}'")
+        
+        # Ensure artifact is available with expected key
+        if artifact_key not in context:
+            logger.warning(f"Artifact key '{artifact_key}' not found in context, searching for recent artifact")
+            
+            # Find the most recent artifact from any state
+            artifact_found = False
+            for key, value in tool.context_store.items():
+                if key.endswith("_artifact") and value is not None:
+                    logger.info(f"Found artifact under key '{key}', copying to '{artifact_key}'")
+                    context[artifact_key] = value
+                    artifact_found = True
+                    break
+            
+            if not artifact_found:
+                logger.error(f"No artifact found in context_store for feedback loop")
+        else:
+            logger.debug(f"Artifact already available under key '{artifact_key}'")
+        
+        # Log final context keys for debugging
+        logger.debug(f"Final context keys: {list(context.keys())}")
+        logger.debug(f"Feedback notes (first 100 chars): {feedback_notes[:100]}")
+        
+        return context
+    
+    @staticmethod
+    def build_review_context(tool: Any, artifact: Any) -> Dict[str, Any]:
+        """
+        Build context for review states (AI/Human review).
+        
+        Args:
+            tool: The active workflow tool instance
+            artifact: The artifact just submitted
+            
+        Returns:
+            Dictionary with context for review template rendering
+        """
+        context = tool.context_store.copy()
+        
+        # Review states expect artifact under 'artifact_content' key
+        if hasattr(artifact, 'model_dump'):
+            context["artifact_content"] = artifact.model_dump()
+        else:
+            context["artifact_content"] = artifact
+            
+        logger.debug(f"Built review context with artifact_content")
+        
+        return context
+    
+    @staticmethod
+    def build_standard_context(tool: Any) -> Dict[str, Any]:
+        """
+        Build standard context for forward progression.
+        
+        Args:
+            tool: The active workflow tool instance
+            
+        Returns:
+            Copy of the tool's context_store
+        """
+        return tool.context_store.copy()
+``````
 ------ src/alfred/core/prompter.py ------
 ``````
 # src/alfred/core/prompter.py
@@ -405,10 +509,15 @@ from pathlib import Path
 from enum import Enum
 from typing import Dict, Any, Optional
 import json
+from pydantic import BaseModel
 
 from src.alfred.config.settings import settings
 from src.alfred.models.schemas import Task
 from src.alfred.constants import TemplatePaths
+from src.alfred.lib.logger import get_logger
+from src.alfred.models.config import PersonaConfig
+
+logger = get_logger(__name__)
 
 
 class Prompter:
@@ -431,13 +540,20 @@ class Prompter:
 
         # Add custom filters
         self.jinja_env.filters["fromjson"] = json.loads
+        self.jinja_env.filters["tojson"] = self._pydantic_safe_tojson
+    
+    def _pydantic_safe_tojson(self, obj, indent=2):
+        """Custom JSON filter that handles Pydantic models"""
+        if isinstance(obj, BaseModel):
+            return json.dumps(obj.model_dump(), indent=indent)
+        return json.dumps(obj, indent=indent)
 
     def generate_prompt(
         self,
         task: Task,
         tool_name: str,
         state,  # Can be Enum or str
-        persona_config: Dict[str, Any],
+        persona_config: PersonaConfig,  # CHANGE THIS: No longer a Dict, it's the Pydantic object
         additional_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
@@ -447,7 +563,7 @@ class Prompter:
             task: The full structured Task object.
             tool_name: The name of the active tool (e.g., 'plan_task').
             state: The current state from the tool's SM (Enum or str).
-            persona_config: The loaded YAML config for the tool's persona.
+            persona_config: The PersonaConfig Pydantic object for the tool's persona.
             additional_context: Ad-hoc data like review feedback.
 
         Returns:
@@ -456,19 +572,66 @@ class Prompter:
         # Handle both Enum and string state values
         state_value = state.value if hasattr(state, "value") else state
         template_path = TemplatePaths.PROMPT_PATTERN.format(tool_name=tool_name, state=state_value)
+        
+        logger.info(f"[PROMPTER] Generating prompt for tool='{tool_name}', state='{state_value}'")
+        logger.info(f"[PROMPTER] Additional context keys: {list(additional_context.keys()) if additional_context else 'None'}")
 
         try:
             template = self.jinja_env.get_template(template_path)
         except Exception as e:
             # Proper error handling is crucial
             error_message = f"CRITICAL ERROR: Prompt template not found at '{template_path}'. Details: {e}"
-            print(error_message)  # Or use logger
+            logger.error(error_message)
             return error_message
 
         # Build the comprehensive context for the template
-        render_context = {"task": task, "tool_name": tool_name, "state": state_value, "persona": persona_config, "additional_context": additional_context or {}}
-
-        return template.render(render_context)
+        render_context = {
+            "task": task,
+            "tool_name": tool_name,
+            "state": state_value,
+            "persona": persona_config,  # Pass the object directly
+            "additional_context": additional_context or {},
+        }
+        
+        # AL-11: Simplified logic, as we now always have the Pydantic object
+        ai_config = persona_config.ai
+        
+        # Get state-specific analysis patterns
+        analysis_patterns = ai_config.analysis_patterns.get(state_value, [])
+        validation_criteria = ai_config.validation_criteria.get(state_value, [])
+        
+        # Inject AI directives into context
+        render_context["ai_directives"] = {
+            "style": ai_config.style,
+            "analysis_patterns": analysis_patterns,
+            "validation_criteria": validation_criteria,
+        }
+        
+        logger.info(f"[PROMPTER] AL-11: Injecting AI directives for state '{state_value}'")
+        logger.info(f"[PROMPTER] AL-11: Analysis patterns count: {len(analysis_patterns)}")
+        logger.info(f"[PROMPTER] AL-11: Validation criteria count: {len(validation_criteria)}")
+        
+        # Log important context details for debugging
+        if additional_context and "feedback_notes" in additional_context:
+            logger.info(f"[PROMPTER DEBUG] Feedback notes present (first 100 chars): {additional_context['feedback_notes'][:100]}")
+        if additional_context:
+            artifact_keys = [k for k in additional_context.keys() if k.endswith("_artifact")]
+            if artifact_keys:
+                logger.info(f"[PROMPTER DEBUG] Artifact keys in context: {artifact_keys}")
+        
+        # Log what's being passed to template
+        logger.info(f"[PROMPTER DEBUG] Rendering template with additional_context keys: {list(additional_context.keys()) if additional_context else 'None'}")
+        
+        rendered = template.render(render_context)
+        
+        # Check if feedback section was rendered
+        if additional_context and "feedback_notes" in additional_context:
+            if "Building on Your Previous Analysis" in rendered:
+                logger.info("[PROMPTER DEBUG] Feedback section successfully rendered in template")
+            else:
+                logger.warning("[PROMPTER DEBUG] Feedback section NOT rendered despite feedback_notes present!")
+        
+        return rendered
 
 
 # Singleton instance to be used across the application
@@ -478,108 +641,102 @@ prompter = Prompter()
 ------ src/alfred/core/workflow.py ------
 ``````
 # src/alfred/core/workflow.py
-from transitions.core import Machine
-from typing import List, Dict, Any, Type
 from enum import Enum
+from typing import Any, Dict, List, Optional, Type
+
 from pydantic import BaseModel
+from transitions.core import Machine
+
 from src.alfred.constants import ToolName, Triggers
+from src.alfred.models.planning_artifacts import (
+    BranchCreationArtifact,
+    ContextAnalysisArtifact,
+    DesignArtifact,
+    ExecutionPlanArtifact,
+    GitStatusArtifact,
+    StrategyArtifact,
+)
+
+
+class ReviewState(str, Enum):
+    AWAITING_AI_REVIEW = "awaiting_ai_review"
+    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
 
 
 class PlanTaskState(str, Enum):
-    """States for the PlanTaskTool's internal State Machine."""
-
     CONTEXTUALIZE = "contextualize"
-    REVIEW_CONTEXT = "review_context"
     STRATEGIZE = "strategize"
-    REVIEW_STRATEGY = "review_strategy"
     DESIGN = "design"
-    REVIEW_DESIGN = "review_design"
     GENERATE_SUBTASKS = "generate_subtasks"
-    REVIEW_PLAN = "review_plan"
-    VERIFIED = "verified"  # The final, terminal state for the tool.
+    VERIFIED = "verified"
+
+
+class StartTaskState(str, Enum):
+    """A leaner, more logical state model for StartTaskTool."""
+    AWAITING_GIT_STATUS = "awaiting_git_status"
+    AWAITING_BRANCH_CREATION = "awaiting_branch_creation"
+    VERIFIED = "verified"
 
 
 class BaseWorkflowTool:
-    """A base class providing shared State Machine logic for Alfred's tools."""
-
-    def __init__(self, task_id: str, tool_name: str = None, persona_name: str = None):
+    def __init__(self, task_id: str, tool_name: str, persona_name: str):
         self.task_id = task_id
-        self.tool_name = tool_name or self.__class__.__name__.lower().replace("tool", "")
+        self.tool_name = tool_name
         self.persona_name = persona_name
-        self.state = None  # Will be set by the Machine instance
-        self.machine = None
-        # Add a new attribute for artifact mapping
+        self.state: Optional[str] = None
+        self.machine: Optional[Machine] = None
         self.artifact_map: Dict[Enum, Type[BaseModel]] = {}
-        # Context store for persisting artifacts between state transitions
         self.context_store: Dict[str, Any] = {}
 
     @property
     def is_terminal(self) -> bool:
-        """
-        Checks if the current state is a terminal (final) state.
-        Override in subclasses to define terminal states.
-        """
         return self.state == "verified"
 
-    @classmethod
-    def get_state_from_string(cls, state_string: str) -> str:
-        """
-        Convert a string state back to the appropriate enum value.
-
-        This is used during tool recovery to restore the state from
-        persisted string values.
-
-        Args:
-            state_string: The state as a string
-
-        Returns:
-            The state string (for now, states are already strings)
-        """
-        # For now, our states are already strings due to the Enum.value usage
-        # This method provides a hook for future enum handling if needed
-        return state_string
-
-    def _create_review_transitions(self, source_state: Enum, review_state: Enum, success_destination_state: Enum) -> List[Dict[str, Any]]:
-        """Factory for creating the standard two-step (AI, Human) review transitions."""
+    def _create_review_transitions(self, source_state: str, success_destination_state: str) -> List[Dict[str, Any]]:
         return [
-            # Submit work, transition into the review state for AI self-review
-            {"trigger": Triggers.submit_trigger(source_state.value), "source": source_state.value, "dest": review_state.value},
-            # AI self-approves, moves to human review
-            {"trigger": Triggers.AI_APPROVE, "source": review_state.value, "dest": success_destination_state.value},
-            # A rejection from AI review goes back to the source state to be reworked
-            {"trigger": Triggers.REQUEST_REVISION, "source": review_state.value, "dest": source_state.value},
+            {"trigger": Triggers.submit_trigger(source_state), "source": source_state, "dest": ReviewState.AWAITING_AI_REVIEW.value},
+            {"trigger": "ai_approve", "source": ReviewState.AWAITING_AI_REVIEW.value, "dest": ReviewState.AWAITING_HUMAN_REVIEW.value},
+            {"trigger": "request_revision", "source": ReviewState.AWAITING_AI_REVIEW.value, "dest": source_state},
+            {"trigger": "human_approve", "source": ReviewState.AWAITING_HUMAN_REVIEW.value, "dest": success_destination_state},
+            {"trigger": "request_revision", "source": ReviewState.AWAITING_HUMAN_REVIEW.value, "dest": source_state},
         ]
 
 
 class PlanTaskTool(BaseWorkflowTool):
-    """Encapsulates the state and logic for the `plan_task` command."""
-
     def __init__(self, task_id: str, persona_name: str = "planning"):
         super().__init__(task_id, tool_name=ToolName.PLAN_TASK, persona_name=persona_name)
-
-        # Import the new artifact models
-        from src.alfred.models.planning_artifacts import ContextAnalysisArtifact, StrategyArtifact, DesignArtifact, ExecutionPlanArtifact
-
-        # Define the artifact validation map for this tool
         self.artifact_map = {
             PlanTaskState.CONTEXTUALIZE: ContextAnalysisArtifact,
             PlanTaskState.STRATEGIZE: StrategyArtifact,
             PlanTaskState.DESIGN: DesignArtifact,
             PlanTaskState.GENERATE_SUBTASKS: ExecutionPlanArtifact,
         }
-
-        # Use the PlanTaskState Enum for state definitions - convert to string values
-        states = [state.value for state in PlanTaskState]
-
+        states = [state.value for state in PlanTaskState] + [state.value for state in ReviewState]
         transitions = [
-            *self._create_review_transitions(PlanTaskState.CONTEXTUALIZE, PlanTaskState.REVIEW_CONTEXT, PlanTaskState.STRATEGIZE),
-            *self._create_review_transitions(PlanTaskState.STRATEGIZE, PlanTaskState.REVIEW_STRATEGY, PlanTaskState.DESIGN),
-            *self._create_review_transitions(PlanTaskState.DESIGN, PlanTaskState.REVIEW_DESIGN, PlanTaskState.GENERATE_SUBTASKS),
-            *self._create_review_transitions(PlanTaskState.GENERATE_SUBTASKS, PlanTaskState.REVIEW_PLAN, PlanTaskState.VERIFIED),
+            *self._create_review_transitions(PlanTaskState.CONTEXTUALIZE.value, PlanTaskState.STRATEGIZE.value),
+            *self._create_review_transitions(PlanTaskState.STRATEGIZE.value, PlanTaskState.DESIGN.value),
+            *self._create_review_transitions(PlanTaskState.DESIGN.value, PlanTaskState.GENERATE_SUBTASKS.value),
+            *self._create_review_transitions(PlanTaskState.GENERATE_SUBTASKS.value, PlanTaskState.VERIFIED.value),
         ]
-
         self.machine = Machine(model=self, states=states, transitions=transitions, initial=PlanTaskState.CONTEXTUALIZE.value)
 
+
+class StartTaskTool(BaseWorkflowTool):
+    """Re-architected StartTaskTool with a streamlined state machine."""
+    def __init__(self, task_id: str, persona_name: str = "onboarding"):
+        super().__init__(task_id, tool_name=ToolName.START_TASK, persona_name=persona_name)
+        self.artifact_map = {
+            StartTaskState.AWAITING_GIT_STATUS: GitStatusArtifact,
+            StartTaskState.AWAITING_BRANCH_CREATION: BranchCreationArtifact,
+        }
+        states = [state.value for state in StartTaskState] + [state.value for state in ReviewState]
+        transitions = [
+            # 1. User submits Git Status. After review, success moves to AWAITING_BRANCH_CREATION.
+            *self._create_review_transitions(StartTaskState.AWAITING_GIT_STATUS.value, StartTaskState.AWAITING_BRANCH_CREATION.value),
+            # 2. User submits Branch Creation result. After review, success moves to VERIFIED (terminal).
+            *self._create_review_transitions(StartTaskState.AWAITING_BRANCH_CREATION.value, StartTaskState.VERIFIED.value),
+        ]
+        self.machine = Machine(model=self, states=states, transitions=transitions, initial=StartTaskState.AWAITING_GIT_STATUS.value)
 ``````
 ------ src/alfred/lib/artifact_manager.py ------
 ``````
@@ -694,7 +851,12 @@ class ArtifactManager:
             logger.error(f"Could not find artifact template '{template_path}': {e}. Falling back to raw JSON.")
             # Use professional heading even in fallback
             state_desc = state_descriptions.get(state_name, "Artifact Submission")
-            rendered_content = f"## {state_desc}\n\n**Task:** {task_id}\n\n```json\n{artifact.model_dump_json(indent=2)}\n```"
+            # Handle both Pydantic models and plain dicts
+            if hasattr(artifact, 'model_dump_json'):
+                artifact_json = artifact.model_dump_json(indent=2)
+            else:
+                artifact_json = json.dumps(artifact, indent=2)
+            rendered_content = f"## {state_desc}\n\n**Task:** {task_id}\n\n```json\n{artifact_json}\n```"
         else:
             
             context = {
@@ -888,73 +1050,41 @@ class MarkdownTaskParser:
 ------ src/alfred/lib/task_utils.py ------
 ``````
 # src/alfred/lib/task_utils.py
-import json
 from pathlib import Path
 from typing import Optional
-from src.alfred.config.settings import settings, Settings
-from src.alfred.models.schemas import Task, TaskStatus
+
+from src.alfred.models.schemas import Task
+from src.alfred.state.manager import state_manager
+
 from .md_parser import MarkdownTaskParser
+from src.alfred.config.settings import settings
 
 
 def load_task(task_id: str, root_dir: Optional[Path] = None) -> Task | None:
-    """Loads a Task by parsing its .md file and merging with its state.json.
-    
+    """
+    Loads a Task by parsing its .md file and merging with its unified state.
+
     Args:
         task_id: The ID of the task to load
         root_dir: Optional root directory to use instead of default settings
     """
-    alfred_dir = root_dir / settings.alfred_dir_name if root_dir else settings.alfred_dir
+    alfred_dir = (
+        root_dir / settings.alfred_dir_name if root_dir else settings.alfred_dir
+    )
     task_md_path = alfred_dir / "tasks" / f"{task_id}.md"
 
     if not task_md_path.exists():
         return None
 
-    # Parse the markdown definition
     parser = MarkdownTaskParser()
     task_data = parser.parse(task_md_path.read_text())
     task_model = Task(**task_data)
 
-    # Load the dynamic state
-    state_file = alfred_dir / "workspace" / task_id / "state.json"
-    if state_file.exists():
-        state_data = json.loads(state_file.read_text())
-        # Update the model with the persisted state
-        task_model.task_status = TaskStatus(state_data.get("task_status", "new"))
-    
+    # Load the dynamic state from the unified state file
+    unified_state = state_manager.load_or_create_task_state(task_id)
+    task_model.task_status = unified_state.task_status
+
     return task_model
-
-
-def save_task_state(task_id: str, status: TaskStatus, root_dir: Optional[Path] = None):
-    """Saves only the dynamic state of a task.
-    
-    Args:
-        task_id: The ID of the task to save state for
-        status: The task status to save
-        root_dir: Optional root directory to use instead of default settings
-    """
-    alfred_dir = root_dir / settings.alfred_dir_name if root_dir else settings.alfred_dir
-    state_dir = alfred_dir / "workspace" / task_id
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / "state.json"
-    
-    state_data = {"task_status": status.value}
-    state_file.write_text(json.dumps(state_data, indent=2))
-
-
-def update_task_status(task_id: str, new_status: TaskStatus, root_dir: Optional[Path] = None) -> Task:
-    """Loads a task, updates its status, and saves the state.
-    
-    Args:
-        task_id: The ID of the task to update
-        new_status: The new status for the task
-        root_dir: Optional root directory to use instead of default settings
-    """
-    task = load_task(task_id, root_dir)
-    if not task:
-        raise FileNotFoundError(f"Task {task_id} not found.")
-    task.task_status = new_status
-    save_task_state(task_id, new_status, root_dir)
-    return task
 ``````
 ------ src/alfred/lib/transaction_logger.py ------
 ``````
@@ -1046,6 +1176,7 @@ class FeaturesConfig(BaseModel):
     """Feature flags for Alfred."""
 
     scaffolding_mode: bool = Field(default=False, description="Enable scaffolding mode to generate TODO placeholders before implementation")
+    autonomous_mode: bool = Field(default=False, description="Enable autonomous mode to bypass human review steps.")
 
 
 class AlfredConfig(BaseModel):
@@ -1058,142 +1189,58 @@ class AlfredConfig(BaseModel):
     model_config = {"validate_assignment": True, "extra": "forbid"}
 
 ``````
------- src/alfred/models/artifacts.py ------
-``````
-"""
-Pydantic models for structured work artifacts.
-"""
-
-from pydantic import BaseModel, Field
-
-
-class RequirementsArtifact(BaseModel):
-    """
-    Structured data artifact for the requirements gathering phase.
-    """
-
-    task_id: str = Field(..., description="The unique identifier of the task")
-    task_summary: str = Field(..., description="A brief summary of the task")
-    task_description: str = Field(..., description="Detailed description of the task requirements")
-    acceptance_criteria: list[str] = Field(..., description="List of criteria that must be met for task completion")
-    task_source: str = Field(..., description="The source of the task (jira, linear, local)")
-    additional_context: dict = Field(default_factory=dict, description="Any additional context or metadata from the task source")
-
-
-class GitSetupArtifact(BaseModel):
-    """
-    Structured data artifact for the git_setup phase.
-    """
-
-    branch_name: str = Field(..., description="The name of the git branch created or used.")
-    branch_status: str = Field(..., description="The status of the branch, e.g., 'clean'.")
-    ready_for_work: bool = Field(..., description="Confirmation that the branch is ready for development.")
-
-
-class TestResult(BaseModel):
-    """Structured data for a single test execution."""
-
-    command_run: str
-    exit_code: int
-    full_output: str
-
-
-class TestingArtifact(BaseModel):
-    """Structured artifact for the testing phase."""
-
-    test_results: TestResult
-
-
-class CodingManifest(BaseModel):
-    """Structured artifact for the developer completion manifest."""
-
-    implementation_summary: str
-    execution_steps_completed: list[str]
-    testing_notes: str
-
-
-class FinalizeArtifact(BaseModel):
-    """Structured data for the finalize phase artifact."""
-
-    commit_hash: str = Field(..., description="Git commit hash from the final commit")
-    pull_request_url: str = Field(..., description="URL of the created pull request")
-
-
-class StrategyArtifact(BaseModel):
-    """Structured artifact for the strategy planning phase."""
-
-    high_level_strategy: str = Field(..., description="Overall approach and strategic decisions for implementation")
-    key_components: list[str] = Field(..., description="List of major components or modules to be implemented")
-    architectural_decisions: str = Field(..., description="Key architectural choices and rationale")
-    risk_analysis: str = Field(..., description="Potential risks and mitigation strategies")
-
-
-class FileBreakdownItem(BaseModel):
-    """Individual file change in the solution design."""
-
-    file_path: str = Field(..., description="Path to the file to be modified/created")
-    action: str = Field(..., description="One of: 'create', 'modify', or 'delete'")
-    change_summary: str = Field(..., description="Detailed description of what changes will be made")
-
-
-class SolutionDesignArtifact(BaseModel):
-    """Structured artifact for the solution design phase."""
-
-    approved_strategy_summary: str = Field(..., description="Brief summary of the approved strategy")
-    detailed_design: str = Field(..., description="Comprehensive technical design based on the strategy")
-    file_breakdown: list[FileBreakdownItem] = Field(..., description="List of files to be modified with details")
-    dependencies: list[str] = Field(default_factory=list, description="List of external dependencies or libraries needed")
-
-
-class FileModification(BaseModel):
-    """Individual file modification in the execution plan."""
-
-    path: str = Field(..., description="Path to the file")
-    action: str = Field(..., description="create|modify|delete")
-    description: str = Field(..., description="What changes to make")
-
-
-class ExecutionPlanArtifact(BaseModel):
-    """Structured artifact for the execution plan phase."""
-
-    implementation_steps: list[str] = Field(..., description="Ordered list of implementation steps")
-    file_modifications: list[FileModification] = Field(..., description="Files that will be created or modified")
-    testing_strategy: str = Field(..., description="Testing approach and validation steps")
-    success_criteria: list[str] = Field(..., description="Criteria for determining successful completion")
-
-
-class ScaffoldingManifest(BaseModel):
-    """Structured artifact for the scaffolding phase."""
-
-    files_scaffolded: list[str] = Field(..., description="List of files that were scaffolded with TODO comments")
-    todo_items_generated: int = Field(..., description="Total number of TODO items generated")
-    execution_steps_processed: list[str] = Field(..., description="List of execution plan steps that were processed")
-
-``````
 ------ src/alfred/models/config.py ------
 ``````
 # src/alfred/models/config.py
 """
-Pydantic models for parsing persona configurations.
-This has been simplified to only contain conversational and identity fields.
+Pydantic models for parsing persona configurations, including the
+new dual-mode (Human/AI) interaction structure.
 """
+from typing import Dict, List
 
 from pydantic import BaseModel, Field
-from typing import List, Optional
+
+
+class HumanInteraction(BaseModel):
+    """Configuration for human-facing communication."""
+
+    greeting: str = Field(description="The persona's introductory greeting.")
+    communication_style: str = Field(
+        description="A description of the persona's conversational style and tone with humans."
+    )
+
+
+class AIInteraction(BaseModel):
+    """Configuration for AI agent directives."""
+
+    style: str = Field(
+        default="precise, technical, directive",
+        description="The persona's communication style when issuing instructions to the AI agent.",
+    )
+    analysis_patterns: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="A dictionary mapping a tool's state to a list of specific analysis commands or patterns for the AI.",
+    )
+    validation_criteria: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="A dictionary mapping a tool's state to a list of specific validation criteria for AI self-review.",
+    )
+
 
 class PersonaConfig(BaseModel):
     """
-    Represents the validated configuration of a single persona.yml file.
-    Its sole purpose is to define the "character" and "voice" of the AI for a given tool.
+    Represents the validated configuration of a single persona.yml file,
+    supporting dual-mode communication.
     """
+
     name: str = Field(description="The persona's first name, e.g., 'Alex'.")
     title: str = Field(description="The persona's job title, e.g., 'Solution Architect'.")
-    
-    greeting: Optional[str] = Field(None, description="An example greeting the persona can use to introduce itself.")
-    communication_style: Optional[str] = Field(None, description="A description of the persona's conversational style and tone.")
-    
-    thinking_methodology: List[str] = Field(default_factory=list, description="A list of core principles that guide the persona's reasoning.")
-    personality_traits: List[str] = Field(default_factory=list, description="A list of traits that define the persona's character.")
+    thinking_methodology: List[str] = Field(
+        default_factory=list,
+        description="A list of core principles that guide the persona's reasoning.",
+    )
+    human: HumanInteraction
+    ai: AIInteraction
 ``````
 ------ src/alfred/models/planning_artifacts.py ------
 ``````
@@ -1230,6 +1277,18 @@ class DesignArtifact(BaseModel):
 # The Execution Plan is a collection of Subtasks
 class ExecutionPlanArtifact(BaseModel):
     subtasks: List[Subtask] = Field(description="The ordered list of Subtasks that form the execution plan")
+
+
+class GitStatusArtifact(BaseModel):
+    is_clean: bool
+    current_branch: str
+    uncommitted_files: List[str]
+
+
+class BranchCreationArtifact(BaseModel):
+    branch_name: str
+    success: bool
+    details: str
 
 ``````
 ------ src/alfred/models/schemas.py ------
@@ -1315,38 +1374,22 @@ class Subtask(BaseModel):
 ``````
 ------ src/alfred/models/state.py ------
 ``````
+# src/alfred/models/state.py
 """
 Pydantic models for Alfred's state management.
+This module defines the single source of truth for task state.
 """
-
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional
+
 from pydantic import BaseModel, Field
 
-
-class TaskState(BaseModel):
-    """Represents the persisted state of a single task."""
-
-    task_id: str
-    workflow_step: int = 0
-    persona_state: str | None = None
-    is_active: bool = False
-    execution_plan: dict | None = None  # Holds the active plan for stepwise personas
-    current_step: int = 0
-    completed_steps: list[str] = Field(default_factory=list)
-    revision_feedback: str | None = None
-
-
-class StateFile(BaseModel):
-    """Represents the root state.json file."""
-
-    tasks: dict[str, TaskState] = Field(default_factory=dict)
+from src.alfred.models.schemas import TaskStatus
 
 
 class WorkflowState(BaseModel):
     """
     Represents the complete state of a workflow tool.
-
     This model captures all necessary information to reconstruct
     a workflow tool after a crash or restart.
     """
@@ -1356,10 +1399,20 @@ class WorkflowState(BaseModel):
     current_state: str  # String representation of the state enum
     context_store: Dict[str, Any] = Field(default_factory=dict)
     persona_name: str
-    artifact_map_states: List[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
+
+class UnifiedTaskState(BaseModel):
+    """
+    The single, unified state object for a task.
+    This is the schema for the new `task_state.json` file.
+    """
+
+    task_id: str
+    task_status: TaskStatus = Field(default=TaskStatus.NEW)
+    active_tool_state: Optional[WorkflowState] = Field(default=None)
+    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 ``````
 ------ src/alfred/orchestration/__init__.py ------
 ``````
@@ -1460,27 +1513,171 @@ def load_persona(persona_name: str) -> PersonaConfig:
 ``````
 
 ``````
+------ src/alfred/personas/onboarding.yml ------
+``````
+name: Alfred
+title: Personal Butler & Project Lead
+thinking_methodology:
+- Methodical and thorough in approach
+- Safety-first mindset
+- Clear communication of requirements
+human:
+  greeting: Good day. I am Alfred, at your service. Before we proceed with the task, we must ensure our workspace is in perfect
+    order. Let's begin.
+  communication_style: Polite, professional, and precise. I guide the user through necessary setup procedures with patience
+    and clarity, ensuring nothing is overlooked.
+ai:
+  style: directive, procedural, safe
+  analysis_patterns:
+    initialized:
+    - Execute systematic Git repository analysis.
+    - 'Command 1: `git status --porcelain` (to check for uncommitted changes).'
+    - 'Command 2: `git rev-parse --abbrev-ref HEAD` (to get the current branch name).'
+    branch_created:
+    - Execute Git branch creation.
+    - 'Command: `git checkout -b feature/{{ task.task_id }}` (or `git checkout` if branch exists).'
+    git_status_checked:
+    - Analyze git status results for proper workflow continuation.
+    - Determine if a new branch creation is appropriate based on current branch and changes.
+    awaiting_ai_review:
+    - Review submitted artifact for technical accuracy.
+    - Verify all required fields are present and properly formatted.
+    - Check that Git operations align with best practices.
+    awaiting_human_review:
+    - Present artifact clearly for human validation.
+    - Ensure human understands the implications of the proposed action.
+    completed:
+    - Confirm all workspace setup steps have been executed.
+    - Summarize the current state and readiness for task work.
+    - Provide clear next steps for the user.
+  validation_criteria:
+    initialized:
+    - Has git status been checked successfully?
+    - Is the repository in a valid state for task work?
+    - Are all required tools and permissions available?
+    git_status_checked:
+    - Is `is_clean` field present and a boolean?
+    - Is `current_branch` field present and a non-empty string?
+    branch_created:
+    - Is `success` field present and a boolean?
+    - Is `details` field present and a non-empty string?
+    awaiting_ai_review:
+    - Are all artifact fields technically valid?
+    - Does the artifact represent a successful operation?
+    awaiting_human_review:
+    - Is the artifact presentation clear and understandable?
+    - Are the next steps clearly communicated?
+    completed:
+    - Have all setup steps been completed successfully?
+    - Is the workspace ready for task implementation?
+    - Has the user been properly informed of the next steps?
+
+``````
 ------ src/alfred/personas/planning.yml ------
 ``````
-# src/alfred/personas/planning.yml
-name: "Alex"
-title: "Solution Architect"
-
-greeting: "Hey there! I'm Alex. I'll be your solution architect for this task. My job is to help you create a rock-solid technical plan before we write any code. Let's get the ball rolling."
-
-communication_style: "Professional yet approachable. I explain complex technical concepts in simple terms. I am proactive in identifying risks and dependencies. I focus on the 'why' behind the architecture, not just the 'what'."
-
+name: Alex
+title: Solution Architect
 thinking_methodology:
-  - "Always start with the business goal and work backwards to the technical solution."
-  - "Favor simplicity and clarity over unnecessary complexity."
-  - "Ensure every part of the plan is testable and verifiable."
+- Always start with the business goal and work backwards to the technical solution.
+- Favor simplicity and clarity over unnecessary complexity.
+- Ensure every part of the plan is testable and verifiable.
+human:
+  greeting: Hey there! I'm Alex. I'll be your solution architect for this task. My job is to help you create a rock-solid
+    technical plan before we write any code. Let's get the ball rolling.
+  communication_style: Professional yet approachable. I explain complex technical concepts in simple terms. I am proactive
+    in identifying risks and dependencies. I focus on the 'why' behind the architecture, not just the 'what'.
+ai:
+  style: analytical, structured, exhaustive
+  analysis_patterns:
+    contextualize:
+    - Perform deep codebase analysis starting from the project root.
+    - Identify all files and code blocks relevant to the provided Task Context.
+    - Compare the task goal with code analysis to identify ambiguities.
+    strategize:
+    - Analyze architectural approaches with trade-off analysis.
+    - Map out state management, data flow, and integration points.
+    - Generate multiple strategy options with pros/cons.
+    design:
+    - Generate detailed interface specifications for all components.
+    - Create exhaustive mapping of function signatures and parameters.
+    - Document all error states and edge cases.
+    generate_subtasks:
+    - Map subtasks to specific files and line ranges.
+    - Include verification criteria for each subtask.
+    - Order subtasks by dependency graph.
+    review_context:
+    - Validate context analysis completeness.
+    - Ensure all ambiguities are properly identified.
+    review_strategy:
+    - Verify strategy aligns with business goals.
+    - Check for technical feasibility and risks.
+    review_design:
+    - Validate design completeness and consistency.
+    - Ensure all components are properly specified.
+    review_plan:
+    - Verify subtasks cover all requirements.
+    - Check dependency ordering and completeness.
+    awaiting_ai_review:
+    - Perform comprehensive artifact validation.
+    - Check technical accuracy and completeness.
+    - Verify alignment with task requirements.
+    awaiting_human_review:
+    - Present complex technical details clearly.
+    - Highlight key decisions for human validation.
+    - Ensure business alignment is evident.
+    verified:
+    - Confirm all planning phases have been completed successfully.
+    - Validate the execution plan is ready for implementation.
+    - Summarize key decisions and next steps.
+  validation_criteria:
+    contextualize:
+    - Is `context_summary` a comprehensive summary of existing code and proposed integration?
+    - Is `affected_files` a non-empty list of relevant file paths?
+    - Are `questions_for_developer` specific, actionable, and designed to resolve ambiguity?
+    strategize:
+    - Is `goal_summary` clear and specific about the task objective?
+    - Is `technical_approach` detailed with justifications?
+    - Are `risks` realistic and mitigation strategies provided?
+    design:
+    - Are `components` fully specified with clear responsibilities?
+    - Is `data_flow` complete with all state transitions?
+    - Are `integration_points` mapped to existing code?
+    generate_subtasks:
+    - Does each subtask have clear acceptance criteria?
+    - Are subtasks atomic and independently verifiable?
+    - Is the dependency order technically correct?
+    review_context:
+    - Is the context analysis thorough and accurate?
+    - Are identified ambiguities genuine concerns?
+    review_strategy:
+    - Is the strategy technically sound?
+    - Are risks properly identified and mitigated?
+    review_design:
+    - Is the design implementable as specified?
+    - Are all edge cases considered?
+    review_plan:
+    - Is the execution plan complete?
+    - Can each subtask be independently verified?
+    awaiting_ai_review:
+    - Does the artifact meet all technical requirements?
+    - Is the artifact internally consistent?
+    awaiting_human_review:
+    - Is the technical content accessible to the human reviewer?
+    - Are business implications clearly stated?
+    verified:
+    - Has the complete planning process been executed successfully?
+    - Is the execution plan comprehensive and ready for implementation?
+    - Are all artifacts properly validated and approved?
+
 ``````
 ------ src/alfred/server.py ------
 ``````
+# src/alfred/server.py
 """
 MCP Server for Alfred
+This version preserves the original comprehensive docstrings while maintaining
+the clean V2 Alfred architecture.
 """
-
 import inspect
 
 from fastmcp import FastMCP
@@ -1490,11 +1687,10 @@ from src.alfred.lib.transaction_logger import transaction_logger
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
 from src.alfred.tools.plan_task import plan_task_impl
-
-# New generic state-advancing tool implementations
-from src.alfred.tools.submit_work import submit_work_impl
-from src.alfred.tools.provide_review import provide_review_impl
 from src.alfred.tools.progress import mark_subtask_complete_impl
+from src.alfred.tools.provide_review import provide_review_impl
+from src.alfred.tools.start_task import start_task_impl
+from src.alfred.tools.submit_work import submit_work_impl
 
 app = FastMCP(settings.server_name)
 
@@ -1523,7 +1719,37 @@ async def initialize_project(provider: str | None = None) -> ToolResponse:
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"provider": provider} if provider else {}
     response = initialize_project_impl(provider)
-    transaction_logger.log(task_id=None, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=None, tool_name=tool_name, request_data=request_data, response=response
+    )
+    return response
+
+
+@app.tool()
+async def start_task(task_id: str) -> ToolResponse:
+    """
+    Initializes the workspace for a specific task, making it ready for planning.
+
+    This is the first command to run for any given task. It sets up the necessary
+    directory structure and state files. If the task is new, its status will be
+    set to 'planning'. If the task already exists, it simply ensures the workspace
+    is ready for the next command.
+
+    Args:
+        task_id (str): The unique identifier for the task (e.g., "TS-01").
+
+    Returns:
+        ToolResponse: Contains success/error status and a prompt guiding the user to call 'plan_task'.
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id}
+    response = start_task_impl(task_id)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
@@ -1562,9 +1788,13 @@ async def plan_task(task_id: str) -> ToolResponse:
     """
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
-
     response = await plan_task_impl(task_id)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
@@ -1587,7 +1817,12 @@ async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id, "artifact": artifact}
     response = submit_work_impl(task_id, artifact)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
@@ -1609,9 +1844,18 @@ async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = 
         ToolResponse: Contains success/error status and the next prompt
     """
     tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "is_approved": is_approved, "feedback_notes": feedback_notes}
+    request_data = {
+        "task_id": task_id,
+        "is_approved": is_approved,
+        "feedback_notes": feedback_notes,
+    }
     response = provide_review_impl(task_id, is_approved, feedback_notes)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
@@ -1646,13 +1890,17 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id, "subtask_id": subtask_id}
     response = mark_subtask_complete_impl(task_id, subtask_id)
-    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    transaction_logger.log(
+        task_id=task_id,
+        tool_name=tool_name,
+        request_data=request_data,
+        response=response,
+    )
     return response
 
 
 if __name__ == "__main__":
     app.run()
-
 ``````
 ------ src/alfred/state/__init__.py ------
 ``````
@@ -1671,283 +1919,200 @@ __all__ = ["StateManager", "state_manager", "ToolRecovery"]
 ``````
 ------ src/alfred/state/manager.py ------
 ``````
+# src/alfred/state/manager.py
 """
-State management for Alfred workflow tools.
-
-Provides atomic state persistence and recovery capabilities.
+Unified state management for Alfred.
+Provides atomic state persistence for the UnifiedTaskState object.
 """
-
 import json
-from pathlib import Path
-from typing import Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from pydantic import BaseModel
 
 from src.alfred.config.settings import settings
-from src.alfred.lib.logger import get_logger
 from src.alfred.constants import Paths
+from src.alfred.lib.logger import get_logger
+from src.alfred.models.schemas import TaskStatus
+from src.alfred.models.state import UnifiedTaskState, WorkflowState
 
 logger = get_logger(__name__)
 
 
 class StateManager:
-    """
-    Manages persistent state for workflow tools.
+    """Manages the persistent state for a single task via task_state.json."""
 
-    This class provides:
-    - Atomic state persistence with temp file + rename
-    - State recovery from disk
-    - Cleanup of completed tool states
-    """
+    def _get_task_state_file(self, task_id: str) -> Path:
+        """Gets the path to the unified state file for a task."""
+        return settings.workspace_dir / task_id / "task_state.json"
 
-    def __init__(self):
-        """Initialize the state manager with the workspace directory."""
-        self.state_dir = settings.alfred_dir / "workspace"
+    def load_or_create_task_state(self, task_id: str) -> UnifiedTaskState:
+        """Loads a task's unified state from disk, or creates it if it doesn't exist."""
+        state_file = self._get_task_state_file(task_id)
+        if not state_file.exists():
+            logger.info(f"No state file found for task {task_id}. Creating new state.")
+            new_state = UnifiedTaskState(task_id=task_id)
+            self.save_task_state(new_state)
+            return new_state
 
-    def get_task_state_file(self, task_id: str) -> Path:
-        """
-        Get the state file path for a task.
-
-        Args:
-            task_id: The task identifier
-
-        Returns:
-            Path to the tool state file
-        """
-        return self.state_dir / task_id / Paths.TOOL_STATE_FILE
-
-    def save_tool_state(self, task_id: str, tool: Any) -> None:
-        """
-        Atomically save tool state to disk.
-
-        This method ensures state is persisted safely using a temp file
-        and atomic rename operation.
-
-        Args:
-            task_id: The task identifier
-            tool: The workflow tool instance to persist
-        """
-        logger.info(f"[STATE_MANAGER] save_tool_state called for task {task_id}")
-        logger.info(f"[STATE_MANAGER] Tool info - name: {tool.tool_name}, state: {tool.state}, context_keys: {list(tool.context_store.keys())}")
-
-        from src.alfred.models.state import WorkflowState
-
-        # Create the state data
-        # Convert any Pydantic models in context_store to dicts
-        serializable_context = {}
-        for key, value in tool.context_store.items():
-            if hasattr(value, "model_dump"):
-                # It's a Pydantic model, convert to dict
-                serializable_context[key] = value.model_dump()
-            else:
-                serializable_context[key] = value
-
-        state_data = WorkflowState(
-            task_id=task_id,
-            tool_name=tool.tool_name,
-            current_state=str(tool.state),  # Convert enum to string
-            context_store=serializable_context,
-            persona_name=tool.persona_name,
-            artifact_map_states=[str(state) for state in tool.artifact_map.keys()],
-            updated_at=datetime.utcnow().isoformat(),
-        )
-
-        # Ensure directory exists
-        state_file = self.get_task_state_file(task_id)
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"[STATE_MANAGER] Writing state to {state_file}")
-
-        # Atomic write with temp file
-        temp_file = state_file.with_suffix(".tmp")
         try:
-            temp_file.write_text(state_data.model_dump_json(indent=2))
-            temp_file.replace(state_file)
-            logger.info(f"[STATE_MANAGER] Successfully saved tool state for task {task_id} in state {tool.state}")
+            state_json = state_file.read_text()
+            state_data = UnifiedTaskState.model_validate_json(state_json)
+            tool_name = (
+                state_data.active_tool_state.tool_name
+                if state_data.active_tool_state
+                else "None"
+            )
+            logger.info(
+                f"Loaded state for task {task_id}. Status: {state_data.task_status.value}, Active Tool: {tool_name}."
+            )
+            return state_data
         except Exception as e:
-            logger.error(f"[STATE_MANAGER] Failed to save tool state for task {task_id}: {e}")
+            logger.error(
+                f"Failed to load or validate state for task {task_id}, creating new state. Error: {e}"
+            )
+            new_state = UnifiedTaskState(task_id=task_id)
+            self.save_task_state(new_state)
+            return new_state
+
+    def save_task_state(self, state: UnifiedTaskState) -> None:
+        """Atomically saves the entire unified state for a task."""
+        state.updated_at = datetime.utcnow().isoformat()
+        state_file = self._get_task_state_file(state.task_id)
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_file = state_file.with_suffix(Paths.JSON_EXTENSION + Paths.TMP_EXTENSION)
+        try:
+            temp_file.write_text(state.model_dump_json(indent=2))
+            temp_file.replace(state_file)
+            logger.info(f"Successfully saved state for task {state.task_id}.")
+        except Exception as e:
+            logger.error(f"Failed to save state for task {state.task_id}: {e}")
             if temp_file.exists():
                 temp_file.unlink()
             raise
 
-    def load_tool_state(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Load persisted tool state from disk.
+    def update_task_status(self, task_id: str, new_status: TaskStatus) -> UnifiedTaskState:
+        """Loads, updates the task_status, and saves the state."""
+        state = self.load_or_create_task_state(task_id)
+        state.task_status = new_status
+        self.save_task_state(state)
+        logger.info(f"Updated task {task_id} status to {new_status.value}")
+        return state
 
-        Args:
-            task_id: The task identifier
+    def update_tool_state(
+        self, task_id: str, tool: "BaseWorkflowTool"
+    ) -> UnifiedTaskState:
+        """Loads, updates the tool state portion, and saves."""
+        state = self.load_or_create_task_state(task_id)
 
-        Returns:
-            WorkflowState dict if found, None otherwise
-        """
-        state_file = self.get_task_state_file(task_id)
-        if not state_file.exists():
-            logger.debug(f"No persisted state found for task {task_id}")
-            return None
+        serializable_context = {}
+        if tool.context_store:
+            for key, value in tool.context_store.items():
+                if isinstance(value, BaseModel):
+                    serializable_context[key] = value.model_dump()
+                else:
+                    serializable_context[key] = value
 
-        try:
-            from src.alfred.models.state import WorkflowState
+        tool_state_data = WorkflowState(
+            task_id=task_id,
+            tool_name=tool.tool_name,
+            current_state=str(tool.state),
+            context_store=serializable_context,
+            persona_name=tool.persona_name,
+            updated_at=datetime.utcnow().isoformat(),
+        )
+        state.active_tool_state = tool_state_data
+        self.save_task_state(state)
+        return state
 
-            state_json = state_file.read_text()
-            state_data = WorkflowState.model_validate_json(state_json)
-            logger.info(f"Loaded tool state for task {task_id}: {state_data.tool_name} in state {state_data.current_state}")
-            return state_data.model_dump()
-        except Exception as e:
-            logger.error(f"Failed to load tool state for task {task_id}: {e}")
-            return None
-
-    def clear_tool_state(self, task_id: str) -> None:
-        """
-        Remove tool state when a workflow completes.
-
-        Args:
-            task_id: The task identifier
-        """
-        state_file = self.get_task_state_file(task_id)
-        if state_file.exists():
-            try:
-                state_file.unlink()
-                logger.debug(f"Cleared tool state for task {task_id}")
-            except Exception as e:
-                logger.error(f"Failed to clear tool state for task {task_id}: {e}")
-
-    def has_persisted_state(self, task_id: str) -> bool:
-        """
-        Check if a task has persisted state.
-
-        Args:
-            task_id: The task identifier
-
-        Returns:
-            True if state file exists, False otherwise
-        """
-        return self.get_task_state_file(task_id).exists()
+    def clear_tool_state(self, task_id: str) -> UnifiedTaskState:
+        """Loads, clears the active tool state, and saves."""
+        state = self.load_or_create_task_state(task_id)
+        if state.active_tool_state:
+            logger.info(f"Clearing active tool state for task {task_id}.")
+            state.active_tool_state = None
+            self.save_task_state(state)
+        return state
 
 
 # Singleton instance
 state_manager = StateManager()
-
 ``````
 ------ src/alfred/state/recovery.py ------
 ``````
+# src/alfred/state/recovery.py
 """
 Tool recovery functionality for Alfred workflow tools.
-
-Handles reconstruction of workflow tools from persisted state after crashes or restarts.
+Handles reconstruction of workflow tools from persisted state.
 """
+from typing import Dict, Optional, Type
 
-from typing import Optional, Dict, Type
-
-from src.alfred.core.workflow import BaseWorkflowTool, PlanTaskTool
-from src.alfred.state.manager import state_manager
+from src.alfred.core.workflow import BaseWorkflowTool, PlanTaskTool, StartTaskTool
 from src.alfred.lib.logger import get_logger
+from src.alfred.state.manager import state_manager
 from src.alfred.constants import ToolName
 
 logger = get_logger(__name__)
 
 
 class ToolRecovery:
-    """
-    Handles recovery of workflow tools from persisted state.
+    """Handles recovery of workflow tools from persisted state."""
 
-    This class provides the ability to reconstruct workflow tools
-    from their persisted state after a crash or restart.
-    """
-
-    # Registry of tool types for reconstruction
     TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {
+        ToolName.START_TASK: StartTaskTool,
         ToolName.PLAN_TASK: PlanTaskTool,
-        # Future tools will be added here as they are implemented
-        # ToolName.IMPLEMENT_TASK: ImplementTaskTool,
-        # "review_code": ReviewCodeTool,
     }
 
     @classmethod
     def recover_tool(cls, task_id: str) -> Optional[BaseWorkflowTool]:
-        """
-        Attempt to recover a tool from persisted state.
+        """Attempt to recover a tool from the unified persisted state."""
+        task_state = state_manager.load_or_create_task_state(task_id)
+        persisted_tool_state = task_state.active_tool_state
 
-        This method:
-        1. Loads the persisted state from disk
-        2. Identifies the correct tool class
-        3. Reconstructs the tool with its saved state
-
-        Args:
-            task_id: The task identifier
-
-        Returns:
-            Reconstructed tool instance if successful, None otherwise
-        """
-        # Load persisted state
-        persisted_state = state_manager.load_tool_state(task_id)
-        if not persisted_state:
-            logger.debug(f"No persisted state found for task {task_id}")
+        if not persisted_tool_state:
+            logger.debug(f"No active tool state found for task {task_id} to recover.")
             return None
 
-        # Find the tool class
-        tool_name = persisted_state.get("tool_name")
+        tool_name = persisted_tool_state.tool_name
         tool_class = cls.TOOL_REGISTRY.get(tool_name)
         if not tool_class:
             logger.error(f"Unknown tool type: {tool_name}. Cannot recover.")
             return None
 
         try:
-            # Reconstruct the tool
             tool = tool_class(task_id=task_id)
+            tool.state = persisted_tool_state.current_state
+            tool.context_store = persisted_tool_state.context_store
+            tool.persona_name = persisted_tool_state.persona_name
 
-            # Restore the state
-            # Convert string state back to enum if necessary
-            current_state = persisted_state.get("current_state")
-            if hasattr(tool_class, "get_state_from_string"):
-                tool.state = tool_class.get_state_from_string(current_state)
-            else:
-                # Fallback: try to set directly
-                tool.state = current_state
-
-            # Restore context store
-            tool.context_store = persisted_state.get("context_store", {})
-
-            # Restore persona name
-            tool.persona_name = persisted_state.get("persona_name", tool.persona_name)
-
-            logger.info(f"Successfully recovered {tool_name} for task {task_id} in state {current_state}")
+            logger.info(
+                f"Successfully recovered {tool_name} for task {task_id} in state {tool.state}"
+            )
             return tool
-
         except Exception as e:
-            logger.error(f"Failed to recover tool for task {task_id}: {e}")
+            logger.error(
+                f"Failed to recover tool for task {task_id}: {e}", exc_info=True
+            )
             return None
 
     @classmethod
     def register_tool(cls, tool_name: str, tool_class: Type[BaseWorkflowTool]) -> None:
-        """
-        Register a new tool type for recovery.
-
-        Args:
-            tool_name: The name identifier for the tool
-            tool_class: The tool class that can be instantiated
-        """
+        """Register a new tool type for recovery."""
         cls.TOOL_REGISTRY[tool_name] = tool_class
         logger.debug(f"Registered tool type: {tool_name}")
 
     @classmethod
     def can_recover(cls, task_id: str) -> bool:
-        """
-        Check if a task has recoverable state.
-
-        Args:
-            task_id: The task identifier
-
-        Returns:
-            True if the task can be recovered, False otherwise
-        """
-        if not state_manager.has_persisted_state(task_id):
+        """Check if a task has a recoverable tool state."""
+        task_state = state_manager.load_or_create_task_state(task_id)
+        persisted_tool_state = task_state.active_tool_state
+        if not persisted_tool_state:
             return False
 
-        state = state_manager.load_tool_state(task_id)
-        if not state:
-            return False
-
-        tool_name = state.get("tool_name")
+        tool_name = persisted_tool_state.tool_name
         return tool_name in cls.TOOL_REGISTRY
-
 ``````
 ------ src/alfred/templates/__init__.py ------
 ``````
@@ -2228,6 +2393,157 @@ Test:
 ``````
 
 ``````
+------ src/alfred/templates/prompts/generic/awaiting_ai_review.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_ai_review
+
+I have just submitted the artifact for the `{{ additional_context.last_state | replace("_", " ") | title }}` step. I must now perform a critical self-review to ensure the artifact meets all quality standards before it proceeds to human review.
+
+**My Submitted Artifact:**
+```json
+{{ additional_context.artifact_content }}
+```
+
+---
+### **Directive: AI Self-Review**
+
+Critically evaluate the artifact above against the original goal of the step.
+
+**Review Checklist:**
+1.  **Completeness:** Does the artifact contain all required fields and information?
+2.  **Clarity:** Is the information clear, specific, and unambiguous?
+3.  **Correctness:** Does the artifact accurately reflect the work that was required?
+4.  **Adherence to Standards:** Does the artifact follow all specified formatting and structural rules?
+
+---
+### **Required Action**
+
+Call `alfred.provide_review`.
+-   If the artifact is perfect, set `is_approved=True`.
+-   If the artifact has any flaws, set `is_approved=False` and provide detailed `feedback_notes` explaining the necessary corrections.
+``````
+------ src/alfred/templates/prompts/generic/awaiting_human_review.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_human_review
+
+My self-review is complete. The artifact for the `{{ additional_context.last_state | replace("_", " ") | title }}` step is now ready for your final approval.
+
+**Artifact for Your Review:**
+```json
+{{ additional_context.artifact_content }}
+```
+
+---
+### **Directive: Await Human Approval**
+
+Present the artifact to the human developer for their review and approval. They will provide a simple "yes/no" or "approve/reject" decision.
+
+-   If they approve, call `alfred.provide_review` with `is_approved=True`.
+-   If they request changes, call `alfred.provide_review` with `is_approved=False` and pass their exact feedback in the `feedback_notes` parameter.
+``````
+------ src/alfred/templates/prompts/plan_task/awaiting_ai_review.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_ai_review
+
+I have just submitted my artifact for review. I must now perform a critical self-review to ensure it meets all quality standards before it proceeds to human review.
+
+**My Submitted Artifact:**
+```json
+{{ additional_context.artifact_content | fromjson if additional_context.artifact_content else {} }}
+```
+
+---
+### **Directive: AI Self-Review**
+
+Critically evaluate the ContextAnalysisArtifact above against the original goal of understanding the codebase and identifying ambiguities.
+
+**Review Checklist:**
+1. **Context Summary Completeness:** Does the summary accurately capture the existing codebase relevant to the task?
+2. **Affected Files Coverage:** Are all relevant files identified? Are any missing or unnecessary?
+3. **Question Quality:** Are the questions specific, actionable, and focused on genuine ambiguities?
+4. **Accuracy:** Is all technical information correct based on the codebase analysis?
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
+---
+### **Required Action**
+
+Call `alfred.provide_review`.
+- If the artifact meets all quality standards, set `is_approved=True`.
+- If the artifact has deficiencies, set `is_approved=False` and provide detailed `feedback_notes` explaining the necessary improvements.
+``````
+------ src/alfred/templates/prompts/plan_task/awaiting_human_review.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_human_review
+
+My self-review is complete and approved. The artifact is now ready for your final human review and approval.
+
+**Artifact for Your Review:**
+```json
+{{ additional_context.artifact_content | fromjson if additional_context.artifact_content else {} }}
+```
+
+---
+### **Directive: Await Human Approval**
+
+Present the ContextAnalysisArtifact to the human developer for their review and approval. They will provide feedback on whether the codebase analysis and ambiguity questions are satisfactory.
+
+**What to look for in the human's response:**
+- Simple approval signals like "yes", "approve", "looks good", "LGTM"
+- Specific feedback requesting changes to the context summary, affected files, or questions
+- Additional requirements or clarifications they want to add
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
+---
+### **Required Action**
+
+Based on the human developer's response:
+- If they approve, call `alfred.provide_review` with `is_approved=True`
+- If they request changes, call `alfred.provide_review` with `is_approved=False` and pass their exact feedback in the `feedback_notes` parameter
+``````
 ------ src/alfred/templates/prompts/plan_task/contextualize.md ------
 ``````
 # ROLE: {{ persona.name }}, {{ persona.title }}
@@ -2241,9 +2557,9 @@ I am beginning the planning process for '{{ task.title }}'.
 ### **Persona Guidelines**
 
 **Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {{ persona.communication_style }}
+**Communication Style:** {% if persona.human %}{{ persona.human.communication_style }}{% else %}{{ persona.communication_style }}{% endif %}
 
-You MUST embody this persona. **Do not use repetitive, canned phrases.** Your first message to the user should be a unique greeting based on the persona's `greeting` and `style`. For example: `{{ persona.greeting }}` (Use creative greetings each time). Adapt your language to feel like a genuine, collaborative partner.
+You MUST embody this persona. **Do not use repetitive, canned phrases.** Your first message to the user should be a unique greeting based on the persona's `greeting` and `style`. For example: `{% if persona.human %}{{ persona.human.greeting }}{% else %}{{ persona.greeting }}{% endif %}` (Use creative greetings each time). Adapt your language to feel like a genuine, collaborative partner.
 ---
 
 **Task Context:**
@@ -2254,12 +2570,46 @@ You MUST embody this persona. **Do not use repetitive, canned phrases.** Your fi
   - {{ criterion }}
 {% endfor %}
 
+{% if additional_context.feedback_notes %}
+---
+### **Building on Your Previous Analysis**
+
+Your earlier ContextAnalysisArtifact has been reviewed and needs some refinements. Here's what you submitted:
+
+```json
+{{ additional_context.context_artifact | tojson(indent=2) if additional_context.context_artifact else "No artifact data available" }}
+```
+
+The reviewer provided this feedback to help strengthen your analysis:
+
+> {{ additional_context.feedback_notes }}
+
+Please refine your ContextAnalysisArtifact by incorporating these suggestions. Focus on addressing the specific areas highlighted while maintaining the quality of your existing work.
+
+{% endif %}
 ---
 ### **Directive: Codebase Analysis & Ambiguity Detection**
 
 Your mission is to become the expert on this task. You must:
 1.  **Analyze the existing codebase.** Start from the project root. Identify all files and code blocks relevant to the provided Task Context.
 2.  **Identify Ambiguities.** Compare the task goal with your code analysis. Create a list of precise questions for the human developer to resolve any uncertainties or missing requirements.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**
@@ -2289,10 +2639,44 @@ The technical strategy has been approved. Now, you must translate this strategy 
 {{ additional_context.strategy_artifact | tojson(indent=2) }}
 ```
 
+{% if additional_context.feedback_notes %}
+---
+### **Iterating on Your Design**
+
+Your DesignArtifact has been carefully reviewed, and there are some valuable suggestions to make it even stronger. Here's your current design:
+
+```json
+{{ additional_context.design_artifact | tojson(indent=2) if additional_context.design_artifact else "No artifact data available" }}
+```
+
+The review highlighted these areas for enhancement:
+
+> {{ additional_context.feedback_notes }}
+
+Please refine your DesignArtifact by incorporating these insights. Think about how these suggestions can improve the clarity, completeness, and implementability of your design while preserving the strong elements you've already developed.
+
+{% endif %}
 ---
 ### **Directive: Create Detailed Design**
 
 Based on the approved strategy, create a comprehensive, file-by-file breakdown of all necessary changes. For each file that needs to be created or modified, provide a clear summary of the required changes.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**
@@ -2676,6 +3060,23 @@ Each subtask includes:
 {{ additional_context.design_artifact | tojson(indent=2) }}
 ```
 
+{% if additional_context.feedback_notes %}
+---
+### **Refining Your Execution Plan**
+
+Your ExecutionPlan has been reviewed with a focus on precision and implementability. Here's your current subtask breakdown:
+
+```json
+{{ additional_context.execution_plan_artifact | tojson(indent=2) if additional_context.execution_plan_artifact else "No artifact data available" }}
+```
+
+The review identified opportunities to enhance your plan:
+
+> {{ additional_context.feedback_notes }}
+
+Please revise your ExecutionPlan by incorporating these insights. Focus on making your subtasks even more precise, atomic, and actionable while maintaining the solid structure you've established. Remember, each subtask should be executable in complete isolation.
+
+{% endif %}
 ---
 ### **Your Mission**
 
@@ -2687,6 +3088,23 @@ Transform the approved design into subtasks that are:
 5. **Complete** - When all done, the feature works perfectly
 
 Remember: You are writing instructions for agents who know nothing about the project except what you tell them. Every detail matters.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**
@@ -2734,7 +3152,7 @@ My initial analysis has generated a list of questions that must be answered to p
 ### **Persona Guidelines**
 
 **Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {{ persona.communication_style }}
+**Communication Style:** {% if persona.human %}{{ persona.human.communication_style }}{% else %}{{ persona.communication_style }}{% endif %}
 
 You are now in a **Clarification Loop**. Your goal is to get complete answers for all your questions from the human developer.
 ---
@@ -2751,6 +3169,23 @@ You are now in a **Clarification Loop**. Your goal is to get complete answers fo
 {% for question in artifact.questions_for_developer %}
 - [ ] {{ question }}
 {% endfor %}
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**
@@ -2779,6 +3214,23 @@ Critically evaluate the design against the original strategy.
 2. **Clarity:** Is the `change_summary` for each file clear, specific, and actionable?
 3. **Correctness:** Are the file paths and proposed operations logical and correct?
 
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
 ---
 ### **Required Action**
 
@@ -2805,6 +3257,23 @@ Review the generated `list[Subtask]` against the original `Task` context.
 2. **Completeness:** Is the plan comprehensive? Are there any missing steps or logical gaps between Subtasks?
 3. **Traceability:** Does the plan clearly and logically derive from the approved `strategy` and `design`?
 4. **Delegation:** Have complex tasks been appropriately marked with a `delegation` spec?
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**
@@ -2833,6 +3302,23 @@ Critically evaluate the strategy you just created.
 3.  **Completeness:** Are all key components and potential dependencies identified?
 4.  **Simplicity:** Is this the simplest viable approach, or is there a less complex alternative?
 
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
 ---
 ### **Required Action**
 
@@ -2850,14 +3336,21 @@ If the strategy is flawed, call `alfred.provide_review` with `is_approved=False`
 Context is verified. The human developer has provided all necessary clarifications. We will now create the high-level technical strategy for '{{ task.title }}'. This strategy will serve as the guiding principle for the detailed design.
 
 ---
-### **Clarifications from Developer**
+### **Refining Your Technical Strategy**
 {% if additional_context.feedback_notes %}
-The following clarifications were provided and MUST be incorporated into your strategy:
+Your previous StrategyArtifact has been reviewed and the team has provided valuable insights to strengthen your approach. Here's your earlier strategy:
+
+```json
+{{ additional_context.strategy_artifact | tojson(indent=2) if additional_context.strategy_artifact else "No artifact data available" }}
 ```
-{{ additional_context.feedback_notes }}
-```
+
+The reviewer shared these insights to help you refine the strategy:
+
+> {{ additional_context.feedback_notes }}
+
+Please enhance your StrategyArtifact by incorporating this feedback. Consider how these suggestions can improve the overall technical approach while building on the solid foundation you've already established.
 {% else %}
-No specific clarifications were provided. Proceed based on the original task context.
+No specific clarifications were provided. Proceed based on the original task context and approved requirements.
 {% endif %}
 
 ---
@@ -2875,6 +3368,23 @@ Based on the full task context, develop a concise technical strategy.
 - **Components:** List the major new or modified components, classes, or modules.
 - **Dependencies (Optional):** List any new third-party libraries that will be required.
 - **Risks (Optional):** Note any potential risks or important architectural trade-offs.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**
@@ -2899,6 +3409,204 @@ You MUST now call `alfred.submit_work` with a `StrategyArtifact`.
 # STATE: verified
 
 # TODO: Implement full prompt.
+``````
+------ src/alfred/templates/prompts/start_task/awaiting_ai_review.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_ai_review
+
+I have just submitted my artifact for review. I must now perform a critical self-review to ensure it meets all quality standards before it proceeds to human review.
+
+**My Submitted Artifact:**
+```json
+{{ additional_context.artifact_content | fromjson if additional_context.artifact_content else {} }}
+```
+
+---
+### **Directive: AI Self-Review**
+
+Critically evaluate the submitted artifact against the requirements for this step of the start_task workflow.
+
+**Review Checklist:**
+1. **Data Accuracy:** Is all information in the artifact accurate and complete?
+2. **Required Fields:** Are all required fields present and properly formatted?
+3. **Git Status Assessment:** For GitStatusArtifact, does the assessment align with proper Git workflow practices?
+4. **Branch Strategy:** For BranchCreationArtifact, was the branch creation successful and properly named?
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
+---
+### **Required Action**
+
+Call `alfred.provide_review`.
+- If the artifact meets all quality standards, set `is_approved=True`.
+- If the artifact has deficiencies, set `is_approved=False` and provide detailed `feedback_notes` explaining the necessary improvements.
+``````
+------ src/alfred/templates/prompts/start_task/awaiting_branch_creation.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.start_task`
+# TASK: {{ task.task_id }}
+# STATE: branch_created
+
+Excellent. The human operator has approved the action.
+
+---
+### **Directive: Create and Verify Branch**
+
+Please execute the proposed git command to create and switch to the new feature branch:
+`git checkout -b feature/{{ task.task_id }}`
+
+If the branch already exists, use `git checkout feature/{{ task.task_id }}` instead.
+
+After executing the command, please report the outcome.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
+---
+### **Required Action**
+
+You MUST now call `alfred.submit_work` with a `BranchCreationArtifact`.
+
+**Required Artifact Structure:**
+```json
+{
+  "branch_name": "string - The name of the new branch, 'feature/{{ task.task_id }}'.",
+  "success": "boolean - True if the command executed without errors.",
+  "details": "string - The output from the git command."
+}
+```
+``````
+------ src/alfred/templates/prompts/start_task/awaiting_git_status.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.start_task`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_git_status
+
+Welcome. I am {{ persona.name }}, your {{ persona.title }}.
+
+{{ persona.context }}
+
+---
+### **System Checkpoint: Environment Assessment**
+
+Before we begin work on task **{{ task.task_id }}**, we must establish a clean working environment.
+
+Please execute:
+```bash
+git status
+```
+
+Report the current repository state for validation.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
+---
+### **Required Action**
+
+You MUST now call `alfred.submit_work` with a `GitStatusArtifact`.
+
+**Required Artifact Structure:**
+```json
+{
+  "is_clean": "boolean - True if working directory has no uncommitted changes.",
+  "current_branch": "string - The name of the current git branch.",
+  "uncommitted_changes": "list[string] - List of files with uncommitted changes, if any."
+}
+```
+``````
+------ src/alfred/templates/prompts/start_task/awaiting_human_review.md ------
+``````
+# ROLE: {{ persona.name }}, {{ persona.title }}
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_human_review
+
+The AI has reviewed my submission and found it satisfactory. Now I require human approval to proceed with the next step.
+
+**Current Artifact:**
+```json
+{{ additional_context.artifact_content | fromjson if additional_context.artifact_content else {} }}
+```
+
+---
+### **Directive: Human Review**
+
+Please review my submission above and confirm whether you approve proceeding to the next step.
+
+The AI has already validated the technical accuracy. Your approval confirms that the proposed action aligns with your intentions and project requirements.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
+---
+### **Required Action**
+
+Call `alfred.provide_review`.
+- If you approve proceeding to the next step, set `is_approved=True`.
+- If you need changes or have concerns, set `is_approved=False` and provide `feedback_notes` with your specific requirements.
 ``````
 ------ src/alfred/templates/prompts/verified.md ------
 ``````
@@ -3063,396 +3771,308 @@ When you run `begin_task("TASK-ID")`, Alfred will read the corresponding file an
 ``````
 # src/alfred/tools/plan_task.py
 import json
-from typing import Optional
-from src.alfred.models.schemas import ToolResponse, TaskStatus
-from src.alfred.lib.task_utils import load_task, update_task_status
-from src.alfred.orchestration.persona_loader import load_persona
-from src.alfred.core.workflow import PlanTaskTool, PlanTaskState
+
 from src.alfred.core.prompter import prompter
+from src.alfred.core.workflow import PlanTaskState, PlanTaskTool
+from src.alfred.lib.logger import get_logger, setup_task_logging
+from src.alfred.lib.task_utils import load_task
+from src.alfred.models.schemas import TaskStatus, ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.lib.logger import setup_task_logging, get_logger
-from src.alfred.state.recovery import ToolRecovery
+from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.state.manager import state_manager
+from src.alfred.state.recovery import ToolRecovery
 
 logger = get_logger(__name__)
 
 
-def _get_previous_state(current_state: str) -> Optional[str]:
-    """Helper to get the previous state for a review state"""
-    state_map = {"review_context": "contextualize", "review_strategy": "strategize", "review_design": "design", "review_plan": "generate_subtasks"}
-    return state_map.get(current_state)
-
-
 async def plan_task_impl(task_id: str) -> ToolResponse:
-    """
-    Implementation logic for the plan_task tool.
-
-    This implementation includes recovery capability - if the tool
-    crashes mid-workflow, it can be recovered from persisted state.
-    """
-    # Setup logging for this task
+    """Implementation logic for the plan_task tool with unified state."""
     setup_task_logging(task_id)
 
-    # Check if tool already exists in memory
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
     if task_id in orchestrator.active_tools:
         tool_instance = orchestrator.active_tools[task_id]
-        logger.info(f"Found active tool for task {task_id} in state {tool_instance.state}")
+        logger.info(
+            f"Found active tool for task {task_id} in state {tool_instance.state}"
+        )
     else:
-        # Try to recover from disk
         tool_instance = ToolRecovery.recover_tool(task_id)
         if tool_instance:
             orchestrator.active_tools[task_id] = tool_instance
-            logger.info(f"Recovered tool from disk for task {task_id} in state {tool_instance.state}")
+            logger.info(
+                f"Recovered tool from disk for task {task_id} in state {tool_instance.state}"
+            )
         else:
-            # No existing tool - create new one
-            task = load_task(task_id)
-            if not task:
-                return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
-
-            # Check preconditions for new planning
             if task.task_status not in [TaskStatus.NEW, TaskStatus.PLANNING]:
-                return ToolResponse(status="error", message=f"Task '{task_id}' has status '{task.task_status.value}'. Planning can only start on a 'new' task or resume a 'planning' task.")
+                return ToolResponse(
+                    status="error",
+                    message=f"Task '{task_id}' has status '{task.task_status.value}'. Planning can only start on a 'new' task or resume a 'planning' task.",
+                )
 
-            # Create new tool instance
             tool_instance = PlanTaskTool(task_id=task_id)
             orchestrator.active_tools[task_id] = tool_instance
 
-            # Update task status to planning
             if task.task_status == TaskStatus.NEW:
-                update_task_status(task_id, TaskStatus.PLANNING)
+                state_manager.update_task_status(task_id, TaskStatus.PLANNING)
 
-            # Save initial state
-            state_manager.save_tool_state(task_id, tool_instance)
+            state_manager.update_tool_state(task_id, tool_instance)
             logger.info(f"Created new planning tool for task {task_id}")
 
-    # Load persona config
     try:
         persona_config = load_persona(tool_instance.persona_name or "planning")
     except FileNotFoundError as e:
         return ToolResponse(status="error", message=str(e))
 
-    # Reload task to get latest state
-    task = load_task(task_id)
-    if not task:
-        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
-
-    # Generate appropriate prompt for current state
-    logger.info(f"[PLAN_TASK] Generating prompt for state: {tool_instance.state}")
-    logger.info(f"[PLAN_TASK] Context store keys: {list(tool_instance.context_store.keys())}")
-
-    # Prepare context for prompt generation
     prompt_context = tool_instance.context_store.copy()
+    prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=tool_instance.tool_name,
+        state=tool_instance.state,
+        persona_config=persona_config,
+        additional_context=prompt_context,
+    )
 
-    # For review states, ensure artifact_content is available
-    if "review" in tool_instance.state and "artifact_content" not in prompt_context:
-        # Try to reconstruct artifact_content from the previous state's artifact
-        prev_state = _get_previous_state(tool_instance.state)
-        if prev_state:
-            # Map state names to cleaner artifact names (same as in submit_work)
-            artifact_name_map = {"contextualize": "context", "strategize": "strategy", "design": "design", "generate_subtasks": "execution_plan"}
-
-            # Try both naming conventions for backward compatibility
-            artifact_name = artifact_name_map.get(prev_state, prev_state)
-            artifact_key = f"{artifact_name}_artifact"
-            old_artifact_key = f"{prev_state}_artifact"
-
-            # Check both keys
-            if artifact_key in prompt_context:
-                artifact_data = prompt_context[artifact_key]
-            elif old_artifact_key in prompt_context:
-                artifact_data = prompt_context[old_artifact_key]
-            else:
-                artifact_data = None
-
-            if artifact_data:
-                # Handle both dict and Pydantic model
-                if hasattr(artifact_data, "model_dump"):
-                    artifact_dict = artifact_data.model_dump()
-                else:
-                    artifact_dict = artifact_data
-                prompt_context["artifact_content"] = json.dumps(artifact_dict, indent=2)
-                logger.info(f"[PLAN_TASK] Reconstructed artifact_content from artifact")
-
-    prompt = prompter.generate_prompt(task=task, tool_name=tool_instance.tool_name, state=tool_instance.state, persona_config=persona_config, additional_context=prompt_context)
-
-    # Determine appropriate message based on whether we're resuming
-    if tool_instance.state == PlanTaskState.CONTEXTUALIZE.value:
-        message = f"Planning initiated for task '{task_id}'."
-    else:
-        message = f"Resumed planning for task '{task_id}' from state '{tool_instance.state}'."
+    message = (
+        f"Planning initiated for task '{task_id}'."
+        if tool_instance.state == PlanTaskState.CONTEXTUALIZE.value
+        else f"Resumed planning for task '{task_id}' from state '{tool_instance.state}'."
+    )
 
     return ToolResponse(status="success", message=message, next_prompt=prompt)
-
 ``````
 ------ src/alfred/tools/progress.py ------
 ``````
 # src/alfred/tools/progress.py
 """
 Progress tracking tools for Alfred workflow system.
-
-Provides functionality to track subtask completion during implementation phase.
 """
-
-from typing import Set
-
 from src.alfred.lib.logger import get_logger
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
 from src.alfred.state.manager import state_manager
-from src.alfred.core.workflow import BaseWorkflowTool
 
 logger = get_logger(__name__)
 
 
 def mark_subtask_complete_impl(task_id: str, subtask_id: str) -> ToolResponse:
-    """
-    Marks a specific subtask as complete during the implementation phase.
-
-    This function:
-    1. Verifies an active tool exists for the task
-    2. Checks if the subtask_id is valid for the current execution plan
-    3. Tracks completed subtasks in the tool's context_store
-    4. Persists the updated state
-
-    Args:
-        task_id: The unique identifier for the task
-        subtask_id: The subtask identifier to mark as complete (e.g., "subtask-1")
-
-    Returns:
-        ToolResponse: Success/error status with appropriate message
-    """
-    # Check if there's an active tool for this task
+    """Marks a specific subtask as complete during the implementation phase."""
     if task_id not in orchestrator.active_tools:
-        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'. Cannot mark subtask complete.")
+        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
 
     active_tool = orchestrator.active_tools[task_id]
+    execution_plan_artifact = active_tool.context_store.get("execution_plan_artifact")
+    if not execution_plan_artifact:
+        return ToolResponse(status="error", message="No execution plan found in context.")
 
-    # Get the execution plan from context store if available
-    execution_plan = active_tool.context_store.get("execution_plan_artifact")
-    if not execution_plan:
-        # Try alternative key names
-        execution_plan = active_tool.context_store.get("generate_subtasks_artifact")
-
-    if not execution_plan:
-        return ToolResponse(status="error", message="No execution plan found in the active tool's context. Cannot validate subtask.")
-
-    # Validate the subtask_id exists in the execution plan
-    valid_subtask_ids = {subtask.subtask_id for subtask in execution_plan.subtasks}
+    # Note: Pydantic models in context are stored as dicts after deserialization
+    execution_plan = execution_plan_artifact.get("subtasks", [])
+    valid_subtask_ids = {subtask["subtask_id"] for subtask in execution_plan}
     if subtask_id not in valid_subtask_ids:
-        return ToolResponse(status="error", message=f"Invalid subtask_id '{subtask_id}'. Valid subtask IDs are: {', '.join(sorted(valid_subtask_ids))}")
+        return ToolResponse(status="error", message=f"Invalid subtask_id '{subtask_id}'.")
 
-    # Initialize completed_subtasks set if it doesn't exist
-    if "completed_subtasks" not in active_tool.context_store:
-        active_tool.context_store["completed_subtasks"] = set()
-
-    # Ensure completed_subtasks is a set (handle deserialization from JSON)
-    completed_subtasks = active_tool.context_store["completed_subtasks"]
-    if isinstance(completed_subtasks, list):
-        completed_subtasks = set(completed_subtasks)
-        active_tool.context_store["completed_subtasks"] = completed_subtasks
-
-    # Check if already marked complete
+    completed_subtasks = set(active_tool.context_store.get("completed_subtasks", []))
     if subtask_id in completed_subtasks:
-        return ToolResponse(status="success", message=f"Subtask '{subtask_id}' was already marked as complete.")
+        return ToolResponse(status="success", message=f"Subtask '{subtask_id}' already marked complete.")
 
-    # Mark the subtask as complete
     completed_subtasks.add(subtask_id)
+    active_tool.context_store["completed_subtasks"] = list(completed_subtasks)
 
-    # Calculate progress
-    total_subtasks = len(valid_subtask_ids)
+    # --- THIS IS THE FIX ---
+    # Use the correct, unified state manager method.
+    state_manager.update_tool_state(task_id, active_tool)
+    # --- END FIX ---
+
     completed_count = len(completed_subtasks)
-    progress_percentage = (completed_count / total_subtasks) * 100
+    total_subtasks = len(valid_subtask_ids)
+    progress = (completed_count / total_subtasks) * 100 if total_subtasks > 0 else 0
+    message = f"Acknowledged: Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_subtasks} ({progress:.0f}%)."
+    logger.info(message)
 
-    # Save the updated state
-    try:
-        state_manager.save_tool_state(task_id, active_tool)
-        logger.info(f"Task {task_id}: Marked subtask '{subtask_id}' as complete. Progress: {completed_count}/{total_subtasks} ({progress_percentage:.1f}%)")
-
-        # Build progress summary
-        remaining_subtasks = valid_subtask_ids - completed_subtasks
-        progress_message = f"Successfully marked subtask '{subtask_id}' as complete.\n\nProgress: {completed_count}/{total_subtasks} subtasks completed ({progress_percentage:.1f}%)\n"
-
-        if remaining_subtasks:
-            progress_message += f"Remaining subtasks: {', '.join(sorted(remaining_subtasks))}"
-        else:
-            progress_message += "All subtasks completed! 🎉"
-
-        return ToolResponse(
-            status="success",
-            message=progress_message,
-            data={
-                "completed_count": completed_count,
-                "total_count": total_subtasks,
-                "progress_percentage": progress_percentage,
-                "completed_subtasks": sorted(list(completed_subtasks)),
-                "remaining_subtasks": sorted(list(remaining_subtasks)),
-            },
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to save progress for task {task_id}: {e}")
-        # Remove the subtask from completed set since save failed
-        completed_subtasks.discard(subtask_id)
-
-        return ToolResponse(status="error", message=f"Failed to save progress: {str(e)}")
-
+    return ToolResponse(
+        status="success",
+        message=message,
+        data={
+            "completed_count": completed_count,
+            "total_count": total_subtasks,
+            "progress_percentage": progress,
+        },
+    )
 ``````
 ------ src/alfred/tools/provide_review.py ------
 ``````
 # src/alfred/tools/provide_review.py
-import json
-from src.alfred.models.schemas import ToolResponse, Task, TaskStatus
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.lib.task_utils import load_task, update_task_status
+from src.alfred.config.manager import ConfigManager
+from src.alfred.config.settings import settings
+from src.alfred.constants import ToolName
 from src.alfred.core.prompter import prompter
+from src.alfred.core.workflow import ReviewState
+from src.alfred.core.context_builder import ContextBuilder
+from src.alfred.lib.logger import cleanup_task_logging, get_logger
+from src.alfred.lib.task_utils import load_task
+from src.alfred.models.schemas import TaskStatus, ToolResponse
+from src.alfred.orchestration.orchestrator import orchestrator
 from src.alfred.orchestration.persona_loader import load_persona
-from src.alfred.lib.logger import get_logger, cleanup_task_logging
 from src.alfred.state.manager import state_manager
-from src.alfred.constants import ToolName, Paths, PlanTaskStates, ArtifactKeys, Triggers, ResponseStatus, LogMessages, ErrorMessages
 
 logger = get_logger(__name__)
 
+# Force server reload marker - AL-09 implementation active
 
 def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
-    """
-    Processes review feedback, advancing the active tool's State Machine.
-    Handles both mid-workflow reviews and final tool completion.
-
-    IMPORTANT: This implementation uses atomic state transitions to prevent
-    state corruption if prompt generation fails.
-    """
+    """Processes review feedback, advancing the active tool's State Machine."""
     if task_id not in orchestrator.active_tools:
-        return ToolResponse(status=ResponseStatus.ERROR, message=LogMessages.NO_ACTIVE_TOOL.format(task_id=task_id))
+        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
 
     active_tool = orchestrator.active_tools[task_id]
     task = load_task(task_id)
     if not task:
-        return ToolResponse(status=ResponseStatus.ERROR, message=LogMessages.TASK_NOT_FOUND.format(task_id=task_id))
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
 
-    # Determine the trigger
-    trigger = Triggers.AI_APPROVE if is_approved else Triggers.REQUEST_REVISION
-    if not hasattr(active_tool, trigger):
-        return ToolResponse(status=ResponseStatus.ERROR, message=f"Invalid action: cannot trigger '{trigger}' from state '{active_tool.state}'.")
+    current_state = active_tool.state
+    logger.info(f"Processing review for task {task_id} in state '{current_state}', approved={is_approved}")
+    
+    if not is_approved:
+        logger.info(f"Review rejected, transitioning back from '{current_state}'")
+        active_tool.request_revision()
+        message = "Revision requested. Returning to previous step."
+        logger.info(f"After revision, new state is '{active_tool.state}'")
+    else:
+        if current_state == ReviewState.AWAITING_AI_REVIEW.value:
+            active_tool.ai_approve()
+            config_manager = ConfigManager(settings.alfred_dir)
+            config = config_manager.load()
+            if config.features.autonomous_mode:
+                logger.info(f"Autonomous mode enabled. Bypassing human review for task {task_id}.")
+                active_tool.human_approve()
+                message = "AI review approved. Autonomous mode bypassed human review."
+            else:
+                message = "AI review approved. Awaiting human review."
+        elif current_state == ReviewState.AWAITING_HUMAN_REVIEW.value:
+            active_tool.human_approve()
+            message = "Human review approved. Proceeding to next step."
+        else:
+            return ToolResponse(status="error", message=f"Cannot provide review from non-review state '{active_tool.state}'.")
 
-    # Save current state for potential rollback
-    original_state = active_tool.state
-    original_context = active_tool.context_store.copy()
+    state_manager.update_tool_state(task_id, active_tool)
+
+    if active_tool.is_terminal:
+        # --- ADD THIS LOGIC ---
+        if active_tool.tool_name == ToolName.START_TASK:
+            final_task_status = TaskStatus.PLANNING
+            handoff_message = f"Setup for task {task_id} is complete. The task is now '{final_task_status.value}'. Call 'plan_task' to begin planning."
+        # --- END ADDED LOGIC ---
+        elif active_tool.tool_name == ToolName.PLAN_TASK:
+            final_task_status = TaskStatus.READY_FOR_DEVELOPMENT
+            handoff_message = f"Planning for task {task_id} is complete. The task is now '{final_task_status.value}'. To begin implementation, use the 'implement_task' tool."
+        else:
+            final_task_status = TaskStatus.DONE # Default fallback
+            handoff_message = f"Tool '{active_tool.tool_name}' for task {task_id} completed."
+
+        state_manager.update_task_status(task_id, final_task_status)
+        state_manager.clear_tool_state(task_id)
+        del orchestrator.active_tools[task_id]
+        cleanup_task_logging(task_id)
+        logger.info(f"Tool '{active_tool.tool_name}' for task {task_id} completed. Task status updated to '{final_task_status.value}'.")
+        
+        return ToolResponse(status="success", message=message, next_prompt=handoff_message)
+    else:
+        persona_config = load_persona(active_tool.persona_name)
+        
+        # CRITICAL: Force visible logging to verify code execution
+        logger.warning(f"[AL-09 VERIFICATION] Building context for state '{active_tool.state}', is_approved={is_approved}")
+        
+        # Build proper context based on transition type
+        if not is_approved:
+            # Rejection: returning to work state, need feedback context
+            logger.info(f"[FEEDBACK LOOP] Building feedback context for rejection flow")
+            logger.info(f"[FEEDBACK LOOP] State: '{active_tool.state}', Feedback: {feedback_notes[:100]}")
+            additional_context = ContextBuilder.build_feedback_context(
+                active_tool,
+                active_tool.state,  # Current state after revision
+                feedback_notes
+            )
+            logger.info(f"[FEEDBACK LOOP] Context keys after building: {list(additional_context.keys())}")
+            logger.info(f"[FEEDBACK LOOP] Has feedback_notes: {'feedback_notes' in additional_context}")
+            logger.info(f"[FEEDBACK LOOP] Has context_artifact: {'context_artifact' in additional_context}")
+        else:
+            # Approval: moving forward, standard context
+            logger.info(f"[FEEDBACK LOOP] Building standard context for approval flow")
+            additional_context = ContextBuilder.build_standard_context(active_tool)
+            
+        next_prompt = prompter.generate_prompt(
+            task=task,
+            tool_name=active_tool.tool_name,
+            state=active_tool.state,
+            persona_config=persona_config,
+            additional_context=additional_context,
+        )
+        return ToolResponse(status="success", message=message, next_prompt=next_prompt)
+``````
+------ src/alfred/tools/start_task.py ------
+``````
+# src/alfred/tools/start_task.py
+"""
+The start_task tool, re-architected as a stateful workflow tool.
+"""
+from src.alfred.core.prompter import prompter
+from src.alfred.core.workflow import StartTaskTool
+from src.alfred.lib.logger import get_logger, setup_task_logging
+from src.alfred.lib.task_utils import load_task
+from src.alfred.models.schemas import TaskStatus, ToolResponse
+from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.orchestration.persona_loader import load_persona
+from src.alfred.state.manager import state_manager
+from src.alfred.state.recovery import ToolRecovery
+
+logger = get_logger(__name__)
+
+
+def start_task_impl(task_id: str) -> ToolResponse:
+    """Implementation logic for the interactive start_task tool."""
+    setup_task_logging(task_id)
+
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    if task_id in orchestrator.active_tools:
+        tool_instance = orchestrator.active_tools[task_id]
+        logger.info(f"Found active tool for task {task_id} in state {tool_instance.state}")
+    else:
+        tool_instance = ToolRecovery.recover_tool(task_id)
+        if tool_instance:
+            orchestrator.active_tools[task_id] = tool_instance
+            logger.info(f"Recovered tool for task {task_id} in state {tool_instance.state}")
+        else:
+            if task.task_status not in [TaskStatus.NEW, TaskStatus.PLANNING]:
+                return ToolResponse(
+                    status="error",
+                    message=f"Task '{task_id}' has status '{task.task_status.value}'. Setup can only start on a 'new' task.",
+                )
+
+            tool_instance = StartTaskTool(task_id=task_id)
+            orchestrator.active_tools[task_id] = tool_instance
+            state_manager.update_tool_state(task_id, tool_instance)
+            logger.info(f"Created new start_task tool for task {task_id}")
 
     try:
-        # PHASE 1: Prepare everything that could fail
-        # Calculate what the next state will be
-        next_transitions = active_tool.machine.get_transitions(source=active_tool.state, trigger=trigger)
-        if not next_transitions:
-            return ToolResponse(status=ResponseStatus.ERROR, message=f"No valid transition for trigger '{trigger}' from state '{active_tool.state}'.")
+        persona_config = load_persona(tool_instance.persona_name)
+    except FileNotFoundError as e:
+        return ToolResponse(status="error", message=str(e))
 
-        next_state = next_transitions[0].dest
+    prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=tool_instance.tool_name,
+        state=tool_instance.state,
+        persona_config=persona_config,
+    )
 
-        # Check if the next state will be terminal
-        will_be_terminal = next_state == PlanTaskStates.VERIFIED
+    message = f"Starting setup for task '{task_id}'. Current step: {tool_instance.state}."
 
-        if will_be_terminal:
-            # Prepare completion logic
-            final_task_status = TaskStatus.READY_FOR_DEVELOPMENT
-            handoff_message = (
-                f"Planning for task {task_id} is complete and verified. The task is now '{final_task_status.value}'.\n\nTo begin implementation, run `alfred.implement_task(task_id='{task_id}')`."
-            )
-            next_prompt = handoff_message
-        else:
-            # Prepare mid-workflow logic
-            try:
-                persona_config = load_persona(active_tool.persona_name)
-            except FileNotFoundError as e:
-                return ToolResponse(status=ResponseStatus.ERROR, message=str(e))
-
-            # Always provide feedback_notes in additional_context
-            additional_context = {}
-            # Convert any Pydantic models to dicts
-            for key, value in active_tool.context_store.items():
-                if hasattr(value, "model_dump"):
-                    additional_context[key] = value.model_dump()
-                else:
-                    additional_context[key] = value
-            additional_context["feedback_notes"] = feedback_notes or ""
-
-            # Generate prompt for the NEXT state (most likely to fail)
-            next_prompt = prompter.generate_prompt(
-                task=task,
-                tool_name=active_tool.tool_name,
-                state=next_state,  # Use the calculated next state
-                persona_config=persona_config,
-                additional_context=additional_context,
-            )
-
-        # PHASE 2: Commit - only if everything succeeded
-        # Now do the actual state transition
-        getattr(active_tool, trigger)()
-        logger.info(LogMessages.STATE_TRANSITION.format(task_id=task_id, trigger=trigger, state=active_tool.state))
-
-        # Persist the new state immediately
-        state_manager.save_tool_state(task_id, active_tool)
-
-        # Save execution plan JSON if we just approved the plan
-        if (
-            active_tool.tool_name == ToolName.PLAN_TASK
-            and original_state == PlanTaskStates.REVIEW_PLAN
-            and is_approved
-            and ArtifactKeys.get_artifact_key(PlanTaskStates.GENERATE_SUBTASKS) in active_tool.context_store
-        ):
-            try:
-                import json
-                from pathlib import Path
-                from src.alfred.config.settings import settings
-
-                logger.info(f"Attempting to save execution plan for task {task_id}")
-                logger.info(f"Context store keys: {list(active_tool.context_store.keys())}")
-
-                # Create workspace directory if it doesn't exist
-                workspace_dir = settings.alfred_dir / Paths.WORKSPACE_DIR / task_id
-                workspace_dir.mkdir(parents=True, exist_ok=True)
-
-                # Save execution plan as JSON
-                execution_plan_path = workspace_dir / Paths.EXECUTION_PLAN_FILE
-                artifact_key = ArtifactKeys.get_artifact_key(PlanTaskStates.GENERATE_SUBTASKS)
-                execution_plan = active_tool.context_store[artifact_key]
-
-                # Convert Pydantic model to dict
-                plan_dict = execution_plan.model_dump() if hasattr(execution_plan, "model_dump") else execution_plan
-
-                with open(execution_plan_path, "w") as f:
-                    json.dump(plan_dict, f, indent=2)
-
-                logger.info(LogMessages.EXECUTION_PLAN_SAVED.format(path=execution_plan_path))
-            except Exception as e:
-                logger.error(LogMessages.EXECUTION_PLAN_SAVE_FAILED.format(error=e), exc_info=True)
-                # Don't fail the review if we can't save the JSON
-
-        # Handle terminal state cleanup
-        if active_tool.is_terminal:
-            update_task_status(task_id, final_task_status)
-            state_manager.clear_tool_state(task_id)  # Clean up persisted state
-            del orchestrator.active_tools[task_id]
-            cleanup_task_logging(task_id)
-            logger.info(f"Tool '{active_tool.tool_name}' for task {task_id} completed. Task status updated to '{final_task_status.value}'.")
-
-            return ToolResponse(status=ResponseStatus.SUCCESS, message=f"Tool '{active_tool.tool_name}' completed successfully.", next_prompt=next_prompt)
-        else:
-            message = "Review approved. Proceeding to next step." if is_approved else "Revision requested."
-            return ToolResponse(status=ResponseStatus.SUCCESS, message=message, next_prompt=next_prompt)
-
-    except Exception as e:
-        # Rollback on any failure
-        logger.error(f"State transition failed for task {task_id}: {e}")
-        active_tool.state = original_state
-        active_tool.context_store = original_context
-
-        # Save the rolled-back state
-        try:
-            state_manager.save_tool_state(task_id, active_tool)
-        except:
-            pass  # Don't fail the error response if state save fails
-
-        return ToolResponse(status=ResponseStatus.ERROR, message=f"Failed to process review: {str(e)}")
-
+    return ToolResponse(status="success", message=message, next_prompt=prompt)
 ``````
 ------ src/alfred/tools/submit_work.py ------
 ``````
@@ -3460,6 +4080,7 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
 import json
 
 from pydantic import ValidationError
+
 from src.alfred.core.prompter import prompter
 from src.alfred.lib.artifact_manager import artifact_manager
 from src.alfred.lib.logger import get_logger
@@ -3474,12 +4095,7 @@ logger = get_logger(__name__)
 
 
 def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
-    """
-    Implements the logic for submitting a work artifact to the active tool.
-
-    IMPORTANT: This implementation uses atomic state transitions to prevent
-    state corruption if any operation fails.
-    """
+    """Implements the logic for submitting a work artifact to the active tool."""
     if task_id not in orchestrator.active_tools:
         return ToolResponse(status=ResponseStatus.ERROR, message=f"{LogMessages.NO_ACTIVE_TOOL.format(task_id=task_id)} Cannot submit work.")
 
@@ -3488,110 +4104,94 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     if not task:
         return ToolResponse(status=ResponseStatus.ERROR, message=LogMessages.TASK_NOT_FOUND.format(task_id=task_id))
 
-    # Save current state for potential rollback
-    original_state = active_tool.state
-    original_context = active_tool.context_store.copy()
+    current_state_enum = active_tool.state
+    current_state_val = active_tool.state.value if hasattr(active_tool.state, "value") else active_tool.state
+    artifact_model = active_tool.artifact_map.get(current_state_enum)
+
+    if artifact_model:
+        try:
+            validated_artifact = artifact_model.model_validate(artifact)
+            logger.info(LogMessages.ARTIFACT_VALIDATED.format(state=current_state_val, model=artifact_model.__name__))
+        except ValidationError as e:
+            error_msg = f"{ErrorMessages.VALIDATION_FAILED.format(state=current_state_val)}. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
+            return ToolResponse(status=ResponseStatus.ERROR, message=error_msg)
+    else:
+        validated_artifact = artifact
 
     try:
-        # PHASE 1: Prepare - validate and prepare everything that could fail
+        persona_config = load_persona(active_tool.persona_name)
+    except FileNotFoundError as e:
+        return ToolResponse(status=ResponseStatus.ERROR, message=str(e))
 
-        # Artifact Validation
-        current_state = active_tool.state
-        artifact_model = active_tool.artifact_map.get(current_state)
+    trigger = Triggers.submit_trigger(current_state_val)
+    if not hasattr(active_tool, trigger):
+        return ToolResponse(status=ResponseStatus.ERROR, message=f"Invalid action: cannot submit from state '{current_state_val}'. No trigger '{trigger}' exists.")
 
-        if artifact_model:
-            # Normalize operation values to uppercase for consistency
-            if artifact_model.__name__ == "ExecutionPlanArtifact" and "subtasks" in artifact:
-                # Normalize Subtask operation values
-                for subtask in artifact["subtasks"]:
-                    if "operation" in subtask and isinstance(subtask["operation"], str):
-                        subtask["operation"] = subtask["operation"].upper()
-            elif artifact_model.__name__ == "DesignArtifact" and "file_breakdown" in artifact:
-                # Normalize FileChange operation values
-                for file_change in artifact["file_breakdown"]:
-                    if "operation" in file_change and isinstance(file_change["operation"], str):
-                        file_change["operation"] = file_change["operation"].upper()
+    next_transitions = active_tool.machine.get_transitions(source=active_tool.state, trigger=trigger)
+    if not next_transitions:
+        return ToolResponse(status=ResponseStatus.ERROR, message=f"No valid transition for trigger '{trigger}' from state '{active_tool.state}'.")
+    next_state = next_transitions[0].dest
 
-            try:
-                # Validate the submitted dictionary against the Pydantic model
-                validated_artifact = artifact_model.model_validate(artifact)
-                logger.info(LogMessages.ARTIFACT_VALIDATED.format(state=current_state.value if hasattr(current_state, "value") else current_state, model=artifact_model.__name__))
-            except ValidationError as e:
-                error_msg = f"{ErrorMessages.VALIDATION_FAILED.format(state=current_state.value if hasattr(current_state, 'value') else current_state)}. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
-                return ToolResponse(status=ResponseStatus.ERROR, message=error_msg)
-        else:
-            validated_artifact = artifact  # No validator for this state, proceed
+    temp_context = active_tool.context_store.copy()
+    artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
+    temp_context[artifact_key] = validated_artifact
+    temp_context[ArtifactKeys.ARTIFACT_CONTENT_KEY] = json.dumps(artifact, indent=2)
 
-        # Load persona config (used for both persistence and prompt generation)
-        try:
-            persona_config = load_persona(active_tool.persona_name)
-        except FileNotFoundError as e:
-            return ToolResponse(status=ResponseStatus.ERROR, message=str(e))
+    next_prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=active_tool.tool_name,
+        state=next_state,
+        persona_config=persona_config,
+        additional_context=temp_context,
+    )
 
-        # Calculate next state
-        current_state_val = active_tool.state.value if hasattr(active_tool.state, "value") else active_tool.state
-        trigger = Triggers.submit_trigger(current_state_val)
+    active_tool.context_store[artifact_key] = validated_artifact
+    artifact_manager.append_to_scratchpad(task_id=task_id, state_name=current_state_val, artifact=validated_artifact, persona_config=persona_config)
+    
+    getattr(active_tool, trigger)()
+    logger.info(LogMessages.STATE_TRANSITION.format(task_id=task_id, trigger=trigger, state=active_tool.state))
 
-        if not hasattr(active_tool, trigger):
-            return ToolResponse(status=ResponseStatus.ERROR, message=f"Invalid action: cannot submit from state '{current_state_val}'. No trigger '{trigger}' exists.")
+    state_manager.update_tool_state(task_id, active_tool)
 
-        # Get the next state
-        next_transitions = active_tool.machine.get_transitions(source=active_tool.state, trigger=trigger)
-        if not next_transitions:
-            return ToolResponse(status=ResponseStatus.ERROR, message=f"No valid transition for trigger '{trigger}' from state '{active_tool.state}'.")
-        next_state = next_transitions[0].dest
+    return ToolResponse(status=ResponseStatus.SUCCESS, message="Work submitted. Awaiting review.", next_prompt=next_prompt)
+``````
+------ src/alfred/workflow.yml ------
+``````
+# Default Alfred workflow configuration
+# This file defines the workflow structure and persona mappings
 
-        # Prepare additional context for prompt generation
-        temp_context = active_tool.context_store.copy()
-
-        # Use the centralized artifact key generation
-        artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
-
-        temp_context[artifact_key] = validated_artifact
-        temp_context[ArtifactKeys.ARTIFACT_CONTENT_KEY] = json.dumps(artifact, indent=2)
-
-        # Generate prompt for the NEXT state (most likely to fail)
-        next_prompt = prompter.generate_prompt(
-            task=task,
-            tool_name=active_tool.tool_name,
-            state=next_state,  # Use calculated next state
-            persona_config=persona_config,
-            additional_context=temp_context,
-        )
-
-        # PHASE 2: Commit - only if everything succeeded
-
-        # Store validated artifact in the tool's context using the same clean name
-        active_tool.context_store[artifact_key] = validated_artifact
-        # Convert Pydantic model to dict for JSON serialization
-        artifact_dict = validated_artifact.model_dump() if hasattr(validated_artifact, "model_dump") else validated_artifact
-        active_tool.context_store[ArtifactKeys.ARTIFACT_CONTENT_KEY] = json.dumps(artifact_dict, indent=2)
-        logger.info(f"Stored artifact in context_store with key '{artifact_key}' and {ArtifactKeys.ARTIFACT_CONTENT_KEY}.")
-
-        # Persist artifact to scratchpad
-        artifact_manager.append_to_scratchpad(task_id=task_id, state_name=current_state_val, artifact=validated_artifact, persona_config=persona_config)
-
-        # Trigger the state transition
-        getattr(active_tool, trigger)()
-        logger.info(LogMessages.STATE_TRANSITION.format(task_id=task_id, trigger=trigger, state=active_tool.state))
-
-        # Persist the new state immediately
-        state_manager.save_tool_state(task_id, active_tool)
-
-        return ToolResponse(status=ResponseStatus.SUCCESS, message="Work submitted. Awaiting review.", next_prompt=next_prompt)
-
-    except Exception as e:
-        # Rollback on any failure
-        logger.error(f"Work submission failed for task {task_id}: {e}")
-        active_tool.state = original_state
-        active_tool.context_store = original_context
-
-        # Save the rolled-back state
-        try:
-            state_manager.save_tool_state(task_id, active_tool)
-        except:
-            pass  # Don't fail the error response if state save fails
-
-        return ToolResponse(status=ResponseStatus.ERROR, message=f"Failed to submit work: {str(e)}")
-
+tools:
+  start_task:
+    persona: onboarding
+    states:
+      - initialized
+      - git_status_checked
+      - branch_created
+      - awaiting_ai_review
+      - awaiting_human_review
+      - completed
+      
+  plan_task:
+    persona: planning
+    states:
+      - contextualize
+      - review_context
+      - strategize
+      - review_strategy
+      - design
+      - review_design
+      - generate_subtasks
+      - review_plan
+      - awaiting_ai_review
+      - awaiting_human_review
+      - verified
+      
+  implement_task:
+    persona: implementation
+    states:
+      - initialized
+      - in_progress
+      - awaiting_ai_review
+      - awaiting_human_review
+      - completed
 ``````

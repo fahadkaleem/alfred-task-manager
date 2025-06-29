@@ -5,7 +5,7 @@ Handles reconstruction of workflow tools from persisted state.
 """
 from typing import Dict, Optional, Type
 
-from src.alfred.core.workflow import BaseWorkflowTool, PlanTaskTool
+from src.alfred.core.workflow import BaseWorkflowTool, PlanTaskTool, StartTaskTool
 from src.alfred.lib.logger import get_logger
 from src.alfred.state.manager import state_manager
 from src.alfred.constants import ToolName
@@ -17,6 +17,7 @@ class ToolRecovery:
     """Handles recovery of workflow tools from persisted state."""
 
     TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {
+        ToolName.START_TASK: StartTaskTool,
         ToolName.PLAN_TASK: PlanTaskTool,
     }
 

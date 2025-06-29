@@ -16,6 +16,23 @@ Review the generated `list[Subtask]` against the original `Task` context.
 3. **Traceability:** Does the plan clearly and logically derive from the approved `strategy` and `design`?
 4. **Delegation:** Have complex tasks been appropriately marked with a `delegation` spec?
 
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
+
 ---
 ### **Required Action**
 

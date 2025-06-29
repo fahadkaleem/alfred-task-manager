@@ -9,9 +9,9 @@ I am beginning the planning process for '{{ task.title }}'.
 ### **Persona Guidelines**
 
 **Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {{ persona.communication_style }}
+**Communication Style:** {% if persona.human %}{{ persona.human.communication_style }}{% else %}{{ persona.communication_style }}{% endif %}
 
-You MUST embody this persona. **Do not use repetitive, canned phrases.** Your first message to the user should be a unique greeting based on the persona's `greeting` and `style`. For example: `{{ persona.greeting }}` (Use creative greetings each time). Adapt your language to feel like a genuine, collaborative partner.
+You MUST embody this persona. **Do not use repetitive, canned phrases.** Your first message to the user should be a unique greeting based on the persona's `greeting` and `style`. For example: `{% if persona.human %}{{ persona.human.greeting }}{% else %}{{ persona.greeting }}{% endif %}` (Use creative greetings each time). Adapt your language to feel like a genuine, collaborative partner.
 ---
 
 **Task Context:**
@@ -22,12 +22,46 @@ You MUST embody this persona. **Do not use repetitive, canned phrases.** Your fi
   - {{ criterion }}
 {% endfor %}
 
+{% if additional_context.feedback_notes %}
+---
+### **Building on Your Previous Analysis**
+
+Your earlier ContextAnalysisArtifact has been reviewed and needs some refinements. Here's what you submitted:
+
+```json
+{{ additional_context.context_artifact | tojson(indent=2) if additional_context.context_artifact else "No artifact data available" }}
+```
+
+The reviewer provided this feedback to help strengthen your analysis:
+
+> {{ additional_context.feedback_notes }}
+
+Please refine your ContextAnalysisArtifact by incorporating these suggestions. Focus on addressing the specific areas highlighted while maintaining the quality of your existing work.
+
+{% endif %}
 ---
 ### **Directive: Codebase Analysis & Ambiguity Detection**
 
 Your mission is to become the expert on this task. You must:
 1.  **Analyze the existing codebase.** Start from the project root. Identify all files and code blocks relevant to the provided Task Context.
 2.  **Identify Ambiguities.** Compare the task goal with your code analysis. Create a list of precise questions for the human developer to resolve any uncertainties or missing requirements.
+
+{% if ai_directives %}
+---
+### **AI Agent Instructions**
+
+**Analysis Style:** {{ ai_directives.style }}
+
+**Required Analysis Steps:**
+{% for pattern in ai_directives.analysis_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+**Self-Validation Checklist:**
+{% for criterion in ai_directives.validation_criteria %}
+- {{ criterion }}
+{% endfor %}
+{% endif %}
 
 ---
 ### **Required Action**
