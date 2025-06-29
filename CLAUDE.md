@@ -1,8 +1,3 @@
-# Testing and Development Commands
-
-- Use `uv run python -m pytest tests/ -v` to run tests
-- Use `uv` package manager for all Python operations instead of pip/python directly
-
 # Code Guidelines
 
 - Follow coding standards in `ai/guidelines/coding_guidelines.md`
@@ -12,3 +7,8 @@
 
 - MCP servers cannot be restarted via commands
 - If MCP restart is needed, stop and ask the user to restart the MCP server
+
+# Testing and Development Commands
+
+- Use `uv run python -m pytest tests/ -v` to run tests
+- Use `uv` package manager for all Python operations instead of pip/python directly

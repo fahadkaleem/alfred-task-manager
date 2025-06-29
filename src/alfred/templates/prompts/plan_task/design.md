@@ -7,7 +7,7 @@ The technical strategy has been approved. Now, you must translate this strategy 
 
 **Approved Strategy:**
 ```json
-{{ additional_context.strategy_artifact | tojson(indent=2) }}
+{{ additional_context.strategize_artifact | tojson(indent=2) }}
 ```
 
 ---
