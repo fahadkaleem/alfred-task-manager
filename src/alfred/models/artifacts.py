@@ -9,7 +9,7 @@ class RequirementsArtifact(BaseModel):
     """
     Structured data artifact for the requirements gathering phase.
     """
-    
+
     task_id: str = Field(..., description="The unique identifier of the task")
     task_summary: str = Field(..., description="A brief summary of the task")
     task_description: str = Field(..., description="Detailed description of the task requirements")

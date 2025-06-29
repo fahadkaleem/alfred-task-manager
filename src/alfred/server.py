@@ -15,6 +15,7 @@ from src.alfred.tools.plan_task import plan_task_impl
 # New generic state-advancing tool implementations
 from src.alfred.tools.submit_work import submit_work_impl
 from src.alfred.tools.provide_review import provide_review_impl
+from src.alfred.tools.progress import mark_subtask_complete_impl
 
 app = FastMCP(settings.server_name)
 
@@ -37,7 +38,7 @@ async def initialize_project(provider: str | None = None) -> ToolResponse:
       - Do NOT use this tool if the project is already initialized (it will return success but make no changes).
 
     ## Parameters
-    - **provider** `[string]` (optional): The task source provider to configure. Valid values: "jira", "linear", or "local". 
+    - **provider** `[string]` (optional): The task source provider to configure. Valid values: "jira", "linear", or "local".
       If not provided, the tool will return available choices for interactive selection.
     """
     tool_name = inspect.currentframe().f_code.co_name
@@ -53,14 +54,14 @@ async def plan_task(task_id: str) -> ToolResponse:
     Initiates the detailed technical planning for a specific task.
 
     This is the primary tool for transforming a high-level task or user story
-    into a concrete, machine-executable 'Execution Plan' composed of SLOTs.
-    A SLOT (Specification, Location, Operation, Task) is an atomic unit of work.
+    into a concrete, machine-executable 'Execution Plan' composed of Subtasks.
+    A Subtask (based on LOST framework) is an atomic unit of work.
 
     This tool manages a multi-step, interactive planning process:
     1. **Contextualize**: Deep analysis of the task requirements and codebase context
-    2. **Strategize**: High-level technical approach and architecture decisions  
+    2. **Strategize**: High-level technical approach and architecture decisions
     3. **Design**: Detailed technical design and component specifications
-    4. **Generate SLOTs**: Break down into atomic, executable work units
+    4. **Generate Subtasks**: Break down into atomic, executable work units
 
     Each step includes AI self-review followed by human approval gates to ensure quality.
     The final output is a validated execution plan ready for implementation.
@@ -82,7 +83,7 @@ async def plan_task(task_id: str) -> ToolResponse:
     """
     tool_name = inspect.currentframe().f_code.co_name
     request_data = {"task_id": task_id}
-    
+
     response = await plan_task_impl(task_id)
     transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
     return response
@@ -94,7 +95,7 @@ async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     Submits a structured work artifact for the current step of a workflow tool.
 
     This is the generic state-advancing tool that handles work submission for any active workflow tool.
-    It automatically determines the correct state transition based on the current state and advances 
+    It automatically determines the correct state transition based on the current state and advances
     the tool's state machine accordingly.
 
     Args:
@@ -135,6 +136,39 @@ async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = 
     return response
 
 
+@app.tool()
+async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
+    """
+    Marks a specific subtask as complete during the implementation phase.
+
+    This tool is used to track progress while implementing the execution plan generated
+    by the planning phase. It helps monitor which subtasks have been completed and
+    calculates overall progress.
+
+    The tool validates that:
+    - An active workflow tool exists for the task
+    - The subtask_id corresponds to a valid subtask in the execution plan
+    - The state is properly persisted after marking completion
+
+    Args:
+        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        subtask_id (str): The subtask identifier to mark as complete (e.g., "subtask-1")
+
+    Returns:
+        ToolResponse: Success/error status with progress information including:
+            - Current progress percentage
+            - Number of completed vs total subtasks
+            - List of remaining subtasks
+
+    Example:
+        mark_subtask_complete("TS-01", "subtask-1")
+        # Returns progress update showing 1/5 subtasks complete (20%)
+    """
+    tool_name = inspect.currentframe().f_code.co_name
+    request_data = {"task_id": task_id, "subtask_id": subtask_id}
+    response = mark_subtask_complete_impl(task_id, subtask_id)
+    transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+    return response
 
 
 if __name__ == "__main__":

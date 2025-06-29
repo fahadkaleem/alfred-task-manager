@@ -29,11 +29,11 @@ class StateFile(BaseModel):
 class WorkflowState(BaseModel):
     """
     Represents the complete state of a workflow tool.
-    
+
     This model captures all necessary information to reconstruct
     a workflow tool after a crash or restart.
     """
-    
+
     task_id: str
     tool_name: str
     current_state: str  # String representation of the state enum

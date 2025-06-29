@@ -7,6 +7,7 @@ import json
 
 from src.alfred.config.settings import settings
 from src.alfred.models.schemas import Task
+from src.alfred.constants import TemplatePaths
 
 
 class Prompter:
@@ -15,20 +16,20 @@ class Prompter:
     def __init__(self):
         # Reuse existing settings to find the templates directory
         search_paths = []
-        
+
         # Check for user-initialized templates first
         user_templates_path = settings.alfred_dir / "templates"
         if user_templates_path.exists():
             search_paths.append(str(user_templates_path))
-        
+
         # Always include packaged templates as fallback
         search_paths.append(str(settings.packaged_templates_dir))
 
         self.template_loader = FileSystemLoader(searchpath=search_paths)
         self.jinja_env = Environment(loader=self.template_loader, trim_blocks=True, lstrip_blocks=True)
-        
+
         # Add custom filters
-        self.jinja_env.filters['fromjson'] = json.loads
+        self.jinja_env.filters["fromjson"] = json.loads
 
     def generate_prompt(
         self,
@@ -36,7 +37,7 @@ class Prompter:
         tool_name: str,
         state,  # Can be Enum or str
         persona_config: Dict[str, Any],
-        additional_context: Optional[Dict[str, Any]] = None
+        additional_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generates a prompt by rendering a template with the given context.
@@ -52,9 +53,9 @@ class Prompter:
             The rendered prompt string.
         """
         # Handle both Enum and string state values
-        state_value = state.value if hasattr(state, 'value') else state
-        template_path = f"prompts/{tool_name}/{state_value}.md"
-        
+        state_value = state.value if hasattr(state, "value") else state
+        template_path = TemplatePaths.PROMPT_PATTERN.format(tool_name=tool_name, state=state_value)
+
         try:
             template = self.jinja_env.get_template(template_path)
         except Exception as e:
@@ -64,13 +65,7 @@ class Prompter:
             return error_message
 
         # Build the comprehensive context for the template
-        render_context = {
-            "task": task,
-            "tool_name": tool_name,
-            "state": state_value,
-            "persona": persona_config,
-            **(additional_context or {})
-        }
+        render_context = {"task": task, "tool_name": tool_name, "state": state_value, "persona": persona_config, "additional_context": additional_context or {}}
 
         return template.render(render_context)
 

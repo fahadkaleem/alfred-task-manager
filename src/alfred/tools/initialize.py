@@ -15,31 +15,28 @@ def initialize_project(provider: str | None = None, test_dir: Path | None = None
     """
     Initializes the project workspace by creating the .alfred directory with
     provider-specific configuration.
-    
+
     Args:
         provider: Provider choice ('jira', 'linear', or 'local'). If None, returns available choices.
         test_dir: Optional test directory for testing purposes. If provided, will use this instead of settings.alfred_dir.
-        
+
     Returns:
         ToolResponse: Standardized response object.
     """
     alfred_dir = test_dir if test_dir is not None else settings.alfred_dir
-    
+
     # Check if already initialized
     if alfred_dir.exists() and (alfred_dir / "workflow.yml").exists():
-        return ToolResponse(
-            status="success", 
-            message=f"Project already initialized at '{alfred_dir}'. No changes were made."
-        )
-    
+        return ToolResponse(status="success", message=f"Project already initialized at '{alfred_dir}'. No changes were made.")
+
     # Return choices if no provider specified
     if provider is None:
         return _get_provider_choices_response()
-    
+
     try:
         # Validate provider choice
         provider_choice = _validate_provider_choice(provider)
-        
+
         # Create base directory
         alfred_dir.mkdir(parents=True, exist_ok=True)
 
@@ -50,31 +47,23 @@ def initialize_project(provider: str | None = None, test_dir: Path | None = None
         # Copy default persona and template directories
         shutil.copytree(settings.packaged_personas_dir, alfred_dir / "personas")
         shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates")
-        
+
         # Create workspace directory
         workspace_dir = alfred_dir / "workspace"
         workspace_dir.mkdir(exist_ok=True)
 
         # Create configuration with selected provider
         config_manager = ConfigManager(alfred_dir)
-        config = AlfredConfig(
-            providers=ProviderConfig(task_provider=TaskProvider(provider_choice))
-        )
+        config = AlfredConfig(providers=ProviderConfig(task_provider=TaskProvider(provider_choice)))
         config_manager.save(config)
-        
+
         # Setup provider-specific resources
         _setup_provider_resources(provider_choice, alfred_dir)
 
-        return ToolResponse(
-            status="success", 
-            message=f"Successfully initialized Alfred project in '{alfred_dir}' with {provider_choice} provider."
-        )
-        
+        return ToolResponse(status="success", message=f"Successfully initialized Alfred project in '{alfred_dir}' with {provider_choice} provider.")
+
     except (OSError, shutil.Error) as e:
-        return ToolResponse(
-            status="error", 
-            message=f"Failed to initialize project due to a file system error: {e}"
-        )
+        return ToolResponse(status="error", message=f"Failed to initialize project due to a file system error: {e}")
 
 
 def _get_provider_choices_response() -> ToolResponse:
@@ -120,7 +109,7 @@ def _setup_provider_resources(provider: str, alfred_dir: Path) -> None:
         # Create tasks inbox for local provider
         tasks_dir = alfred_dir / "tasks"
         tasks_dir.mkdir(exist_ok=True)
-        
+
         readme_path = tasks_dir / "README.md"
         readme_content = """# Local Task Files
 

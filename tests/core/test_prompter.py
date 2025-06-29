@@ -23,54 +23,44 @@ class TestPrompter(unittest.TestCase):
             dev_notes="Test developer notes",
             acceptance_criteria=["Test criteria 1", "Test criteria 2"],
             ac_verification_steps=["Test verification 1", "Test verification 2"],
-            task_status=TaskStatus.NEW
+            task_status=TaskStatus.NEW,
         )
-        
-        self.persona_config = {
-            "name": "Test Persona",
-            "description": "A test persona for unit testing"
-        }
-        
-        self.additional_context = {
-            "review_feedback": "This is test feedback"
-        }
+
+        self.persona_config = {"name": "Test Persona", "description": "A test persona for unit testing"}
+
+        self.additional_context = {"review_feedback": "This is test feedback"}
 
     def test_successful_prompt_generation(self):
         """Test that generate_prompt correctly renders a template with context."""
         # Create a temporary directory structure
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            
+
             # Create the prompts directory structure
             prompt_dir = temp_path / "prompts" / "plan_task"
             prompt_dir.mkdir(parents=True)
-            
+
             # Create a test template
             template_content = """# Test Template
 Task: {{ task.title }}
 Persona: {{ persona.name }}
 State: {{ state }}
 Tool: {{ tool_name }}"""
-            
+
             template_file = prompt_dir / "strategize.md"
             template_file.write_text(template_content)
-            
+
             # Mock the settings to use our temp directory
-            with patch('src.alfred.core.prompter.settings') as mock_settings:
+            with patch("src.alfred.core.prompter.settings") as mock_settings:
                 mock_settings.alfred_dir = temp_path / ".alfred"
                 mock_settings.packaged_templates_dir = temp_path
-                
+
                 # Create prompter instance
                 prompter = Prompter()
-                
+
                 # Generate prompt
-                result = prompter.generate_prompt(
-                    task=self.task,
-                    tool_name="plan_task",
-                    state=PlanTaskState.STRATEGIZE,
-                    persona_config=self.persona_config
-                )
-                
+                result = prompter.generate_prompt(task=self.task, tool_name="plan_task", state=PlanTaskState.STRATEGIZE, persona_config=self.persona_config)
+
                 # Verify the result
                 self.assertIn("Test Task Title", result)
                 self.assertIn("Test Persona", result)
@@ -81,11 +71,11 @@ Tool: {{ tool_name }}"""
         """Test that all parts of context are available in the template."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            
+
             # Create the prompts directory structure
             prompt_dir = temp_path / "prompts" / "plan_task"
             prompt_dir.mkdir(parents=True)
-            
+
             # Create a comprehensive test template
             template_content = """# Context Test
 Task ID: {{ task.task_id }}
@@ -98,25 +88,19 @@ Persona: {{ persona.name }} - {{ persona.description }}
 Tool: {{ tool_name }}
 State: {{ state }}
 {% if review_feedback %}Feedback: {{ review_feedback }}{% endif %}"""
-            
+
             template_file = prompt_dir / "strategize.md"
             template_file.write_text(template_content)
-            
+
             # Mock the settings
-            with patch('src.alfred.core.prompter.settings') as mock_settings:
+            with patch("src.alfred.core.prompter.settings") as mock_settings:
                 mock_settings.alfred_dir = temp_path / ".alfred"
                 mock_settings.packaged_templates_dir = temp_path
-                
+
                 prompter = Prompter()
-                
-                result = prompter.generate_prompt(
-                    task=self.task,
-                    tool_name="plan_task",
-                    state=PlanTaskState.STRATEGIZE,
-                    persona_config=self.persona_config,
-                    additional_context=self.additional_context
-                )
-                
+
+                result = prompter.generate_prompt(task=self.task, tool_name="plan_task", state=PlanTaskState.STRATEGIZE, persona_config=self.persona_config, additional_context=self.additional_context)
+
                 # Verify all context is injected
                 self.assertIn("TEST-01", result)
                 self.assertIn("Test Task Title", result)
@@ -133,21 +117,16 @@ State: {{ state }}
         """Test that a meaningful error is returned when template path is invalid."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            
+
             # Mock the settings to use empty temp directory (no templates)
-            with patch('src.alfred.core.prompter.settings') as mock_settings:
+            with patch("src.alfred.core.prompter.settings") as mock_settings:
                 mock_settings.alfred_dir = temp_path / ".alfred"
                 mock_settings.packaged_templates_dir = temp_path
-                
+
                 prompter = Prompter()
-                
-                result = prompter.generate_prompt(
-                    task=self.task,
-                    tool_name="nonexistent_tool",
-                    state=PlanTaskState.STRATEGIZE,
-                    persona_config=self.persona_config
-                )
-                
+
+                result = prompter.generate_prompt(task=self.task, tool_name="nonexistent_tool", state=PlanTaskState.STRATEGIZE, persona_config=self.persona_config)
+
                 # Verify error message
                 self.assertIn("CRITICAL ERROR", result)
                 self.assertIn("prompts/nonexistent_tool/strategize.md", result)
@@ -155,9 +134,9 @@ State: {{ state }}
     def test_singleton_instance(self):
         """Test that the singleton prompter instance is created."""
         from src.alfred.core.prompter import prompter
-        
+
         self.assertIsInstance(prompter, Prompter)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

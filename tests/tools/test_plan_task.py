@@ -18,7 +18,7 @@ async def test_plan_task_success(alfred_test_project: AlfredTestProject):
     # --- ARRANGE ---
     # 1. Initialize a real project in a temporary directory
     alfred_test_project.initialize()
-    
+
     # 2. Create a dummy persona and prompt template file
     (alfred_test_project.alfred_dir / "personas").mkdir(exist_ok=True)
     (alfred_test_project.alfred_dir / "personas" / "planning.yml").write_text("name: Alex")
@@ -30,16 +30,17 @@ async def test_plan_task_success(alfred_test_project: AlfredTestProject):
     alfred_test_project.create_task_file(task)
 
     # 4. Patch the global settings and create a test-specific prompter
-    with patch('src.alfred.lib.task_utils.settings', alfred_test_project.settings), \
-         patch('src.alfred.orchestration.persona_loader.settings', alfred_test_project.settings), \
-         patch('src.alfred.core.prompter.settings', alfred_test_project.settings):
-        
+    with (
+        patch("src.alfred.lib.task_utils.settings", alfred_test_project.settings),
+        patch("src.alfred.orchestration.persona_loader.settings", alfred_test_project.settings),
+        patch("src.alfred.core.prompter.settings", alfred_test_project.settings),
+    ):
         # Create a new prompter instance that will use the patched settings
         from src.alfred.core.prompter import Prompter
-        test_prompter = Prompter()
-        
-        with patch('src.alfred.tools.plan_task.prompter', test_prompter):
 
+        test_prompter = Prompter()
+
+        with patch("src.alfred.tools.plan_task.prompter", test_prompter):
             # --- ACT ---
             # 5. Run the actual tool implementation
             result: ToolResponse = await plan_task_impl("AL-01")
@@ -69,16 +70,16 @@ async def test_plan_task_invalid_status(alfred_test_project: AlfredTestProject):
     # --- ARRANGE ---
     alfred_test_project.initialize()
     task = Task(
-        task_id="AL-02", 
-        title="A Task In Progress", 
-        context="Test context", 
+        task_id="AL-02",
+        title="A Task In Progress",
+        context="Test context",
         implementation_details="Test implementation",
-        task_status=TaskStatus.IN_DEVELOPMENT  # Invalid initial state
+        task_status=TaskStatus.IN_DEVELOPMENT,  # Invalid initial state
     )
     alfred_test_project.create_task_file(task)
 
     # Patch the global settings to point to our test directory during the tool execution
-    with patch('src.alfred.lib.task_utils.settings', alfred_test_project.settings):
+    with patch("src.alfred.lib.task_utils.settings", alfred_test_project.settings):
         # --- ACT ---
         result: ToolResponse = await plan_task_impl("AL-02")
 
@@ -97,7 +98,7 @@ async def test_plan_task_not_found(alfred_test_project: AlfredTestProject):
     alfred_test_project.initialize()
 
     # Patch the global settings to point to our test directory during the tool execution
-    with patch('src.alfred.lib.task_utils.settings', alfred_test_project.settings):
+    with patch("src.alfred.lib.task_utils.settings", alfred_test_project.settings):
         # --- ACT ---
         result: ToolResponse = await plan_task_impl("AL-99")  # This task does not exist
 
@@ -114,18 +115,16 @@ async def test_plan_task_persona_not_found(alfred_test_project: AlfredTestProjec
     """
     # --- ARRANGE ---
     alfred_test_project.initialize()
-    
-    # Create task 
+
+    # Create task
     task = Task(task_id="AL-03", title="Test Task Without Persona", context="Test context", implementation_details="Test implementation")
     alfred_test_project.create_task_file(task)
 
     # Mock load_persona to raise FileNotFoundError
     def mock_load_persona(persona_name):
         raise FileNotFoundError(f"Persona config '{persona_name}.yml' not found.")
-    
-    with patch('src.alfred.lib.task_utils.settings', alfred_test_project.settings), \
-         patch('src.alfred.tools.plan_task.load_persona', side_effect=mock_load_persona):
-        
+
+    with patch("src.alfred.lib.task_utils.settings", alfred_test_project.settings), patch("src.alfred.tools.plan_task.load_persona", side_effect=mock_load_persona):
         # --- ACT ---
         result: ToolResponse = await plan_task_impl("AL-03")
 

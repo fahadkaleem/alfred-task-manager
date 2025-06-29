@@ -12,3 +12,8 @@
 
 - Use `uv run python -m pytest tests/ -v` to run tests
 - Use `uv` package manager for all Python operations instead of pip/python directly
+
+# Debugging
+
+- Debug logs are stored in `.alfred/debug` directory
+- Logs are organized by task ID for easy tracking

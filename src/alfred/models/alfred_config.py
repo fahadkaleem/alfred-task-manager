@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class TaskProvider(str, Enum):
     """Supported task provider types."""
+
     JIRA = "jira"
     LINEAR = "linear"
     LOCAL = "local"
@@ -13,6 +14,7 @@ class TaskProvider(str, Enum):
 
 class ProviderConfig(BaseModel):
     """Configuration for task providers."""
+
     task_provider: TaskProvider = Field(default=TaskProvider.LOCAL, description="The task management system to use")
     # Add provider-specific configs here if needed, e.g., jira_project_key
 

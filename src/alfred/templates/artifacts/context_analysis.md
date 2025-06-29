@@ -1,14 +1,16 @@
-### Context Analysis for `{{ task.task_id }}`
-*State: `contextualize`*
+## {{ state_description }}
 
-**Analysis Summary:**
+**Task:** {{ task.task_id }} - {{ task.title }}
+
+### Analysis Summary
 {{ artifact.context_summary }}
 
-**Identified Affected Files:**
+### Affected Components
 {% for file in artifact.affected_files -%}
 - `{{ file }}`
 {% endfor %}
-**Questions for Developer:**
+
+### Clarification Requirements
 {% for question in artifact.questions_for_developer -%}
 - {{ question }}
 {% endfor %}

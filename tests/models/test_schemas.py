@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from src.alfred.models.schemas import (
     Task,
     TaskStatus,
-    SLOT,
+    Subtask,
     OperationType,
     Taskflow,
 )
@@ -25,7 +25,7 @@ class TestTaskModel:
             context="This is a test task for validation",
             implementation_details="Create a simple test implementation",
         )
-        
+
         assert task.task_id == "TS-01"
         assert task.title == "Test Task"
         assert task.context == "This is a test task for validation"
@@ -47,7 +47,7 @@ class TestTaskModel:
             ac_verification_steps=["Step 1", "Step 2"],
             task_status=TaskStatus.IN_DEVELOPMENT,
         )
-        
+
         assert task.task_status == TaskStatus.IN_DEVELOPMENT
         assert task.dev_notes == "Important developer notes"
         assert len(task.acceptance_criteria) == 2
@@ -63,35 +63,35 @@ class TestTaskModel:
                 implementation_details="Implementation details",
                 task_status="in-progress",  # Invalid status
             )
-        
+
         assert "task_status" in str(exc_info.value)
 
 
-class TestSLOTModel:
-    """Test cases for the SLOT Pydantic model."""
+class TestSubtaskModel:
+    """Test cases for the Subtask Pydantic model."""
 
-    def test_slot_model_creation(self):
-        """Test successful SLOT model instantiation."""
+    def test_subtask_model_creation(self):
+        """Test successful Subtask model instantiation."""
         taskflow = Taskflow(
             procedural_steps=["Step 1", "Step 2"],
             verification_steps=["Verify 1", "Verify 2"],
         )
-        
-        slot = SLOT(
-            slot_id="slot_1.1",
-            title="Test SLOT",
-            spec="Detailed specification for the slot",
+
+        subtask = Subtask(
+            subtask_id="subtask_1.1",
+            title="Test Subtask",
+            spec="Detailed specification for the subtask",
             location="src/test_file.py",
             operation=OperationType.CREATE,
             taskflow=taskflow,
         )
-        
-        assert slot.slot_id == "slot_1.1"
-        assert slot.title == "Test SLOT"
-        assert slot.spec == "Detailed specification for the slot"
-        assert slot.location == "src/test_file.py"
-        assert slot.operation == OperationType.CREATE
-        assert isinstance(slot.taskflow, Taskflow)
+
+        assert subtask.subtask_id == "subtask_1.1"
+        assert subtask.title == "Test Subtask"
+        assert subtask.spec == "Detailed specification for the subtask"
+        assert subtask.location == "src/test_file.py"
+        assert subtask.operation == OperationType.CREATE
+        assert isinstance(subtask.taskflow, Taskflow)
 
     def test_invalid_operation_type_raises_error(self):
         """Test that invalid operation type raises ValidationError."""
@@ -99,17 +99,17 @@ class TestSLOTModel:
             procedural_steps=["Step 1"],
             verification_steps=["Verify 1"],
         )
-        
+
         with pytest.raises(ValidationError) as exc_info:
-            SLOT(
-                slot_id="slot_1.2",
-                title="Invalid SLOT",
+            Subtask(
+                subtask_id="subtask_1.2",
+                title="Invalid Subtask",
                 spec="Test spec",
                 location="src/test.py",
                 operation="invalid_operation",  # Invalid operation
                 taskflow=taskflow,
             )
-        
+
         assert "operation" in str(exc_info.value)
 
 
@@ -122,7 +122,7 @@ class TestTaskflowModel:
             procedural_steps=["Execute step 1", "Execute step 2", "Execute step 3"],
             verification_steps=["Verify step 1", "Verify step 2"],
         )
-        
+
         assert len(taskflow.procedural_steps) == 3
         assert len(taskflow.verification_steps) == 2
         assert taskflow.procedural_steps[0] == "Execute step 1"
@@ -144,14 +144,14 @@ class TestSerialization:
             ac_verification_steps=["Verify AC1", "Verify AC2"],
             task_status=TaskStatus.PLANNING,
         )
-        
+
         # Serialize to JSON
         json_data = original_task.model_dump_json()
         assert isinstance(json_data, str)
-        
+
         # Deserialize from JSON
         deserialized_task = Task.model_validate_json(json_data)
-        
+
         # Verify all fields match
         assert deserialized_task.task_id == original_task.task_id
         assert deserialized_task.title == original_task.title
@@ -162,37 +162,37 @@ class TestSerialization:
         assert deserialized_task.ac_verification_steps == original_task.ac_verification_steps
         assert deserialized_task.task_status == original_task.task_status
 
-    def test_slot_serialization_and_deserialization(self):
-        """Test SLOT model JSON serialization and deserialization."""
+    def test_subtask_serialization_and_deserialization(self):
+        """Test Subtask model JSON serialization and deserialization."""
         taskflow = Taskflow(
             procedural_steps=["Create file", "Add content", "Test file"],
             verification_steps=["Check file exists", "Validate content"],
         )
-        
-        original_slot = SLOT(
-            slot_id="slot_2.1",
-            title="Serialization SLOT Test",
+
+        original_subtask = Subtask(
+            subtask_id="subtask_2.1",
+            title="Serialization Subtask Test",
             spec="Create and test a new file",
             location="src/new_file.py",
             operation=OperationType.CREATE,
             taskflow=taskflow,
         )
-        
+
         # Serialize to JSON
-        json_data = original_slot.model_dump_json()
+        json_data = original_subtask.model_dump_json()
         assert isinstance(json_data, str)
-        
+
         # Deserialize from JSON
-        deserialized_slot = SLOT.model_validate_json(json_data)
-        
+        deserialized_subtask = Subtask.model_validate_json(json_data)
+
         # Verify all fields match
-        assert deserialized_slot.slot_id == original_slot.slot_id
-        assert deserialized_slot.title == original_slot.title
-        assert deserialized_slot.spec == original_slot.spec
-        assert deserialized_slot.location == original_slot.location
-        assert deserialized_slot.operation == original_slot.operation
-        assert deserialized_slot.taskflow.procedural_steps == original_slot.taskflow.procedural_steps
-        assert deserialized_slot.taskflow.verification_steps == original_slot.taskflow.verification_steps
+        assert deserialized_subtask.subtask_id == original_subtask.subtask_id
+        assert deserialized_subtask.title == original_subtask.title
+        assert deserialized_subtask.spec == original_subtask.spec
+        assert deserialized_subtask.location == original_subtask.location
+        assert deserialized_subtask.operation == original_subtask.operation
+        assert deserialized_subtask.taskflow.procedural_steps == original_subtask.taskflow.procedural_steps
+        assert deserialized_subtask.taskflow.verification_steps == original_subtask.taskflow.verification_steps
 
 
 class TestEnums:
@@ -201,18 +201,26 @@ class TestEnums:
     def test_task_status_enum_values(self):
         """Test that TaskStatus enum has all expected values."""
         expected_statuses = {
-            "new", "planning", "ready_for_development", "in_development",
-            "ready_for_review", "in_review", "revisions_requested",
-            "ready_for_testing", "in_testing", "ready_for_finalization", "done"
+            "new",
+            "planning",
+            "ready_for_development",
+            "in_development",
+            "ready_for_review",
+            "in_review",
+            "revisions_requested",
+            "ready_for_testing",
+            "in_testing",
+            "ready_for_finalization",
+            "done",
         }
-        
+
         actual_statuses = {status.value for status in TaskStatus}
         assert actual_statuses == expected_statuses
 
     def test_operation_type_enum_values(self):
         """Test that OperationType enum has all expected values."""
         expected_operations = {"create", "modify", "delete", "review"}
-        
+
         actual_operations = {op.value for op in OperationType}
         assert actual_operations == expected_operations
 

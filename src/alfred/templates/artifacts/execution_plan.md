@@ -1,25 +1,24 @@
-## {{ state_description }}
+## Execution Plan
 
 **Task:** {{ task.task_id }} - {{ task.title }}
 
-### Implementation Plan
+Total Subtasks: **{{ artifact.subtasks | length }}**
 
-Total SLOTs: **{{ artifact | length }}**
+{% for subtask in artifact.subtasks %}
+### {{ subtask.subtask_id }}: {{ subtask.title }}
+{% if subtask.summary -%}
+**Summary**: {{ subtask.summary }}
+{% endif -%}
+**{{ subtask.operation }}** `{{ subtask.location }}`
 
-{% for slot in artifact %}
-#### SLOT {{ slot.slot_id }}: {{ slot.title }}
+Specification:
+{%- for step in subtask.specification %}
+- {{ step }}
+{%- endfor %}
 
-**Specification:**
-{{ slot.spec }}
-
-**Acceptance Criteria:**
-{% for criteria in slot.acceptance_criteria -%}
-- {{ criteria }}
-{% endfor %}
-
-**Task Type:** {{ slot.taskflow.value }}
-{% if slot.dependencies %}
-**Dependencies:** {{ slot.dependencies|join(", ") }}
-{% endif %}
+Test:
+{%- for step in subtask.test %}
+- {{ step }}
+{%- endfor %}
 
 {% endfor %}

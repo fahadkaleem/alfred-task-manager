@@ -49,13 +49,13 @@ class PersonaLoader:
 
 def load_persona(persona_name: str) -> dict[str, any]:
     """Loads and parses a persona YAML file.
-    
+
     Args:
         persona_name: Name of the persona file (without .yml extension)
-        
+
     Returns:
         Dict containing the parsed persona configuration
-        
+
     Raises:
         FileNotFoundError: If the persona file doesn't exist
     """
@@ -65,6 +65,6 @@ def load_persona(persona_name: str) -> dict[str, any]:
         persona_file = settings.packaged_personas_dir / f"{persona_name}.yml"
         if not persona_file.exists():
             raise FileNotFoundError(f"Persona config '{persona_name}.yml' not found.")
-    
-    with open(persona_file, 'r') as f:
+
+    with open(persona_file, "r") as f:
         return yaml.safe_load(f)
