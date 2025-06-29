@@ -3,7 +3,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.alfred.models.planning_artifacts import ContextAnalysisArtifact, StrategyArtifact, DesignArtifact, ExecutionPlanArtifact
-from src.alfred.models.schemas import Subtask, OperationType, Taskflow
+from src.alfred.models.schemas import Subtask, OperationType
 
 
 class TestContextAnalysisArtifact:
@@ -90,8 +90,8 @@ class TestDesignArtifact:
         data = {
             "design_summary": "The OAuth system will consist of three main components...",
             "file_breakdown": [
-                {"file_path": "src/auth/oauth.py", "change_summary": "Main OAuth implementation", "operation": "create"},
-                {"file_path": "src/auth/tokens.py", "change_summary": "Token validation and management", "operation": "modify"},
+                {"file_path": "src/auth/oauth.py", "change_summary": "Main OAuth implementation", "operation": "CREATE"},
+                {"file_path": "src/auth/tokens.py", "change_summary": "Token validation and management", "operation": "MODIFY"},
             ],
         }
 
@@ -101,11 +101,11 @@ class TestDesignArtifact:
         assert len(artifact.file_breakdown) == 2
         assert artifact.file_breakdown[0].file_path == "src/auth/oauth.py"
         assert artifact.file_breakdown[0].change_summary == "Main OAuth implementation"
-        assert artifact.file_breakdown[0].operation == "create"
+        assert artifact.file_breakdown[0].operation == "CREATE"
 
     def test_missing_required_field_detailed_design(self):
         """Test that ValidationError is raised when design_summary is missing."""
-        data = {"file_breakdown": [{"file_path": "src/auth.py", "change_summary": "Authentication implementation", "operation": "create"}]}
+        data = {"file_breakdown": [{"file_path": "src/auth.py", "change_summary": "Authentication implementation", "operation": "CREATE"}]}
 
         with pytest.raises(ValidationError) as exc_info:
             DesignArtifact.model_validate(data)
@@ -121,10 +121,10 @@ class TestExecutionPlanArtifact:
         subtask_data = {
             "subtask_id": "subtask_1.1",
             "title": "Create OAuth provider class",
-            "spec": "Implement OAuth2Provider class with authenticate method",
             "location": "src/auth/oauth.py",
             "operation": OperationType.CREATE,
-            "taskflow": {"procedural_steps": ["Create class skeleton", "Implement authenticate method"], "verification_steps": ["Run unit tests", "Verify OAuth flow works"]},
+            "specification": ["Create class skeleton", "Implement authenticate method"],
+            "test": ["Run unit tests", "Verify OAuth flow works"],
         }
 
         execution_plan = [subtask_data]

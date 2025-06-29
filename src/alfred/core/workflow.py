@@ -1,74 +1,83 @@
 # src/alfred/core/workflow.py
-from transitions.core import Machine
-from typing import List, Dict, Any, Type
 from enum import Enum
+from typing import Any, Dict, List, Type, Optional
+
 from pydantic import BaseModel
+from transitions.core import Machine
+
 from src.alfred.constants import ToolName, Triggers
+from src.alfred.models.planning_artifacts import (
+    ContextAnalysisArtifact,
+    DesignArtifact,
+    ExecutionPlanArtifact,
+    StrategyArtifact,
+)
+
+
+class ReviewState(str, Enum):
+    """Generic review states applicable to all tools."""
+
+    AWAITING_AI_REVIEW = "awaiting_ai_review"
+    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
 
 
 class PlanTaskState(str, Enum):
-    """States for the PlanTaskTool's internal State Machine."""
+    """Working states for the PlanTaskTool's internal State Machine."""
 
     CONTEXTUALIZE = "contextualize"
-    REVIEW_CONTEXT = "review_context"
     STRATEGIZE = "strategize"
-    REVIEW_STRATEGY = "review_strategy"
     DESIGN = "design"
-    REVIEW_DESIGN = "review_design"
     GENERATE_SUBTASKS = "generate_subtasks"
-    REVIEW_PLAN = "review_plan"
-    VERIFIED = "verified"  # The final, terminal state for the tool.
+    VERIFIED = "verified"
 
 
 class BaseWorkflowTool:
     """A base class providing shared State Machine logic for Alfred's tools."""
 
-    def __init__(self, task_id: str, tool_name: str = None, persona_name: str = None):
+    def __init__(self, task_id: str, tool_name: str, persona_name: str):
         self.task_id = task_id
-        self.tool_name = tool_name or self.__class__.__name__.lower().replace("tool", "")
+        self.tool_name = tool_name
         self.persona_name = persona_name
-        self.state = None  # Will be set by the Machine instance
-        self.machine = None
-        # Add a new attribute for artifact mapping
+        self.state: Optional[str] = None
+        self.machine: Optional[Machine] = None
         self.artifact_map: Dict[Enum, Type[BaseModel]] = {}
-        # Context store for persisting artifacts between state transitions
         self.context_store: Dict[str, Any] = {}
 
     @property
     def is_terminal(self) -> bool:
-        """
-        Checks if the current state is a terminal (final) state.
-        Override in subclasses to define terminal states.
-        """
+        """Checks if the current state is a terminal (final) state."""
         return self.state == "verified"
 
-    @classmethod
-    def get_state_from_string(cls, state_string: str) -> str:
-        """
-        Convert a string state back to the appropriate enum value.
-
-        This is used during tool recovery to restore the state from
-        persisted string values.
-
-        Args:
-            state_string: The state as a string
-
-        Returns:
-            The state string (for now, states are already strings)
-        """
-        # For now, our states are already strings due to the Enum.value usage
-        # This method provides a hook for future enum handling if needed
-        return state_string
-
-    def _create_review_transitions(self, source_state: Enum, review_state: Enum, success_destination_state: Enum) -> List[Dict[str, Any]]:
-        """Factory for creating the standard two-step (AI, Human) review transitions."""
+    def _create_review_transitions(
+        self, source_state: Enum, success_destination_state: Enum
+    ) -> List[Dict[str, Any]]:
+        """Factory for the mandatory two-step (AI -> Human) review transitions."""
         return [
-            # Submit work, transition into the review state for AI self-review
-            {"trigger": Triggers.submit_trigger(source_state.value), "source": source_state.value, "dest": review_state.value},
-            # AI self-approves, moves to human review
-            {"trigger": Triggers.AI_APPROVE, "source": review_state.value, "dest": success_destination_state.value},
-            # A rejection from AI review goes back to the source state to be reworked
-            {"trigger": Triggers.REQUEST_REVISION, "source": review_state.value, "dest": source_state.value},
+            {
+                "trigger": Triggers.submit_trigger(source_state.value),
+                "source": source_state.value,
+                "dest": ReviewState.AWAITING_AI_REVIEW.value,
+            },
+            {
+                "trigger": "ai_approve",
+                "source": ReviewState.AWAITING_AI_REVIEW.value,
+                "dest": ReviewState.AWAITING_HUMAN_REVIEW.value,
+            },
+            {
+                "trigger": "request_revision",
+                "source": ReviewState.AWAITING_AI_REVIEW.value,
+                "dest": source_state.value,
+            },
+            {
+                "trigger": "human_approve",
+                "source": ReviewState.AWAITING_HUMAN_REVIEW.value,
+                "dest": success_destination_state.value,
+            },
+            {
+                "trigger": "request_revision",
+                "source": ReviewState.AWAITING_HUMAN_REVIEW.value,
+                "dest": source_state.value,
+            },
         ]
 
 
@@ -76,12 +85,10 @@ class PlanTaskTool(BaseWorkflowTool):
     """Encapsulates the state and logic for the `plan_task` command."""
 
     def __init__(self, task_id: str, persona_name: str = "planning"):
-        super().__init__(task_id, tool_name=ToolName.PLAN_TASK, persona_name=persona_name)
+        super().__init__(
+            task_id, tool_name=ToolName.PLAN_TASK, persona_name=persona_name
+        )
 
-        # Import the new artifact models
-        from src.alfred.models.planning_artifacts import ContextAnalysisArtifact, StrategyArtifact, DesignArtifact, ExecutionPlanArtifact
-
-        # Define the artifact validation map for this tool
         self.artifact_map = {
             PlanTaskState.CONTEXTUALIZE: ContextAnalysisArtifact,
             PlanTaskState.STRATEGIZE: StrategyArtifact,
@@ -89,14 +96,28 @@ class PlanTaskTool(BaseWorkflowTool):
             PlanTaskState.GENERATE_SUBTASKS: ExecutionPlanArtifact,
         }
 
-        # Use the PlanTaskState Enum for state definitions - convert to string values
-        states = [state.value for state in PlanTaskState]
-
-        transitions = [
-            *self._create_review_transitions(PlanTaskState.CONTEXTUALIZE, PlanTaskState.REVIEW_CONTEXT, PlanTaskState.STRATEGIZE),
-            *self._create_review_transitions(PlanTaskState.STRATEGIZE, PlanTaskState.REVIEW_STRATEGY, PlanTaskState.DESIGN),
-            *self._create_review_transitions(PlanTaskState.DESIGN, PlanTaskState.REVIEW_DESIGN, PlanTaskState.GENERATE_SUBTASKS),
-            *self._create_review_transitions(PlanTaskState.GENERATE_SUBTASKS, PlanTaskState.REVIEW_PLAN, PlanTaskState.VERIFIED),
+        states = [state.value for state in PlanTaskState] + [
+            state.value for state in ReviewState
         ]
 
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=PlanTaskState.CONTEXTUALIZE.value)
+        transitions = [
+            *self._create_review_transitions(
+                PlanTaskState.CONTEXTUALIZE, PlanTaskState.STRATEGIZE
+            ),
+            *self._create_review_transitions(
+                PlanTaskState.STRATEGIZE, PlanTaskState.DESIGN
+            ),
+            *self._create_review_transitions(
+                PlanTaskState.DESIGN, PlanTaskState.GENERATE_SUBTASKS
+            ),
+            *self._create_review_transitions(
+                PlanTaskState.GENERATE_SUBTASKS, PlanTaskState.VERIFIED
+            ),
+        ]
+
+        self.machine = Machine(
+            model=self,
+            states=states,
+            transitions=transitions,
+            initial=PlanTaskState.CONTEXTUALIZE.value,
+        )

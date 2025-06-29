@@ -10,7 +10,6 @@ from src.alfred.models.schemas import (
     TaskStatus,
     Subtask,
     OperationType,
-    Taskflow,
 )
 
 
@@ -72,61 +71,37 @@ class TestSubtaskModel:
 
     def test_subtask_model_creation(self):
         """Test successful Subtask model instantiation."""
-        taskflow = Taskflow(
-            procedural_steps=["Step 1", "Step 2"],
-            verification_steps=["Verify 1", "Verify 2"],
-        )
-
         subtask = Subtask(
             subtask_id="subtask_1.1",
             title="Test Subtask",
-            spec="Detailed specification for the subtask",
             location="src/test_file.py",
             operation=OperationType.CREATE,
-            taskflow=taskflow,
+            specification=["Step 1", "Step 2"],
+            test=["Verify 1", "Verify 2"],
         )
 
         assert subtask.subtask_id == "subtask_1.1"
         assert subtask.title == "Test Subtask"
-        assert subtask.spec == "Detailed specification for the subtask"
         assert subtask.location == "src/test_file.py"
         assert subtask.operation == OperationType.CREATE
-        assert isinstance(subtask.taskflow, Taskflow)
+        assert subtask.specification == ["Step 1", "Step 2"]
+        assert subtask.test == ["Verify 1", "Verify 2"]
 
     def test_invalid_operation_type_raises_error(self):
         """Test that invalid operation type raises ValidationError."""
-        taskflow = Taskflow(
-            procedural_steps=["Step 1"],
-            verification_steps=["Verify 1"],
-        )
-
         with pytest.raises(ValidationError) as exc_info:
             Subtask(
                 subtask_id="subtask_1.2",
                 title="Invalid Subtask",
-                spec="Test spec",
                 location="src/test.py",
                 operation="invalid_operation",  # Invalid operation
-                taskflow=taskflow,
+                specification=["Step 1"],
+                test=["Verify 1"],
             )
 
         assert "operation" in str(exc_info.value)
 
 
-class TestTaskflowModel:
-    """Test cases for the Taskflow Pydantic model."""
-
-    def test_taskflow_model_creation(self):
-        """Test successful Taskflow model instantiation."""
-        taskflow = Taskflow(
-            procedural_steps=["Execute step 1", "Execute step 2", "Execute step 3"],
-            verification_steps=["Verify step 1", "Verify step 2"],
-        )
-
-        assert len(taskflow.procedural_steps) == 3
-        assert len(taskflow.verification_steps) == 2
-        assert taskflow.procedural_steps[0] == "Execute step 1"
-        assert taskflow.verification_steps[0] == "Verify step 1"
 
 
 class TestSerialization:
@@ -164,18 +139,13 @@ class TestSerialization:
 
     def test_subtask_serialization_and_deserialization(self):
         """Test Subtask model JSON serialization and deserialization."""
-        taskflow = Taskflow(
-            procedural_steps=["Create file", "Add content", "Test file"],
-            verification_steps=["Check file exists", "Validate content"],
-        )
-
         original_subtask = Subtask(
             subtask_id="subtask_2.1",
             title="Serialization Subtask Test",
-            spec="Create and test a new file",
             location="src/new_file.py",
             operation=OperationType.CREATE,
-            taskflow=taskflow,
+            specification=["Create file", "Add content", "Test file"],
+            test=["Check file exists", "Validate content"],
         )
 
         # Serialize to JSON
@@ -188,11 +158,10 @@ class TestSerialization:
         # Verify all fields match
         assert deserialized_subtask.subtask_id == original_subtask.subtask_id
         assert deserialized_subtask.title == original_subtask.title
-        assert deserialized_subtask.spec == original_subtask.spec
         assert deserialized_subtask.location == original_subtask.location
         assert deserialized_subtask.operation == original_subtask.operation
-        assert deserialized_subtask.taskflow.procedural_steps == original_subtask.taskflow.procedural_steps
-        assert deserialized_subtask.taskflow.verification_steps == original_subtask.taskflow.verification_steps
+        assert deserialized_subtask.specification == original_subtask.specification
+        assert deserialized_subtask.test == original_subtask.test
 
 
 class TestEnums:
@@ -219,7 +188,7 @@ class TestEnums:
 
     def test_operation_type_enum_values(self):
         """Test that OperationType enum has all expected values."""
-        expected_operations = {"create", "modify", "delete", "review"}
+        expected_operations = {"CREATE", "MODIFY", "DELETE", "REVIEW"}
 
         actual_operations = {op.value for op in OperationType}
         assert actual_operations == expected_operations
@@ -229,4 +198,4 @@ class TestEnums:
         assert isinstance(TaskStatus.NEW, str)
         assert isinstance(OperationType.CREATE, str)
         assert TaskStatus.NEW == "new"
-        assert OperationType.CREATE == "create"
+        assert OperationType.CREATE == "CREATE"
