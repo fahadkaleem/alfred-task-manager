@@ -1,10 +1,13 @@
-### Execution Plan for `{{ task.task_id }}`
-*State: `generate_slots`*
+## {{ state_description }}
 
-**Implementation Plan:**
+**Task:** {{ task.task_id }} - {{ task.title }}
+
+### Implementation Plan
+
+Total SLOTs: **{{ artifact | length }}**
 
 {% for slot in artifact %}
-#### Slot {{ slot.slot_id }}: {{ slot.title }}
+#### SLOT {{ slot.slot_id }}: {{ slot.title }}
 
 **Specification:**
 {{ slot.spec }}
@@ -14,7 +17,7 @@
 - {{ criteria }}
 {% endfor %}
 
-**Task Flow:** {{ slot.taskflow.value }}
+**Task Type:** {{ slot.taskflow.value }}
 {% if slot.dependencies %}
 **Dependencies:** {{ slot.dependencies|join(", ") }}
 {% endif %}
