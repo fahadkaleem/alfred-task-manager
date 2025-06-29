@@ -23,6 +23,7 @@ class FeaturesConfig(BaseModel):
     """Feature flags for Alfred."""
 
     scaffolding_mode: bool = Field(default=False, description="Enable scaffolding mode to generate TODO placeholders before implementation")
+    autonomous_mode: bool = Field(default=False, description="Enable autonomous mode to bypass human review steps.")
 
 
 class AlfredConfig(BaseModel):

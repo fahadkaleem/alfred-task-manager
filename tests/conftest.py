@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 
 from src.alfred.tools.initialize import initialize_project
 from src.alfred.models.schemas import Task
-from src.alfred.lib.task_utils import save_task_state, load_task
+from src.alfred.lib.task_utils import load_task
+from src.alfred.state.manager import state_manager
 from src.alfred.config.settings import Settings
 
 
@@ -74,18 +75,19 @@ class AlfredTestProject:
 
         task_file.write_text(markdown_content)
 
-        # Save the task state using the test project's settings
+        # Save the task state using the unified state manager
         from unittest.mock import patch
 
-        with patch("src.alfred.lib.task_utils.settings", self.settings):
-            save_task_state(task.task_id, task.task_status, self.root)
+        with patch("src.alfred.state.manager.settings", self.settings):
+            state_manager.update_task_status(task.task_id, task.task_status)
 
     def load_task(self, task_id: str) -> Task | None:
         """Load a task from the test workspace."""
         # Use the test project's settings by patching during the load
         from unittest.mock import patch
 
-        with patch("src.alfred.lib.task_utils.settings", self.settings):
+        with patch("src.alfred.lib.task_utils.settings", self.settings), \
+             patch("src.alfred.state.manager.settings", self.settings):
             return load_task(task_id, self.root)
 
     def get_task_state(self, task_id: str) -> Task | None:
