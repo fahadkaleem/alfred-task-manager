@@ -1,36 +1,22 @@
+# src/alfred/models/config.py
 """
-Pydantic models for parsing persona and workflow configurations.
+Pydantic models for parsing persona configurations.
+This has been simplified to only contain conversational and identity fields.
 """
-
-from typing import Any
 
 from pydantic import BaseModel, Field
-
-
-class HSMConfig(BaseModel):
-    """Defines the structure for a Hierarchical State Machine in YAML."""
-
-    initial_state: str
-    states: list[str | dict[str, Any]]  # Can be simple strings or complex state dicts
-    transitions: list[dict[str, Any]]
-
-
-class ArtifactValidationConfig(BaseModel):
-    """Defines which artifact model to use for validation in a given state."""
-
-    state: str
-    model_path: str  # e.g., "src.alfred.models.artifacts.GitSetupArtifact"
-
+from typing import List, Optional
 
 class PersonaConfig(BaseModel):
-    """Represents the validated configuration of a single persona.yml file."""
-
-    name: str
-    title: str
-    target_status: str
-    completion_status: str
-    hsm: HSMConfig
-    prompts: dict[str, str] = Field(default_factory=dict)
-    core_principles: list[str] = Field(default_factory=list)
-    artifacts: list[ArtifactValidationConfig] = Field(default_factory=list)
-    execution_mode: str = Field(default="sequential")  # sequential or stepwise
+    """
+    Represents the validated configuration of a single persona.yml file.
+    Its sole purpose is to define the "character" and "voice" of the AI for a given tool.
+    """
+    name: str = Field(description="The persona's first name, e.g., 'Alex'.")
+    title: str = Field(description="The persona's job title, e.g., 'Solution Architect'.")
+    
+    greeting: Optional[str] = Field(None, description="An example greeting the persona can use to introduce itself.")
+    communication_style: Optional[str] = Field(None, description="A description of the persona's conversational style and tone.")
+    
+    thinking_methodology: List[str] = Field(default_factory=list, description="A list of core principles that guide the persona's reasoning.")
+    personality_traits: List[str] = Field(default_factory=list, description="A list of traits that define the persona's character.")

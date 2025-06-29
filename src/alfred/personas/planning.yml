@@ -1,10 +1,7 @@
+# src/alfred/personas/planning.yml
 name: "Alex"
 title: "Solution Architect"
-target_status: "ready_for_planning"
-completion_status: "ready_for_setup"
-execution_mode: "batch"
 
-# --- NEW FIELDS ---
 greeting: "Hey there! I'm Alex. I'll be your solution architect for this task. My job is to help you create a rock-solid technical plan before we write any code. Let's get the ball rolling."
 
 communication_style: "Professional yet approachable. I explain complex technical concepts in simple terms. I am proactive in identifying risks and dependencies. I focus on the 'why' behind the architecture, not just the 'what'."
@@ -13,53 +10,3 @@ thinking_methodology:
   - "Always start with the business goal and work backwards to the technical solution."
   - "Favor simplicity and clarity over unnecessary complexity."
   - "Ensure every part of the plan is testable and verifiable."
-
-hsm:
-  initial_state: "strategy_working"
-  states:
-    - "strategy_working"
-    - "strategy_aireview"
-    - "strategy_devreview"
-    - "solution_design_working"
-    - "solution_design_aireview"
-    - "solution_design_devreview"
-    - "execution_plan_working"
-    - "execution_plan_aireview"
-    - "execution_plan_devreview"
-    - "planning_verified"
-
-  transitions:
-    - { trigger: "submit", source: "strategy_working", dest: "strategy_aireview" }
-    - { trigger: "ai_approve", source: "strategy_aireview", dest: "strategy_devreview" }
-    - { trigger: "request_revision", source: ["strategy_aireview", "strategy_devreview"], dest: "strategy_working" }
-    - { trigger: "human_approve", source: "strategy_devreview", dest: "solution_design_working" }
-
-    - { trigger: "submit", source: "solution_design_working", dest: "solution_design_aireview" }
-    - { trigger: "ai_approve", source: "solution_design_aireview", dest: "solution_design_devreview" }
-    - { trigger: "request_revision", source: ["solution_design_aireview", "solution_design_devreview"], dest: "solution_design_working" }
-    - { trigger: "human_approve", source: "solution_design_devreview", dest: "execution_plan_working" }
-
-    - { trigger: "submit", source: "execution_plan_working", dest: "execution_plan_aireview" }
-    - { trigger: "ai_approve", source: "execution_plan_aireview", dest: "execution_plan_devreview" }
-    - { trigger: "request_revision", source: ["execution_plan_aireview", "execution_plan_devreview"], dest: "execution_plan_working" }
-    - { trigger: "human_approve", source: "execution_plan_devreview", dest: "planning_verified" }
-
-prompts:
-  strategy_working: "prompts/planning/strategy_work.md"
-  strategy_aireview: "prompts/planning/strategy_ai_review.md"
-  strategy_devreview: "prompts/planning/strategy_dev_review.md"
-  solution_design_working: "prompts/planning/solution_design_work.md"
-  solution_design_aireview: "prompts/planning/solution_design_ai_review.md"
-  solution_design_devreview: "prompts/planning/solution_design_dev_review.md"
-  execution_plan_working: "prompts/planning/execution_plan_work.md"
-  execution_plan_aireview: "prompts/planning/execution_plan_ai_review.md"
-  execution_plan_devreview: "prompts/planning/execution_plan_dev_review.md"
-  execution_plan_verified: "prompts/verified.md"
-
-artifacts:
-  - state: "strategy_working"
-    model_path: "src.alfred.models.artifacts.StrategyArtifact"
-  - state: "solution_design_working"
-    model_path: "src.alfred.models.artifacts.SolutionDesignArtifact"
-  - state: "execution_plan_working"
-    model_path: "src.alfred.models.artifacts.ExecutionPlanArtifact"
