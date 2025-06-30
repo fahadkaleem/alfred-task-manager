@@ -9,7 +9,6 @@ from src.alfred.lib.logger import get_logger
 from src.alfred.lib.task_utils import load_task
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.state.manager import state_manager
 from src.alfred.constants import ArtifactKeys, Triggers, ResponseStatus, LogMessages, ErrorMessages
 
@@ -18,8 +17,17 @@ logger = get_logger(__name__)
 
 def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     """Implements the logic for submitting a work artifact to the active tool."""
+    # Try to get active tool or recover it from state
     if task_id not in orchestrator.active_tools:
-        return ToolResponse(status=ResponseStatus.ERROR, message=f"{LogMessages.NO_ACTIVE_TOOL.format(task_id=task_id)} Cannot submit work.")
+        # Try to recover the tool from persisted state
+        from src.alfred.state.recovery import ToolRecovery
+
+        recovered_tool = ToolRecovery.recover_tool(task_id)
+        if recovered_tool:
+            orchestrator.active_tools[task_id] = recovered_tool
+            logger.info(f"Recovered tool for task {task_id} from persisted state")
+        else:
+            return ToolResponse(status=ResponseStatus.ERROR, message=f"{LogMessages.NO_ACTIVE_TOOL.format(task_id=task_id)} Cannot submit work.")
 
     active_tool = orchestrator.active_tools[task_id]
     task = load_task(task_id)
@@ -40,11 +48,6 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     else:
         validated_artifact = artifact
 
-    try:
-        persona_config = load_persona(active_tool.persona_name)
-    except FileNotFoundError as e:
-        return ToolResponse(status=ResponseStatus.ERROR, message=str(e))
-
     trigger = Triggers.submit_trigger(current_state_val)
     if not hasattr(active_tool, trigger):
         return ToolResponse(status=ResponseStatus.ERROR, message=f"Invalid action: cannot submit from state '{current_state_val}'. No trigger '{trigger}' exists.")
@@ -57,19 +60,19 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     temp_context = active_tool.context_store.copy()
     artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
     temp_context[artifact_key] = validated_artifact
-    temp_context[ArtifactKeys.ARTIFACT_CONTENT_KEY] = json.dumps(artifact, indent=2)
+    # For review states, we need the artifact as an object, not a string
+    temp_context[ArtifactKeys.ARTIFACT_CONTENT_KEY] = validated_artifact
 
     next_prompt = prompter.generate_prompt(
         task=task,
         tool_name=active_tool.tool_name,
         state=next_state,
-        persona_config=persona_config,
         additional_context=temp_context,
     )
 
     active_tool.context_store[artifact_key] = validated_artifact
-    artifact_manager.append_to_scratchpad(task_id=task_id, state_name=current_state_val, artifact=validated_artifact, persona_config=persona_config)
-    
+    artifact_manager.append_to_scratchpad(task_id=task_id, state_name=current_state_val, artifact=validated_artifact)
+
     getattr(active_tool, trigger)()
     logger.info(LogMessages.STATE_TRANSITION.format(task_id=task_id, trigger=trigger, state=active_tool.state))
 

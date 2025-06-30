@@ -194,11 +194,6 @@ class Settings(BaseSettings):
         return Path(__file__).parent.parent / Paths.WORKFLOW_FILE
 
     @property
-    def packaged_personas_dir(self) -> Path:
-        """Get the path to the default personas directory inside the package."""
-        return Path(__file__).parent.parent / Paths.PERSONAS_DIR
-
-    @property
     def packaged_templates_dir(self) -> Path:
         """Get the path to the default templates directory inside the package."""
         return Path(__file__).parent.parent / Paths.TEMPLATES_DIR
@@ -230,9 +225,16 @@ from typing import Final
 class ToolName:
     """Tool name constants."""
 
+    CREATE_SPEC: Final[str] = "create_spec"
+    CREATE_TASKS: Final[str] = "create_tasks"
     START_TASK: Final[str] = "start_task"
     PLAN_TASK: Final[str] = "plan_task"
     IMPLEMENT_TASK: Final[str] = "implement_task"
+    REVIEW_TASK: Final[str] = "review_task"
+    TEST_TASK: Final[str] = "test_task"
+    FINALIZE_TASK: Final[str] = "finalize_task"
+    WORK_ON: Final[str] = "work_on"
+    APPROVE_AND_ADVANCE: Final[str] = "approve_and_advance"
 
 
 # Directory and File Names
@@ -242,7 +244,6 @@ class Paths:
     # Directories
     ALFRED_DIR: Final[str] = ".alfred"
     WORKSPACE_DIR: Final[str] = "workspace"
-    PERSONAS_DIR: Final[str] = "personas"
     TEMPLATES_DIR: Final[str] = "templates"
     ARCHIVE_DIR: Final[str] = "archive"
     DEBUG_DIR: Final[str] = "debug"
@@ -292,11 +293,31 @@ class ArtifactKeys:
 
     # State to artifact name mapping
     STATE_TO_ARTIFACT_MAP: Final[dict] = {
+        # PlanTask states
         PlanTaskStates.CONTEXTUALIZE: "context",
         PlanTaskStates.STRATEGIZE: "strategy",
         PlanTaskStates.DESIGN: "design",
         PlanTaskStates.GENERATE_SUBTASKS: "execution_plan",
+        # Other tool states
+        "drafting_spec": "drafting_spec",
+        "drafting_tasks": "drafting_tasks",
+        "implementing": "implementing",
+        "reviewing": "reviewing",
+        "testing": "testing",
+        "finalizing": "finalizing",
     }
+
+    @staticmethod
+    def get_base_state_name(state: str) -> str:
+        """Extract base state name from a potentially suffixed state.
+
+        Example: 'strategize_awaiting_ai_review' -> 'strategize'
+        """
+        if state.endswith("_awaiting_ai_review") or state.endswith("_awaiting_human_review"):
+            # Remove the review suffix
+            parts = state.rsplit("_awaiting_", 1)
+            return parts[0]
+        return state
 
     ARTIFACT_SUFFIX: Final[str] = "_artifact"
     ARTIFACT_CONTENT_KEY: Final[str] = "artifact_content"
@@ -304,7 +325,8 @@ class ArtifactKeys:
     @staticmethod
     def get_artifact_key(state: str) -> str:
         """Get the artifact key for a given state."""
-        artifact_name = ArtifactKeys.STATE_TO_ARTIFACT_MAP.get(state, state)
+        base_state = ArtifactKeys.get_base_state_name(state)
+        artifact_name = ArtifactKeys.STATE_TO_ARTIFACT_MAP.get(base_state, base_state)
         return f"{artifact_name}{ArtifactKeys.ARTIFACT_SUFFIX}"
 
 
@@ -326,6 +348,8 @@ class Triggers:
 
     AI_APPROVE: Final[str] = "ai_approve"
     REQUEST_REVISION: Final[str] = "request_revision"
+    HUMAN_APPROVE: Final[str] = "human_approve"
+    SUBMIT_WORK: Final[str] = "submit_work"
 
     @staticmethod
     def submit_trigger(state: str) -> str:
@@ -407,6 +431,7 @@ Context assembly for template rendering during state transitions.
 This module ensures proper context is built for both forward progression
 and backward revision flows in the feedback loop.
 """
+
 from typing import Dict, Any, Optional
 from src.alfred.constants import ArtifactKeys
 from src.alfred.lib.logger import get_logger
@@ -416,34 +441,34 @@ logger = get_logger(__name__)
 
 class ContextBuilder:
     """Builds proper context for template rendering based on state transitions."""
-    
+
     @staticmethod
     def build_feedback_context(tool: Any, state: str, feedback_notes: str) -> Dict[str, Any]:
         """
         Build context when returning to a work state with feedback.
-        
+
         This ensures the rejected artifact is available under the correct key
         for the destination state's template to render properly.
-        
+
         Args:
             tool: The active workflow tool instance
             state: The destination state (work state we're returning to)
             feedback_notes: The feedback from the reviewer
-            
+
         Returns:
             Dictionary with complete context for template rendering
         """
         context = tool.context_store.copy()
         context["feedback_notes"] = feedback_notes
-        
+
         # Get the expected artifact key for this state
         artifact_key = ArtifactKeys.get_artifact_key(state)
         logger.debug(f"Building feedback context for state '{state}', expecting artifact key '{artifact_key}'")
-        
+
         # Ensure artifact is available with expected key
         if artifact_key not in context:
             logger.warning(f"Artifact key '{artifact_key}' not found in context, searching for recent artifact")
-            
+
             # Find the most recent artifact from any state
             artifact_found = False
             for key, value in tool.context_store.items():
@@ -452,54 +477,55 @@ class ContextBuilder:
                     context[artifact_key] = value
                     artifact_found = True
                     break
-            
+
             if not artifact_found:
                 logger.error(f"No artifact found in context_store for feedback loop")
         else:
             logger.debug(f"Artifact already available under key '{artifact_key}'")
-        
+
         # Log final context keys for debugging
         logger.debug(f"Final context keys: {list(context.keys())}")
         logger.debug(f"Feedback notes (first 100 chars): {feedback_notes[:100]}")
-        
+
         return context
-    
+
     @staticmethod
     def build_review_context(tool: Any, artifact: Any) -> Dict[str, Any]:
         """
         Build context for review states (AI/Human review).
-        
+
         Args:
             tool: The active workflow tool instance
             artifact: The artifact just submitted
-            
+
         Returns:
             Dictionary with context for review template rendering
         """
         context = tool.context_store.copy()
-        
+
         # Review states expect artifact under 'artifact_content' key
-        if hasattr(artifact, 'model_dump'):
+        if hasattr(artifact, "model_dump"):
             context["artifact_content"] = artifact.model_dump()
         else:
             context["artifact_content"] = artifact
-            
+
         logger.debug(f"Built review context with artifact_content")
-        
+
         return context
-    
+
     @staticmethod
     def build_standard_context(tool: Any) -> Dict[str, Any]:
         """
         Build standard context for forward progression.
-        
+
         Args:
             tool: The active workflow tool instance
-            
+
         Returns:
             Copy of the tool's context_store
         """
         return tool.context_store.copy()
+
 ``````
 ------ src/alfred/core/prompter.py ------
 ``````
@@ -515,13 +541,12 @@ from src.alfred.config.settings import settings
 from src.alfred.models.schemas import Task
 from src.alfred.constants import TemplatePaths
 from src.alfred.lib.logger import get_logger
-from src.alfred.models.config import PersonaConfig
 
 logger = get_logger(__name__)
 
 
 class Prompter:
-    """Generates persona-driven, state-aware prompts for the AI agent."""
+    """Generates state-aware prompts for the AI agent."""
 
     def __init__(self):
         # Reuse existing settings to find the templates directory
@@ -541,7 +566,7 @@ class Prompter:
         # Add custom filters
         self.jinja_env.filters["fromjson"] = json.loads
         self.jinja_env.filters["tojson"] = self._pydantic_safe_tojson
-    
+
     def _pydantic_safe_tojson(self, obj, indent=2):
         """Custom JSON filter that handles Pydantic models"""
         if isinstance(obj, BaseModel):
@@ -553,7 +578,6 @@ class Prompter:
         task: Task,
         tool_name: str,
         state,  # Can be Enum or str
-        persona_config: PersonaConfig,  # CHANGE THIS: No longer a Dict, it's the Pydantic object
         additional_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
@@ -563,7 +587,6 @@ class Prompter:
             task: The full structured Task object.
             tool_name: The name of the active tool (e.g., 'plan_task').
             state: The current state from the tool's SM (Enum or str).
-            persona_config: The PersonaConfig Pydantic object for the tool's persona.
             additional_context: Ad-hoc data like review feedback.
 
         Returns:
@@ -571,8 +594,16 @@ class Prompter:
         """
         # Handle both Enum and string state values
         state_value = state.value if hasattr(state, "value") else state
-        template_path = TemplatePaths.PROMPT_PATTERN.format(tool_name=tool_name, state=state_value)
-        
+
+        # Map dynamic review states to generic templates
+        template_state = state_value
+        if state_value.endswith("_awaiting_ai_review"):
+            template_state = "awaiting_ai_review"
+        elif state_value.endswith("_awaiting_human_review"):
+            template_state = "awaiting_human_review"
+
+        template_path = TemplatePaths.PROMPT_PATTERN.format(tool_name=tool_name, state=template_state)
+
         logger.info(f"[PROMPTER] Generating prompt for tool='{tool_name}', state='{state_value}'")
         logger.info(f"[PROMPTER] Additional context keys: {list(additional_context.keys()) if additional_context else 'None'}")
 
@@ -589,28 +620,9 @@ class Prompter:
             "task": task,
             "tool_name": tool_name,
             "state": state_value,
-            "persona": persona_config,  # Pass the object directly
             "additional_context": additional_context or {},
         }
-        
-        # AL-11: Simplified logic, as we now always have the Pydantic object
-        ai_config = persona_config.ai
-        
-        # Get state-specific analysis patterns
-        analysis_patterns = ai_config.analysis_patterns.get(state_value, [])
-        validation_criteria = ai_config.validation_criteria.get(state_value, [])
-        
-        # Inject AI directives into context
-        render_context["ai_directives"] = {
-            "style": ai_config.style,
-            "analysis_patterns": analysis_patterns,
-            "validation_criteria": validation_criteria,
-        }
-        
-        logger.info(f"[PROMPTER] AL-11: Injecting AI directives for state '{state_value}'")
-        logger.info(f"[PROMPTER] AL-11: Analysis patterns count: {len(analysis_patterns)}")
-        logger.info(f"[PROMPTER] AL-11: Validation criteria count: {len(validation_criteria)}")
-        
+
         # Log important context details for debugging
         if additional_context and "feedback_notes" in additional_context:
             logger.info(f"[PROMPTER DEBUG] Feedback notes present (first 100 chars): {additional_context['feedback_notes'][:100]}")
@@ -618,19 +630,19 @@ class Prompter:
             artifact_keys = [k for k in additional_context.keys() if k.endswith("_artifact")]
             if artifact_keys:
                 logger.info(f"[PROMPTER DEBUG] Artifact keys in context: {artifact_keys}")
-        
+
         # Log what's being passed to template
         logger.info(f"[PROMPTER DEBUG] Rendering template with additional_context keys: {list(additional_context.keys()) if additional_context else 'None'}")
-        
+
         rendered = template.render(render_context)
-        
+
         # Check if feedback section was rendered
         if additional_context and "feedback_notes" in additional_context:
             if "Building on Your Previous Analysis" in rendered:
                 logger.info("[PROMPTER DEBUG] Feedback section successfully rendered in template")
             else:
                 logger.warning("[PROMPTER DEBUG] Feedback section NOT rendered despite feedback_notes present!")
-        
+
         return rendered
 
 
@@ -653,14 +665,16 @@ from src.alfred.models.planning_artifacts import (
     ContextAnalysisArtifact,
     DesignArtifact,
     ExecutionPlanArtifact,
+    FinalizeArtifact,
     GitStatusArtifact,
+    ImplementationManifestArtifact,
+    PRDInputArtifact,
+    ReviewArtifact,
     StrategyArtifact,
+    TaskCreationArtifact,
+    TestResultArtifact,
 )
-
-
-class ReviewState(str, Enum):
-    AWAITING_AI_REVIEW = "awaiting_ai_review"
-    AWAITING_HUMAN_REVIEW = "awaiting_human_review"
+from src.alfred.models.engineering_spec import EngineeringSpec
 
 
 class PlanTaskState(str, Enum):
@@ -673,16 +687,52 @@ class PlanTaskState(str, Enum):
 
 class StartTaskState(str, Enum):
     """A leaner, more logical state model for StartTaskTool."""
+
     AWAITING_GIT_STATUS = "awaiting_git_status"
     AWAITING_BRANCH_CREATION = "awaiting_branch_creation"
     VERIFIED = "verified"
 
 
+class ImplementTaskState(str, Enum):
+    DISPATCHING = "dispatching"
+    IMPLEMENTING = "implementing"
+    VERIFIED = "verified"
+
+
+class ReviewTaskState(str, Enum):
+    DISPATCHING = "dispatching"
+    REVIEWING = "reviewing"
+    VERIFIED = "verified"
+
+
+class TestTaskState(str, Enum):
+    DISPATCHING = "dispatching"
+    TESTING = "testing"
+    VERIFIED = "verified"
+
+
+class FinalizeTaskState(str, Enum):
+    DISPATCHING = "dispatching"
+    FINALIZING = "finalizing"
+    VERIFIED = "verified"
+
+
+class CreateSpecState(str, Enum):
+    DISPATCHING = "dispatching"
+    DRAFTING_SPEC = "drafting_spec"
+    VERIFIED = "verified"
+
+
+class CreateTasksState(str, Enum):
+    DISPATCHING = "dispatching"
+    DRAFTING_TASKS = "drafting_tasks"
+    VERIFIED = "verified"
+
+
 class BaseWorkflowTool:
-    def __init__(self, task_id: str, tool_name: str, persona_name: str):
+    def __init__(self, task_id: str, tool_name: str):
         self.task_id = task_id
         self.tool_name = tool_name
-        self.persona_name = persona_name
         self.state: Optional[str] = None
         self.machine: Optional[Machine] = None
         self.artifact_map: Dict[Enum, Type[BaseModel]] = {}
@@ -692,51 +742,296 @@ class BaseWorkflowTool:
     def is_terminal(self) -> bool:
         return self.state == "verified"
 
-    def _create_review_transitions(self, source_state: str, success_destination_state: str) -> List[Dict[str, Any]]:
+    def _create_review_transitions(self, source_state: str, success_destination_state: str, revision_destination_state: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Generates a unique, state-specific review cycle.
+        Example: For source_state 'strategize', it creates 'strategize_awaiting_ai_review'.
+        """
+        if revision_destination_state is None:
+            revision_destination_state = source_state
+
+        # Dynamic state name generation
+        ai_review_state = f"{source_state}_awaiting_ai_review"
+        human_review_state = f"{source_state}_awaiting_human_review"
+
         return [
-            {"trigger": Triggers.submit_trigger(source_state), "source": source_state, "dest": ReviewState.AWAITING_AI_REVIEW.value},
-            {"trigger": "ai_approve", "source": ReviewState.AWAITING_AI_REVIEW.value, "dest": ReviewState.AWAITING_HUMAN_REVIEW.value},
-            {"trigger": "request_revision", "source": ReviewState.AWAITING_AI_REVIEW.value, "dest": source_state},
-            {"trigger": "human_approve", "source": ReviewState.AWAITING_HUMAN_REVIEW.value, "dest": success_destination_state},
-            {"trigger": "request_revision", "source": ReviewState.AWAITING_HUMAN_REVIEW.value, "dest": source_state},
+            # Trigger to enter the review cycle for this specific state
+            {
+                "trigger": Triggers.submit_trigger(source_state),
+                "source": source_state,
+                "dest": ai_review_state,
+            },
+            # AI approves its own work
+            {
+                "trigger": Triggers.AI_APPROVE,
+                "source": ai_review_state,
+                "dest": human_review_state,
+            },
+            # AI requests revision (goes back to the start of this state's work)
+            {
+                "trigger": Triggers.REQUEST_REVISION,
+                "source": ai_review_state,
+                "dest": revision_destination_state,
+            },
+            # Human approves the work, advancing to the next major state
+            {
+                "trigger": Triggers.HUMAN_APPROVE,
+                "source": human_review_state,
+                "dest": success_destination_state,
+            },
+            # Human requests revision
+            {
+                "trigger": Triggers.REQUEST_REVISION,
+                "source": human_review_state,
+                "dest": revision_destination_state,
+            },
         ]
+
+    def get_review_states_for_state(self, state: str) -> List[str]:
+        """Get the review states for a given work state."""
+        return [f"{state}_awaiting_ai_review", f"{state}_awaiting_human_review"]
+
+    def get_final_work_state(self) -> str:
+        """Get the final work state that produces the main artifact.
+
+        This method should be overridden by subclasses to return the state
+        that produces the primary artifact for the tool.
+        """
+        raise NotImplementedError(f"{self.__class__.__name__} must implement get_final_work_state()")
 
 
 class PlanTaskTool(BaseWorkflowTool):
-    def __init__(self, task_id: str, persona_name: str = "planning"):
-        super().__init__(task_id, tool_name=ToolName.PLAN_TASK, persona_name=persona_name)
+    def __init__(self, task_id: str):
+        super().__init__(task_id, tool_name=ToolName.PLAN_TASK)
         self.artifact_map = {
             PlanTaskState.CONTEXTUALIZE: ContextAnalysisArtifact,
             PlanTaskState.STRATEGIZE: StrategyArtifact,
             PlanTaskState.DESIGN: DesignArtifact,
             PlanTaskState.GENERATE_SUBTASKS: ExecutionPlanArtifact,
         }
-        states = [state.value for state in PlanTaskState] + [state.value for state in ReviewState]
+
+        # Define the base states
+        base_states = [state.value for state in PlanTaskState]
+
+        # Dynamically generate the unique review states for each step
+        review_states = []
+        for state in [PlanTaskState.CONTEXTUALIZE, PlanTaskState.STRATEGIZE, PlanTaskState.DESIGN, PlanTaskState.GENERATE_SUBTASKS]:
+            review_states.extend(self.get_review_states_for_state(state.value))
+
+        all_states = base_states + review_states
+
+        # Define the transitions using the new helper
         transitions = [
-            *self._create_review_transitions(PlanTaskState.CONTEXTUALIZE.value, PlanTaskState.STRATEGIZE.value),
-            *self._create_review_transitions(PlanTaskState.STRATEGIZE.value, PlanTaskState.DESIGN.value),
-            *self._create_review_transitions(PlanTaskState.DESIGN.value, PlanTaskState.GENERATE_SUBTASKS.value),
-            *self._create_review_transitions(PlanTaskState.GENERATE_SUBTASKS.value, PlanTaskState.VERIFIED.value),
+            *self._create_review_transitions(source_state=PlanTaskState.CONTEXTUALIZE.value, success_destination_state=PlanTaskState.STRATEGIZE.value),
+            *self._create_review_transitions(source_state=PlanTaskState.STRATEGIZE.value, success_destination_state=PlanTaskState.DESIGN.value),
+            *self._create_review_transitions(source_state=PlanTaskState.DESIGN.value, success_destination_state=PlanTaskState.GENERATE_SUBTASKS.value),
+            *self._create_review_transitions(source_state=PlanTaskState.GENERATE_SUBTASKS.value, success_destination_state=PlanTaskState.VERIFIED.value),
         ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=PlanTaskState.CONTEXTUALIZE.value)
+
+        self.machine = Machine(model=self, states=all_states, transitions=transitions, initial=PlanTaskState.CONTEXTUALIZE.value, auto_transitions=False)
+
+    def get_final_work_state(self) -> str:
+        return PlanTaskState.GENERATE_SUBTASKS.value
 
 
 class StartTaskTool(BaseWorkflowTool):
     """Re-architected StartTaskTool with a streamlined state machine."""
-    def __init__(self, task_id: str, persona_name: str = "onboarding"):
-        super().__init__(task_id, tool_name=ToolName.START_TASK, persona_name=persona_name)
+
+    def __init__(self, task_id: str):
+        super().__init__(task_id, tool_name=ToolName.START_TASK)
         self.artifact_map = {
             StartTaskState.AWAITING_GIT_STATUS: GitStatusArtifact,
             StartTaskState.AWAITING_BRANCH_CREATION: BranchCreationArtifact,
         }
-        states = [state.value for state in StartTaskState] + [state.value for state in ReviewState]
+
+        # Define base states
+        base_states = [state.value for state in StartTaskState]
+
+        # Generate review states
+        review_states = []
+        review_states.extend(self.get_review_states_for_state(StartTaskState.AWAITING_GIT_STATUS.value))
+        review_states.extend(self.get_review_states_for_state(StartTaskState.AWAITING_BRANCH_CREATION.value))
+
+        all_states = base_states + review_states
+
         transitions = [
             # 1. User submits Git Status. After review, success moves to AWAITING_BRANCH_CREATION.
             *self._create_review_transitions(StartTaskState.AWAITING_GIT_STATUS.value, StartTaskState.AWAITING_BRANCH_CREATION.value),
             # 2. User submits Branch Creation result. After review, success moves to VERIFIED (terminal).
             *self._create_review_transitions(StartTaskState.AWAITING_BRANCH_CREATION.value, StartTaskState.VERIFIED.value),
         ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=StartTaskState.AWAITING_GIT_STATUS.value)
+        self.machine = Machine(model=self, states=all_states, transitions=transitions, initial=StartTaskState.AWAITING_GIT_STATUS.value, auto_transitions=False)
+
+    def get_final_work_state(self) -> str:
+        return StartTaskState.AWAITING_BRANCH_CREATION.value
+
+
+class ImplementTaskTool(BaseWorkflowTool):
+    def __init__(self, task_id: str):
+        super().__init__(task_id, tool_name=ToolName.IMPLEMENT_TASK)
+        self.artifact_map = {
+            # The ONLY artifact submitted is from the IMPLEMENTING state.
+            ImplementTaskState.IMPLEMENTING: ImplementationManifestArtifact,
+        }
+
+        source_state = ImplementTaskState.IMPLEMENTING.value
+
+        # Dynamically generate the state names
+        states = [
+            ImplementTaskState.DISPATCHING.value,
+            source_state,
+            f"{source_state}_awaiting_ai_review",
+            f"{source_state}_awaiting_human_review",
+            ImplementTaskState.VERIFIED.value,
+        ]
+
+        transitions = [
+            {"trigger": "dispatch", "source": ImplementTaskState.DISPATCHING.value, "dest": source_state},
+            *self._create_review_transitions(source_state=source_state, success_destination_state=ImplementTaskState.VERIFIED.value),
+        ]
+        self.machine = Machine(model=self, states=states, transitions=transitions, initial=ImplementTaskState.DISPATCHING.value, auto_transitions=False)
+
+    def get_final_work_state(self) -> str:
+        return ImplementTaskState.IMPLEMENTING.value
+
+
+class ReviewTaskTool(BaseWorkflowTool):
+    def __init__(self, task_id: str):
+        super().__init__(task_id, tool_name=ToolName.REVIEW_TASK)
+        self.artifact_map = {
+            # Only the reviewing state produces an artifact
+            ReviewTaskState.REVIEWING: ReviewArtifact,
+        }
+
+        source_state = ReviewTaskState.REVIEWING.value
+
+        states = [
+            ReviewTaskState.DISPATCHING.value,
+            source_state,
+            f"{source_state}_awaiting_ai_review",
+            f"{source_state}_awaiting_human_review",
+            ReviewTaskState.VERIFIED.value,
+        ]
+
+        transitions = [
+            {"trigger": "dispatch", "source": ReviewTaskState.DISPATCHING.value, "dest": source_state},
+            *self._create_review_transitions(source_state=source_state, success_destination_state=ReviewTaskState.VERIFIED.value),
+        ]
+        self.machine = Machine(model=self, states=states, transitions=transitions, initial=ReviewTaskState.DISPATCHING.value, auto_transitions=False)
+
+    def get_final_work_state(self) -> str:
+        return ReviewTaskState.REVIEWING.value
+
+
+class TestTaskTool(BaseWorkflowTool):
+    def __init__(self, task_id: str):
+        super().__init__(task_id, tool_name=ToolName.TEST_TASK)
+        self.artifact_map = {
+            # Only the testing state produces an artifact
+            TestTaskState.TESTING: TestResultArtifact,
+        }
+
+        source_state = TestTaskState.TESTING.value
+
+        states = [
+            TestTaskState.DISPATCHING.value,
+            source_state,
+            f"{source_state}_awaiting_ai_review",
+            f"{source_state}_awaiting_human_review",
+            TestTaskState.VERIFIED.value,
+        ]
+
+        transitions = [
+            {"trigger": "dispatch", "source": TestTaskState.DISPATCHING.value, "dest": source_state},
+            *self._create_review_transitions(source_state=source_state, success_destination_state=TestTaskState.VERIFIED.value),
+        ]
+        self.machine = Machine(model=self, states=states, transitions=transitions, initial=TestTaskState.DISPATCHING.value, auto_transitions=False)
+
+    def get_final_work_state(self) -> str:
+        return TestTaskState.TESTING.value
+
+
+class FinalizeTaskTool(BaseWorkflowTool):
+    def __init__(self, task_id: str):
+        super().__init__(task_id, tool_name=ToolName.FINALIZE_TASK)
+        self.artifact_map = {
+            # Only the finalizing state produces an artifact
+            FinalizeTaskState.FINALIZING: FinalizeArtifact,
+        }
+
+        source_state = FinalizeTaskState.FINALIZING.value
+
+        states = [
+            FinalizeTaskState.DISPATCHING.value,
+            source_state,
+            f"{source_state}_awaiting_ai_review",
+            f"{source_state}_awaiting_human_review",
+            FinalizeTaskState.VERIFIED.value,
+        ]
+
+        transitions = [
+            {"trigger": "dispatch", "source": FinalizeTaskState.DISPATCHING.value, "dest": source_state},
+            *self._create_review_transitions(source_state=source_state, success_destination_state=FinalizeTaskState.VERIFIED.value),
+        ]
+        self.machine = Machine(model=self, states=states, transitions=transitions, initial=FinalizeTaskState.DISPATCHING.value, auto_transitions=False)
+
+    def get_final_work_state(self) -> str:
+        return FinalizeTaskState.FINALIZING.value
+
+
+class CreateSpecTool(BaseWorkflowTool):
+    def __init__(self, task_id: str):
+        super().__init__(task_id, tool_name=ToolName.CREATE_SPEC)
+        self.artifact_map = {
+            CreateSpecState.DRAFTING_SPEC: EngineeringSpec,  # Only one artifact
+        }
+
+        source_state = CreateSpecState.DRAFTING_SPEC.value
+
+        states = [
+            CreateSpecState.DISPATCHING.value,
+            source_state,
+            f"{source_state}_awaiting_ai_review",
+            f"{source_state}_awaiting_human_review",
+            CreateSpecState.VERIFIED.value,
+        ]
+
+        transitions = [
+            {"trigger": "dispatch", "source": CreateSpecState.DISPATCHING.value, "dest": source_state},
+            *self._create_review_transitions(source_state=source_state, success_destination_state=CreateSpecState.VERIFIED.value),
+        ]
+        self.machine = Machine(model=self, states=states, transitions=transitions, initial=CreateSpecState.DISPATCHING.value, auto_transitions=False)
+
+    def get_final_work_state(self) -> str:
+        return CreateSpecState.DRAFTING_SPEC.value
+
+
+class CreateTasksTool(BaseWorkflowTool):
+    def __init__(self, task_id: str):
+        super().__init__(task_id, tool_name=ToolName.CREATE_TASKS)
+        self.artifact_map = {
+            CreateTasksState.DRAFTING_TASKS: TaskCreationArtifact,  # Only one artifact
+        }
+
+        source_state = CreateTasksState.DRAFTING_TASKS.value
+
+        states = [
+            CreateTasksState.DISPATCHING.value,
+            source_state,
+            f"{source_state}_awaiting_ai_review",
+            f"{source_state}_awaiting_human_review",
+            CreateTasksState.VERIFIED.value,
+        ]
+
+        transitions = [
+            {"trigger": "dispatch", "source": CreateTasksState.DISPATCHING.value, "dest": source_state},
+            *self._create_review_transitions(source_state=source_state, success_destination_state=CreateTasksState.VERIFIED.value),
+        ]
+        self.machine = Machine(model=self, states=states, transitions=transitions, initial=CreateTasksState.DISPATCHING.value, auto_transitions=False)
+
+    def get_final_work_state(self) -> str:
+        return CreateTasksState.DRAFTING_TASKS.value
+
 ``````
 ------ src/alfred/lib/artifact_manager.py ------
 ``````
@@ -812,7 +1107,7 @@ class ArtifactManager:
         self._get_archive_dir(task_id).mkdir(exist_ok=True)
         logger.info(f"Created workspace for task {task_id} at {task_dir}")
 
-    def append_to_scratchpad(self, task_id: str, state_name: str = None, artifact: BaseModel = None, persona_config = None, content: str = None):
+    def append_to_scratchpad(self, task_id: str, state_name: str = None, artifact: BaseModel = None, content: str = None):
         """Renders a structured artifact to markdown and appends it to the scratchpad."""
         # Ensure the task workspace exists (in case of resumed tasks)
         task_dir = self._get_task_dir(task_id)
@@ -863,8 +1158,7 @@ class ArtifactManager:
                 "task": load_task(task_id),  # Load task for context
                 "state_name": state_name,  # Keep for technical reference if needed
                 "state_description": state_descriptions.get(state_name, state_name),
-                "artifact": artifact,
-                "persona": persona_config
+                "artifact": artifact
             }
             rendered_content = template.render(context)
 
@@ -874,7 +1168,7 @@ class ArtifactManager:
             f.write(rendered_content)
         logger.info(f"Appended rendered artifact '{template_name_snake}' to scratchpad for task {task_id}")
 
-    def archive_scratchpad(self, task_id: str, persona_name: str, workflow_step: int):
+    def archive_scratchpad(self, task_id: str, tool_name: str, workflow_step: int):
         """Moves the current scratchpad to a versioned file in the archive and creates a new empty scratchpad."""
         scratchpad_path = self._get_scratchpad_path(task_id)
         if not scratchpad_path.exists():
@@ -882,12 +1176,13 @@ class ArtifactManager:
             return
 
         archive_dir = self._get_archive_dir(task_id)
-        archive_filename = f"{workflow_step:02d}-{persona_name.replace(' ', '_')}_scratchpad.md"
+        # Clean filename without _scratchpad suffix
+        archive_filename = f"{workflow_step:02d}-{tool_name.replace('_', '-')}.md"
         archive_path = archive_dir / archive_filename
 
         scratchpad_path.rename(archive_path)
         scratchpad_path.touch()
-        logger.info(f"Archived scratchpad for persona '{persona_name}' to {archive_path}")
+        logger.info(f"Archived scratchpad for tool '{tool_name}' to {archive_path}")
 
     def write_json_artifact(self, task_id: str, filename: str, data: dict):
         """Writes a machine-readable JSON file to the archive."""
@@ -907,6 +1202,28 @@ class ArtifactManager:
                 return json.load(f)
         except (OSError, json.JSONDecodeError):
             return None
+    
+    def archive_final_artifact(self, task_id: str, tool_name: str, artifact_data: dict):
+        """Saves the final, certified artifact to a permanent location in the archive."""
+        logger.info(f"ARCHIVING final artifact from tool '{tool_name}' for task '{task_id}'.")
+        
+        # Special handling for plan_task - save execution plan as JSON
+        if tool_name == "plan_task" and isinstance(artifact_data, dict):
+            # If it's the ExecutionPlanArtifact, save it as planning_execution_plan.json
+            if "subtasks" in artifact_data:
+                self.write_json_artifact(task_id, "planning_execution_plan.json", artifact_data)
+            else:
+                # For other artifacts, use a generic name
+                filename = f"{tool_name}_final_artifact.json"
+                self.write_json_artifact(task_id, filename, artifact_data)
+        elif hasattr(artifact_data, 'model_dump'):
+            # Handle Pydantic models
+            filename = f"{tool_name}_final_artifact.json"
+            self.write_json_artifact(task_id, filename, artifact_data.model_dump())
+        else:
+            # Generic handling
+            filename = f"{tool_name}_final_artifact.json"
+            self.write_json_artifact(task_id, filename, artifact_data)
 
 
 artifact_manager = ArtifactManager()
@@ -976,11 +1293,43 @@ def cleanup_task_logging(task_id: str) -> None:
 ``````
 # src/alfred/lib/md_parser.py
 import re
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional
 
 
 class MarkdownTaskParser:
     """Parses a task definition from a markdown string."""
+    
+    def validate_format(self, markdown_content: str) -> Tuple[bool, Optional[str]]:
+        """Validates the markdown format and returns (is_valid, error_message)."""
+        if not markdown_content.strip():
+            return False, "Task file is empty"
+            
+        lines = markdown_content.split('\n')
+        if not lines:
+            return False, "Task file is empty"
+            
+        # Check first line format
+        first_line = lines[0].strip()
+        if not re.match(r"^#\s*TASK:\s*\S+", first_line):
+            return False, f"First line must be '# TASK: <task_id>', found: '{first_line}'"
+            
+        # Check for required sections
+        required_sections = ['Title', 'Context', 'Implementation Details', 'Acceptance Criteria']
+        found_sections = []
+        for line in lines:
+            if line.strip().startswith('##'):
+                section = line.strip().replace('##', '').strip()
+                found_sections.append(section)
+                
+        missing_sections = []
+        for required in required_sections:
+            if not any(required.lower() in found.lower() for found in found_sections):
+                missing_sections.append(f"## {required}")
+                
+        if missing_sections:
+            return False, f"Missing required sections: {', '.join(missing_sections)}"
+            
+        return True, None
 
     def parse(self, markdown_content: str) -> Dict:
         """Parses the markdown content into a dictionary."""
@@ -1054,37 +1403,121 @@ from pathlib import Path
 from typing import Optional
 
 from src.alfred.models.schemas import Task
-from src.alfred.state.manager import state_manager
-
-from .md_parser import MarkdownTaskParser
+from src.alfred.lib.logger import get_logger
 from src.alfred.config.settings import settings
+
+logger = get_logger(__name__)
 
 
 def load_task(task_id: str, root_dir: Optional[Path] = None) -> Task | None:
     """
-    Loads a Task by parsing its .md file and merging with its unified state.
+    Loads a Task using the configured task provider.
+
+    This function now uses the task provider factory to ensure consistent
+    task loading across the application, regardless of the underlying
+    data source (local files, Jira, Linear, etc.).
 
     Args:
         task_id: The ID of the task to load
-        root_dir: Optional root directory to use instead of default settings
+        root_dir: Optional root directory (preserved for backward compatibility,
+                 but may be ignored by non-local providers)
+                 
+    Returns:
+        Task object if found, None otherwise
     """
-    alfred_dir = (
-        root_dir / settings.alfred_dir_name if root_dir else settings.alfred_dir
-    )
-    task_md_path = alfred_dir / "tasks" / f"{task_id}.md"
-
-    if not task_md_path.exists():
+    try:
+        # Use the task provider factory to get the configured provider
+        from src.alfred.task_providers.factory import get_provider
+        
+        provider = get_provider()
+        
+        # Note: The root_dir parameter is preserved for backward compatibility
+        # but is only relevant for local providers. Other providers (Jira, Linear)
+        # will ignore this parameter.
+        if root_dir:
+            logger.warning(
+                f"root_dir parameter provided to load_task, but may be ignored by "
+                f"non-local task providers. Consider removing this parameter."
+            )
+        
+        return provider.get_task(task_id)
+        
+    except Exception as e:
+        logger.error(f"Failed to load task {task_id}: {e}")
         return None
 
-    parser = MarkdownTaskParser()
-    task_data = parser.parse(task_md_path.read_text())
-    task_model = Task(**task_data)
 
-    # Load the dynamic state from the unified state file
-    unified_state = state_manager.load_or_create_task_state(task_id)
-    task_model.task_status = unified_state.task_status
+def does_task_exist_locally(task_id: str) -> bool:
+    """
+    Check if a task exists in the local cache.
+    
+    Args:
+        task_id: The task identifier
+        
+    Returns:
+        True if the task file exists locally, False otherwise
+    """
+    task_file = settings.alfred_dir / "tasks" / f"{task_id}.md"
+    return task_file.exists()
 
-    return task_model
+
+def write_task_to_markdown(task: Task) -> None:
+    """
+    Write a Task object to markdown format in the local cache.
+    
+    Args:
+        task: The Task object to write
+    """
+    tasks_dir = settings.alfred_dir / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Build markdown content
+    content_parts = [f"# TASK: {task.task_id}"]
+    
+    if task.title:
+        content_parts.append(f"\n## Title\n{task.title}")
+    
+    if hasattr(task, 'priority') and task.priority:
+        content_parts.append(f"\n## Priority\n{task.priority}")
+    
+    if hasattr(task, 'summary') and task.summary:
+        content_parts.append(f"\n## Summary\n{task.summary}")
+    
+    if hasattr(task, 'description') and task.description:
+        content_parts.append(f"\n## Description\n{task.description}")
+        
+    if hasattr(task, 'context') and task.context:
+        content_parts.append(f"\n## Context\n{task.context}")
+    
+    if task.acceptance_criteria:
+        content_parts.append("\n## Acceptance Criteria")
+        for criterion in task.acceptance_criteria:
+            content_parts.append(f"- {criterion}")
+    
+    if hasattr(task, 'implementation_details') and task.implementation_details:
+        content_parts.append(f"\n## Implementation Details\n{task.implementation_details}")
+    
+    if hasattr(task, 'dev_notes') and task.dev_notes:
+        content_parts.append(f"\n## Dev Notes\n{task.dev_notes}")
+    
+    # Write to file
+    task_file = tasks_dir / f"{task.task_id}.md"
+    task_file.write_text("\n".join(content_parts), encoding="utf-8")
+    
+    logger.info(f"Wrote task {task.task_id} to {task_file}")
+
+
+def get_local_task_path(task_id: str) -> Path:
+    """
+    Get the path to a local task file.
+    
+    Args:
+        task_id: The task identifier
+        
+    Returns:
+        Path to the task markdown file
+    """
+    return settings.alfred_dir / "tasks" / f"{task_id}.md"
 ``````
 ------ src/alfred/lib/transaction_logger.py ------
 ``````
@@ -1193,61 +1626,118 @@ class AlfredConfig(BaseModel):
 ``````
 # src/alfred/models/config.py
 """
-Pydantic models for parsing persona configurations, including the
-new dual-mode (Human/AI) interaction structure.
+Pydantic models for parsing workflow configurations.
 """
+
 from typing import Dict, List
 
 from pydantic import BaseModel, Field
 
 
-class HumanInteraction(BaseModel):
-    """Configuration for human-facing communication."""
-
-    greeting: str = Field(description="The persona's introductory greeting.")
-    communication_style: str = Field(
-        description="A description of the persona's conversational style and tone with humans."
-    )
-
-
-class AIInteraction(BaseModel):
-    """Configuration for AI agent directives."""
-
-    style: str = Field(
-        default="precise, technical, directive",
-        description="The persona's communication style when issuing instructions to the AI agent.",
-    )
-    analysis_patterns: Dict[str, List[str]] = Field(
-        default_factory=dict,
-        description="A dictionary mapping a tool's state to a list of specific analysis commands or patterns for the AI.",
-    )
-    validation_criteria: Dict[str, List[str]] = Field(
-        default_factory=dict,
-        description="A dictionary mapping a tool's state to a list of specific validation criteria for AI self-review.",
-    )
-
-
-class PersonaConfig(BaseModel):
+class WorkflowConfig(BaseModel):
     """
-    Represents the validated configuration of a single persona.yml file,
-    supporting dual-mode communication.
+    Represents the validated configuration of a workflow.
     """
 
-    name: str = Field(description="The persona's first name, e.g., 'Alex'.")
-    title: str = Field(description="The persona's job title, e.g., 'Solution Architect'.")
-    thinking_methodology: List[str] = Field(
-        default_factory=list,
-        description="A list of core principles that guide the persona's reasoning.",
-    )
-    human: HumanInteraction
-    ai: AIInteraction
+    # Add any workflow-specific configuration here if needed
+    pass
+
+``````
+------ src/alfred/models/engineering_spec.py ------
+``````
+# src/alfred/models/engineering_spec.py
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
+
+
+class ReviewerStatus(BaseModel):
+    reviewer: str
+    status: str
+    notes: Optional[str] = None
+
+
+class SuccessMetrics(BaseModel):
+    product_perspective: str
+    engineering_perspective: str
+
+
+class Requirement(BaseModel):
+    story: str  # "As a user, I want to..."
+
+
+class ApiDetails(BaseModel):
+    name_and_method: str
+    description: str
+
+
+class DataStorageField(BaseModel):
+    field_name: str
+    is_required: bool
+    data_type: str
+    description: str
+    example: str
+
+
+class ABTestTreatment(BaseModel):
+    treatment_name: str
+    description: str
+
+
+class ABTest(BaseModel):
+    trial_name: str
+    control: str
+    treatments: List[ABTestTreatment]
+
+
+class EngineeringSpec(BaseModel):
+    project_name: str
+    overview: str
+    review_status: List[ReviewerStatus] = Field(default_factory=list)
+    definition_of_success: SuccessMetrics
+    glossary: Optional[Dict[str, str]] = Field(default_factory=dict)
+
+    functional_requirements: List[Requirement] = Field(default_factory=list)
+    non_functional_requirements: List[str] = Field(default_factory=list)
+    assumptions: List[str] = Field(default_factory=list)
+
+    # Design Section
+    major_design_considerations: str
+    architecture_diagrams: Optional[str] = None  # Text description, link to diagram
+    api_changes: List[ApiDetails] = Field(default_factory=list)
+    api_usage_estimates: Optional[str] = None
+    event_flows: Optional[str] = None
+    frontend_updates: Optional[str] = None
+    data_storage: List[DataStorageField] = Field(default_factory=list)
+    auth_details: Optional[str] = None
+    resiliency_plan: Optional[str] = None
+    dependencies: List[str] = Field(default_factory=list)
+    dependents: List[str] = Field(default_factory=list)
+
+    # Observability Section
+    failure_scenarios: str
+    logging_plan: str
+    metrics_plan: str
+    monitoring_plan: str
+
+    # Testing Section
+    testing_approach: str
+    new_technologies_considered: Optional[str] = None
+
+    # Rollout Section
+    rollout_plan: str
+    release_milestones: str
+    ab_testing: List[ABTest] = Field(default_factory=list)
+
+    alternatives_considered: Optional[str] = None
+    misc_considerations: Optional[str] = None
+
 ``````
 ------ src/alfred/models/planning_artifacts.py ------
 ``````
 # src/alfred/models/planning_artifacts.py
 from pydantic import BaseModel, Field
 from typing import List, Dict, Literal
-from .schemas import Subtask
+from .schemas import Subtask, Task
 
 
 class ContextAnalysisArtifact(BaseModel):
@@ -1290,6 +1780,38 @@ class BranchCreationArtifact(BaseModel):
     success: bool
     details: str
 
+
+class ImplementationManifestArtifact(BaseModel):
+    summary: str
+    completed_subtasks: List[str]
+    testing_notes: str
+
+
+class ReviewArtifact(BaseModel):
+    summary: str
+    approved: bool
+    feedback: List[str]
+
+
+class TestResultArtifact(BaseModel):
+    command: str
+    exit_code: int
+    output: str
+
+
+class FinalizeArtifact(BaseModel):
+    commit_hash: str
+    pr_url: str
+
+
+# Pre-planning Phase Artifacts
+class PRDInputArtifact(BaseModel):
+    prd_content: str = Field(description="The raw text or content of the Product Requirements Document.")
+
+
+class TaskCreationArtifact(BaseModel):
+    tasks: List[Task] = Field(description="A list of all generated Task objects.")
+
 ``````
 ------ src/alfred/models/schemas.py ------
 ``````
@@ -1316,6 +1838,10 @@ class TaskStatus(str, Enum):
     """Enumeration for the high-level status of a Task."""
 
     NEW = "new"
+    CREATING_SPEC = "creating_spec"
+    SPEC_COMPLETED = "spec_completed"
+    CREATING_TASKS = "creating_tasks"
+    TASKS_CREATED = "tasks_created"
     PLANNING = "planning"
     READY_FOR_DEVELOPMENT = "ready_for_development"
     IN_DEVELOPMENT = "in_development"
@@ -1379,6 +1905,7 @@ class Subtask(BaseModel):
 Pydantic models for Alfred's state management.
 This module defines the single source of truth for task state.
 """
+
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -1398,21 +1925,22 @@ class WorkflowState(BaseModel):
     tool_name: str
     current_state: str  # String representation of the state enum
     context_store: Dict[str, Any] = Field(default_factory=dict)
-    persona_name: str
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
-class UnifiedTaskState(BaseModel):
+class TaskState(BaseModel):
     """
-    The single, unified state object for a task.
-    This is the schema for the new `task_state.json` file.
+    The single state object for a task.
+    This is the schema for the `task_state.json` file.
     """
 
     task_id: str
     task_status: TaskStatus = Field(default=TaskStatus.NEW)
     active_tool_state: Optional[WorkflowState] = Field(default=None)
+    completed_tool_outputs: Dict[str, Any] = Field(default_factory=dict)
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
 ``````
 ------ src/alfred/orchestration/__init__.py ------
 ``````
@@ -1424,6 +1952,7 @@ class UnifiedTaskState(BaseModel):
 """
 A simplified, central session manager for Alfred's active workflow tools.
 """
+
 from typing import Dict
 from src.alfred.config import ConfigManager
 from src.alfred.config.settings import settings
@@ -1432,12 +1961,14 @@ from src.alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class Orchestrator:
     """
     Singleton class to manage active tool sessions.
     This class holds a dictionary of active tool instances, keyed by task_id.
     It no longer manages workflows or personas directly.
     """
+
     _instance = None
 
     def __new__(cls):
@@ -1454,220 +1985,9 @@ class Orchestrator:
         self._initialized = True
         logger.info("Orchestrator initialized as a simple tool session manager.")
 
+
 # Global singleton instance
 orchestrator = Orchestrator()
-``````
------- src/alfred/orchestration/persona_loader.py ------
-``````
-# src/alfred/orchestration/persona_loader.py
-"""
-A simple utility to load a single persona configuration from a YAML file.
-"""
-import yaml
-from pydantic import ValidationError
-from src.alfred.config.settings import settings
-from src.alfred.lib.logger import get_logger
-from src.alfred.models.config import PersonaConfig # Uses the new, simplified model
-
-logger = get_logger(__name__)
-
-def load_persona(persona_name: str) -> PersonaConfig:
-    """
-    Loads and validates a single persona YAML file.
-
-    Args:
-        persona_name: Name of the persona file (without .yml extension).
-
-    Returns:
-        A validated PersonaConfig object.
-
-    Raises:
-        FileNotFoundError: If the persona file doesn't exist.
-        ValueError: If the persona file is invalid.
-    """
-    # First, check for a user-customized persona
-    user_persona_file = settings.alfred_dir / "personas" / f"{persona_name}.yml"
-    
-    # Fallback to the packaged persona if user one doesn't exist
-    persona_file = user_persona_file if user_persona_file.exists() else settings.packaged_personas_dir / f"{persona_name}.yml"
-
-    if not persona_file.exists():
-        raise FileNotFoundError(f"Persona config '{persona_name}.yml' not found in user or package directories.")
-
-    try:
-        with persona_file.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-            if not data:
-                raise ValueError(f"Persona file '{persona_file.name}' is empty.")
-            
-            config = PersonaConfig(**data)
-            return config
-    except yaml.YAMLError as e:
-        logger.error(f"Failed to parse YAML for persona '{persona_name}': {e}")
-        raise ValueError(f"Invalid YAML in '{persona_name}.yml'.") from e
-    except ValidationError as e:
-        logger.error(f"Validation failed for persona '{persona_name}': {e}")
-        raise ValueError(f"Invalid structure in '{persona_name}.yml'.") from e
-``````
------- src/alfred/personas/__init__.py ------
-``````
-
-``````
------- src/alfred/personas/onboarding.yml ------
-``````
-name: Alfred
-title: Personal Butler & Project Lead
-thinking_methodology:
-- Methodical and thorough in approach
-- Safety-first mindset
-- Clear communication of requirements
-human:
-  greeting: Good day. I am Alfred, at your service. Before we proceed with the task, we must ensure our workspace is in perfect
-    order. Let's begin.
-  communication_style: Polite, professional, and precise. I guide the user through necessary setup procedures with patience
-    and clarity, ensuring nothing is overlooked.
-ai:
-  style: directive, procedural, safe
-  analysis_patterns:
-    initialized:
-    - Execute systematic Git repository analysis.
-    - 'Command 1: `git status --porcelain` (to check for uncommitted changes).'
-    - 'Command 2: `git rev-parse --abbrev-ref HEAD` (to get the current branch name).'
-    branch_created:
-    - Execute Git branch creation.
-    - 'Command: `git checkout -b feature/{{ task.task_id }}` (or `git checkout` if branch exists).'
-    git_status_checked:
-    - Analyze git status results for proper workflow continuation.
-    - Determine if a new branch creation is appropriate based on current branch and changes.
-    awaiting_ai_review:
-    - Review submitted artifact for technical accuracy.
-    - Verify all required fields are present and properly formatted.
-    - Check that Git operations align with best practices.
-    awaiting_human_review:
-    - Present artifact clearly for human validation.
-    - Ensure human understands the implications of the proposed action.
-    completed:
-    - Confirm all workspace setup steps have been executed.
-    - Summarize the current state and readiness for task work.
-    - Provide clear next steps for the user.
-  validation_criteria:
-    initialized:
-    - Has git status been checked successfully?
-    - Is the repository in a valid state for task work?
-    - Are all required tools and permissions available?
-    git_status_checked:
-    - Is `is_clean` field present and a boolean?
-    - Is `current_branch` field present and a non-empty string?
-    branch_created:
-    - Is `success` field present and a boolean?
-    - Is `details` field present and a non-empty string?
-    awaiting_ai_review:
-    - Are all artifact fields technically valid?
-    - Does the artifact represent a successful operation?
-    awaiting_human_review:
-    - Is the artifact presentation clear and understandable?
-    - Are the next steps clearly communicated?
-    completed:
-    - Have all setup steps been completed successfully?
-    - Is the workspace ready for task implementation?
-    - Has the user been properly informed of the next steps?
-
-``````
------- src/alfred/personas/planning.yml ------
-``````
-name: Alex
-title: Solution Architect
-thinking_methodology:
-- Always start with the business goal and work backwards to the technical solution.
-- Favor simplicity and clarity over unnecessary complexity.
-- Ensure every part of the plan is testable and verifiable.
-human:
-  greeting: Hey there! I'm Alex. I'll be your solution architect for this task. My job is to help you create a rock-solid
-    technical plan before we write any code. Let's get the ball rolling.
-  communication_style: Professional yet approachable. I explain complex technical concepts in simple terms. I am proactive
-    in identifying risks and dependencies. I focus on the 'why' behind the architecture, not just the 'what'.
-ai:
-  style: analytical, structured, exhaustive
-  analysis_patterns:
-    contextualize:
-    - Perform deep codebase analysis starting from the project root.
-    - Identify all files and code blocks relevant to the provided Task Context.
-    - Compare the task goal with code analysis to identify ambiguities.
-    strategize:
-    - Analyze architectural approaches with trade-off analysis.
-    - Map out state management, data flow, and integration points.
-    - Generate multiple strategy options with pros/cons.
-    design:
-    - Generate detailed interface specifications for all components.
-    - Create exhaustive mapping of function signatures and parameters.
-    - Document all error states and edge cases.
-    generate_subtasks:
-    - Map subtasks to specific files and line ranges.
-    - Include verification criteria for each subtask.
-    - Order subtasks by dependency graph.
-    review_context:
-    - Validate context analysis completeness.
-    - Ensure all ambiguities are properly identified.
-    review_strategy:
-    - Verify strategy aligns with business goals.
-    - Check for technical feasibility and risks.
-    review_design:
-    - Validate design completeness and consistency.
-    - Ensure all components are properly specified.
-    review_plan:
-    - Verify subtasks cover all requirements.
-    - Check dependency ordering and completeness.
-    awaiting_ai_review:
-    - Perform comprehensive artifact validation.
-    - Check technical accuracy and completeness.
-    - Verify alignment with task requirements.
-    awaiting_human_review:
-    - Present complex technical details clearly.
-    - Highlight key decisions for human validation.
-    - Ensure business alignment is evident.
-    verified:
-    - Confirm all planning phases have been completed successfully.
-    - Validate the execution plan is ready for implementation.
-    - Summarize key decisions and next steps.
-  validation_criteria:
-    contextualize:
-    - Is `context_summary` a comprehensive summary of existing code and proposed integration?
-    - Is `affected_files` a non-empty list of relevant file paths?
-    - Are `questions_for_developer` specific, actionable, and designed to resolve ambiguity?
-    strategize:
-    - Is `goal_summary` clear and specific about the task objective?
-    - Is `technical_approach` detailed with justifications?
-    - Are `risks` realistic and mitigation strategies provided?
-    design:
-    - Are `components` fully specified with clear responsibilities?
-    - Is `data_flow` complete with all state transitions?
-    - Are `integration_points` mapped to existing code?
-    generate_subtasks:
-    - Does each subtask have clear acceptance criteria?
-    - Are subtasks atomic and independently verifiable?
-    - Is the dependency order technically correct?
-    review_context:
-    - Is the context analysis thorough and accurate?
-    - Are identified ambiguities genuine concerns?
-    review_strategy:
-    - Is the strategy technically sound?
-    - Are risks properly identified and mitigated?
-    review_design:
-    - Is the design implementable as specified?
-    - Are all edge cases considered?
-    review_plan:
-    - Is the execution plan complete?
-    - Can each subtask be independently verified?
-    awaiting_ai_review:
-    - Does the artifact meet all technical requirements?
-    - Is the artifact internally consistent?
-    awaiting_human_review:
-    - Is the technical content accessible to the human reviewer?
-    - Are business implications clearly stated?
-    verified:
-    - Has the complete planning process been executed successfully?
-    - Is the execution plan comprehensive and ready for implementation?
-    - Are all artifacts properly validated and approved?
 
 ``````
 ------ src/alfred/server.py ------
@@ -1678,33 +1998,79 @@ MCP Server for Alfred
 This version preserves the original comprehensive docstrings while maintaining
 the clean V2 Alfred architecture.
 """
+
+import functools
 import inspect
+from typing import Callable
 
 from fastmcp import FastMCP
 
 from src.alfred.config.settings import settings
 from src.alfred.lib.transaction_logger import transaction_logger
 from src.alfred.models.schemas import ToolResponse
+from src.alfred.tools.approve_and_advance import approve_and_advance_impl
+from src.alfred.tools.create_spec import create_spec_impl
+from src.alfred.tools.create_tasks import create_tasks_impl
+from src.alfred.tools.finalize_task import finalize_task_impl
+from src.alfred.tools.get_next_task import get_next_task_impl
+from src.alfred.tools.implement_task import implement_task_impl
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
 from src.alfred.tools.plan_task import plan_task_impl
 from src.alfred.tools.progress import mark_subtask_complete_impl
 from src.alfred.tools.provide_review import provide_review_impl
-from src.alfred.tools.start_task import start_task_impl
+from src.alfred.tools.review_task import review_task_impl
 from src.alfred.tools.submit_work import submit_work_impl
+from src.alfred.tools.test_task import test_task_impl
+from src.alfred.tools.work_on import work_on_impl
 
 app = FastMCP(settings.server_name)
 
 
+def log_tool_transaction(impl_func: Callable) -> Callable:
+    """Decorator factory that creates a logging wrapper for tool functions.
+
+    This decorator expects the implementation function to be passed as an argument.
+    It handles both sync and async implementation functions.
+    """
+
+    def decorator(tool_func: Callable) -> Callable:
+        @functools.wraps(tool_func)
+        async def wrapper(*args, **kwargs) -> ToolResponse:
+            tool_name = tool_func.__name__
+
+            # Extract task_id from kwargs if present
+            task_id = kwargs.get("task_id", None)
+
+            # Build request data from kwargs
+            request_data = {k: v for k, v in kwargs.items() if v is not None}
+
+            # Call the implementation function (handle both async and sync)
+            if inspect.iscoroutinefunction(impl_func):
+                response = await impl_func(**kwargs)
+            else:
+                response = impl_func(**kwargs)
+
+            # Log the transaction
+            transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+
+            return response
+
+        return wrapper
+
+    return decorator
+
+
 @app.tool()
+@log_tool_transaction(initialize_project_impl)
 async def initialize_project(provider: str | None = None) -> ToolResponse:
     """
-    Initializes the project workspace for Alfred by creating the .alfred directory with default configurations for personas and workflows.
+    Initializes the project workspace for Alfred by creating the .alfred directory with default configurations for workflows.
 
     - **Primary Function**: Sets up a new project for use with the Alfred workflow system.
     - **Key Features**:
       - Interactive provider selection when no provider is specified.
       - Creates the necessary `.alfred` directory structure.
-      - Deploys default `workflow.yml` and persona configuration files.
+      - Deploys default `workflow.yml` configuration file.
       - Copies default prompt templates for user customization.
       - Configures the selected task provider (Jira, Linear, or Local).
     - **Use this tool when**: You are starting a brand new project and need to set up the Alfred environment.
@@ -1716,44 +2082,137 @@ async def initialize_project(provider: str | None = None) -> ToolResponse:
     - **provider** `[string]` (optional): The task source provider to configure. Valid values: "jira", "linear", or "local".
       If not provided, the tool will return available choices for interactive selection.
     """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"provider": provider} if provider else {}
-    response = initialize_project_impl(provider)
-    transaction_logger.log(
-        task_id=None, tool_name=tool_name, request_data=request_data, response=response
-    )
-    return response
+    return initialize_project_impl(provider)
 
 
 @app.tool()
-async def start_task(task_id: str) -> ToolResponse:
+@log_tool_transaction(get_next_task_impl)
+async def get_next_task() -> ToolResponse:
     """
-    Initializes the workspace for a specific task, making it ready for planning.
+    Intelligently determines and recommends the next task to work on.
 
-    This is the first command to run for any given task. It sets up the necessary
-    directory structure and state files. If the task is new, its status will be
-    set to 'planning'. If the task already exists, it simply ensures the workspace
-    is ready for the next command.
+    This tool analyzes all available tasks and their current states to provide
+    an intelligent recommendation for what to work on next. It prioritizes based on:
 
-    Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01").
+    - Tasks already in progress (to avoid context switching)
+    - Tasks ready for immediate action
+    - Task dependencies and blockers
+    - Task age and priority
+
+    The recommendation includes reasoning for why this task was chosen and
+    alternatives if you prefer to work on something else.
 
     Returns:
-        ToolResponse: Contains success/error status and a prompt guiding the user to call 'plan_task'.
+        ToolResponse: Contains the recommended task with:
+        - task_id: The recommended task identifier
+        - title: Task title for context
+        - status: Current task status
+        - reasoning: Why this task was recommended
+        - alternatives: Other tasks you could work on
+        - next_prompt: Suggested command to start working
+
+    Example:
+        get_next_task() -> Recommends "AL-42" with reasoning and alternatives
     """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id}
-    response = start_task_impl(task_id)
-    transaction_logger.log(
-        task_id=task_id,
-        tool_name=tool_name,
-        request_data=request_data,
-        response=response,
-    )
-    return response
+    pass  # Implementation handled by decorator
 
 
 @app.tool()
+@log_tool_transaction(work_on_impl)
+async def work_on_task(task_id: str) -> ToolResponse:
+    """
+    Primary entry point for working on any task - the Smart Dispatch model.
+
+    This tool intelligently routes users to the appropriate specialized tool
+    based on the current task status. It examines the task state and provides
+    clear guidance on which tool to use next.
+
+    Task Status Routing:
+    - NEW: Routes to plan_task for creating execution plan
+    - PLANNING: Routes to plan_task to continue planning
+    - READY_FOR_DEVELOPMENT: Routes to implement_task to start implementation
+    - IN_PROGRESS: Routes to implement_task to continue implementation
+    - COMPLETED: Informs user the task is complete
+
+    Args:
+        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+
+    Returns:
+        ToolResponse: Contains routing guidance to the appropriate specialized tool
+
+    Example:
+        work_on_task("TS-01") -> Guides to plan_task if task is new
+        work_on_task("TS-02") -> Guides to implement_task if planning is complete
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(create_spec_impl)
+async def create_spec(task_id: str, prd_content: str) -> ToolResponse:
+    """
+    Creates a technical specification from a Product Requirements Document (PRD).
+
+    This is the first tool in the "idea-to-code" pipeline. It transforms a PRD
+    into a structured Technical Specification that serves as the foundation for
+    engineering planning and implementation.
+
+    The tool guides through creating a comprehensive spec including:
+    - Background and business context
+    - Technical goals and non-goals
+    - Proposed architecture
+    - System boundaries and APIs
+    - Data model changes
+    - Security considerations
+    - Open questions
+
+    Args:
+        task_id (str): The unique identifier for the epic/feature (e.g., "EPIC-01")
+        prd_content (str): The raw PRD content to analyze and transform
+
+    Returns:
+        ToolResponse: Contains the first prompt to guide spec creation
+
+    Example:
+        create_spec("EPIC-01", "Build a notification system...") -> Guides spec creation
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(create_tasks_impl)
+async def create_tasks(task_id: str) -> ToolResponse:
+    """
+    Creates a list of actionable tasks from a Technical Specification.
+
+    This is the second tool in the "idea-to-code" pipeline. It takes a completed
+    Technical Specification and breaks it down into individual Task objects that
+    can be tracked, assigned, and implemented independently.
+
+    The tool guides through creating tasks that are:
+    - Atomic and focused
+    - Properly ordered with dependencies
+    - Sized appropriately (1-3 days of work)
+    - Complete with acceptance criteria
+
+    Args:
+        task_id (str): The unique identifier for the epic/feature with a completed spec
+
+    Returns:
+        ToolResponse: Contains the first prompt to guide task breakdown
+
+    Preconditions:
+        - Technical specification must be completed (via create_spec)
+        - Task status must be "spec_completed"
+
+    Example:
+        create_tasks("EPIC-01") -> Guides creation of task list from spec
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(plan_task_impl)
 async def plan_task(task_id: str) -> ToolResponse:
     """
     Initiates the detailed technical planning for a specific task.
@@ -1786,19 +2245,11 @@ async def plan_task(task_id: str) -> ToolResponse:
         - Planning tool instance registered and active
         - First planning prompt returned for contextualization phase
     """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id}
-    response = await plan_task_impl(task_id)
-    transaction_logger.log(
-        task_id=task_id,
-        tool_name=tool_name,
-        request_data=request_data,
-        response=response,
-    )
-    return response
+    pass  # Implementation handled by decorator
 
 
 @app.tool()
+@log_tool_transaction(submit_work_impl)
 async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     """
     Submits a structured work artifact for the current step of a workflow tool.
@@ -1814,19 +2265,11 @@ async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     Returns:
         ToolResponse: Contains success/error status and the next prompt
     """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "artifact": artifact}
-    response = submit_work_impl(task_id, artifact)
-    transaction_logger.log(
-        task_id=task_id,
-        tool_name=tool_name,
-        request_data=request_data,
-        response=response,
-    )
-    return response
+    pass  # Implementation handled by decorator
 
 
 @app.tool()
+@log_tool_transaction(provide_review_impl)
 async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
     """
     Provides feedback on a work artifact during a review step.
@@ -1843,23 +2286,11 @@ async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = 
     Returns:
         ToolResponse: Contains success/error status and the next prompt
     """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {
-        "task_id": task_id,
-        "is_approved": is_approved,
-        "feedback_notes": feedback_notes,
-    }
-    response = provide_review_impl(task_id, is_approved, feedback_notes)
-    transaction_logger.log(
-        task_id=task_id,
-        tool_name=tool_name,
-        request_data=request_data,
-        response=response,
-    )
-    return response
+    pass  # Implementation handled by decorator
 
 
 @app.tool()
+@log_tool_transaction(mark_subtask_complete_impl)
 async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
     """
     Marks a specific subtask as complete during the implementation phase.
@@ -1887,20 +2318,117 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
         mark_subtask_complete("TS-01", "subtask-1")
         # Returns progress update showing 1/5 subtasks complete (20%)
     """
-    tool_name = inspect.currentframe().f_code.co_name
-    request_data = {"task_id": task_id, "subtask_id": subtask_id}
-    response = mark_subtask_complete_impl(task_id, subtask_id)
-    transaction_logger.log(
-        task_id=task_id,
-        tool_name=tool_name,
-        request_data=request_data,
-        response=response,
-    )
-    return response
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(implement_task_impl)
+async def implement_task(task_id: str) -> ToolResponse:
+    """
+    Executes the implementation phase for a task that has completed planning.
+
+    This tool is used after the planning phase is complete and the task status
+    is READY_FOR_DEVELOPMENT. It guides the implementation of the execution plan
+    created during the planning phase.
+
+    Prerequisites:
+    - Task must have status READY_FOR_DEVELOPMENT
+    - Execution plan must exist from completed planning phase
+
+    The tool manages:
+    - Loading the execution plan from the planning phase
+    - Tracking progress on individual subtasks
+    - Maintaining implementation state across sessions
+
+    Args:
+        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+
+    Returns:
+        ToolResponse: Contains success/error status and implementation guidance
+
+    Example:
+        implement_task("TS-01") -> Starts implementation of planned task
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(review_task_impl)
+async def review_task(task_id: str) -> ToolResponse:
+    """
+    Initiates the code review phase for a task that has completed implementation.
+
+    This tool manages the review process where the implementation is checked
+    against requirements, best practices, and quality standards.
+
+    Args:
+        task_id (str): The unique identifier for the task
+
+    Returns:
+        ToolResponse: Contains success/error status and review guidance
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(test_task_impl)
+async def test_task(task_id: str) -> ToolResponse:
+    """
+    Initiates the testing phase for a task that has passed code review.
+
+    This tool manages the test execution process including unit tests,
+    integration tests, and verification of the implementation.
+
+    Args:
+        task_id (str): The unique identifier for the task
+
+    Returns:
+        ToolResponse: Contains success/error status and test results
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(finalize_task_impl)
+async def finalize_task(task_id: str) -> ToolResponse:
+    """
+    Completes the task by creating a commit and pull request.
+
+    This tool manages the finalization process including:
+    - Creating a git commit with changes
+    - Creating a pull request
+    - Updating task status to completed
+
+    Args:
+        task_id (str): The unique identifier for the task
+
+    Returns:
+        ToolResponse: Contains success/error status with PR details
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(approve_and_advance_impl)
+async def approve_and_advance(task_id: str) -> ToolResponse:
+    """
+    Approves the current phase and advances to the next phase in the workflow.
+
+    This is a convenience tool that automatically approves the current review
+    step and advances the workflow to the next phase.
+
+    Args:
+        task_id (str): The unique identifier for the task
+
+    Returns:
+        ToolResponse: Contains success/error status and next phase guidance
+    """
+    pass  # Implementation handled by decorator
 
 
 if __name__ == "__main__":
     app.run()
+
 ``````
 ------ src/alfred/state/__init__.py ------
 ``````
@@ -1921,9 +2449,10 @@ __all__ = ["StateManager", "state_manager", "ToolRecovery"]
 ``````
 # src/alfred/state/manager.py
 """
-Unified state management for Alfred.
-Provides atomic state persistence for the UnifiedTaskState object.
+State management for Alfred.
+Provides atomic state persistence for the TaskState object.
 """
+
 import json
 from datetime import datetime
 from pathlib import Path
@@ -1935,7 +2464,7 @@ from src.alfred.config.settings import settings
 from src.alfred.constants import Paths
 from src.alfred.lib.logger import get_logger
 from src.alfred.models.schemas import TaskStatus
-from src.alfred.models.state import UnifiedTaskState, WorkflowState
+from src.alfred.models.state import TaskState, WorkflowState
 
 logger = get_logger(__name__)
 
@@ -1947,40 +2476,37 @@ class StateManager:
         """Gets the path to the unified state file for a task."""
         return settings.workspace_dir / task_id / "task_state.json"
 
-    def load_or_create_task_state(self, task_id: str) -> UnifiedTaskState:
+    def load_or_create(self, task_id: str) -> TaskState:
         """Loads a task's unified state from disk, or creates it if it doesn't exist."""
         state_file = self._get_task_state_file(task_id)
         if not state_file.exists():
             logger.info(f"No state file found for task {task_id}. Creating new state.")
-            new_state = UnifiedTaskState(task_id=task_id)
+            new_state = TaskState(task_id=task_id)
             self.save_task_state(new_state)
             return new_state
 
         try:
             state_json = state_file.read_text()
-            state_data = UnifiedTaskState.model_validate_json(state_json)
-            tool_name = (
-                state_data.active_tool_state.tool_name
-                if state_data.active_tool_state
-                else "None"
-            )
-            logger.info(
-                f"Loaded state for task {task_id}. Status: {state_data.task_status.value}, Active Tool: {tool_name}."
-            )
+            state_data = TaskState.model_validate_json(state_json)
+            tool_name = state_data.active_tool_state.tool_name if state_data.active_tool_state else "None"
+            logger.info(f"Loaded state for task {task_id}. Status: {state_data.task_status.value}, Active Tool: {tool_name}.")
             return state_data
         except Exception as e:
-            logger.error(
-                f"Failed to load or validate state for task {task_id}, creating new state. Error: {e}"
-            )
-            new_state = UnifiedTaskState(task_id=task_id)
+            logger.error(f"Failed to load or validate state for task {task_id}, creating new state. Error: {e}")
+            new_state = TaskState(task_id=task_id)
             self.save_task_state(new_state)
             return new_state
 
-    def save_task_state(self, state: UnifiedTaskState) -> None:
+    def save_task_state(self, state: TaskState) -> None:
         """Atomically saves the entire unified state for a task."""
+        from src.alfred.lib.artifact_manager import artifact_manager
+
         state.updated_at = datetime.utcnow().isoformat()
         state_file = self._get_task_state_file(state.task_id)
-        state_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Ensure the complete workspace structure is created (including archive dir)
+        if not state_file.parent.exists():
+            artifact_manager.create_task_workspace(state.task_id)
 
         temp_file = state_file.with_suffix(Paths.JSON_EXTENSION + Paths.TMP_EXTENSION)
         try:
@@ -1993,19 +2519,17 @@ class StateManager:
                 temp_file.unlink()
             raise
 
-    def update_task_status(self, task_id: str, new_status: TaskStatus) -> UnifiedTaskState:
+    def update_task_status(self, task_id: str, new_status: TaskStatus) -> TaskState:
         """Loads, updates the task_status, and saves the state."""
-        state = self.load_or_create_task_state(task_id)
+        state = self.load_or_create(task_id)
         state.task_status = new_status
         self.save_task_state(state)
         logger.info(f"Updated task {task_id} status to {new_status.value}")
         return state
 
-    def update_tool_state(
-        self, task_id: str, tool: "BaseWorkflowTool"
-    ) -> UnifiedTaskState:
+    def update_tool_state(self, task_id: str, tool: "BaseWorkflowTool") -> TaskState:
         """Loads, updates the tool state portion, and saves."""
-        state = self.load_or_create_task_state(task_id)
+        state = self.load_or_create(task_id)
 
         serializable_context = {}
         if tool.context_store:
@@ -2020,25 +2544,42 @@ class StateManager:
             tool_name=tool.tool_name,
             current_state=str(tool.state),
             context_store=serializable_context,
-            persona_name=tool.persona_name,
             updated_at=datetime.utcnow().isoformat(),
         )
         state.active_tool_state = tool_state_data
         self.save_task_state(state)
         return state
 
-    def clear_tool_state(self, task_id: str) -> UnifiedTaskState:
+    def clear_tool_state(self, task_id: str) -> TaskState:
         """Loads, clears the active tool state, and saves."""
-        state = self.load_or_create_task_state(task_id)
+        state = self.load_or_create(task_id)
         if state.active_tool_state:
             logger.info(f"Clearing active tool state for task {task_id}.")
             state.active_tool_state = None
             self.save_task_state(state)
         return state
 
+    def load_or_create_task_state(self, task_id: str) -> TaskState:
+        return self.load_or_create(task_id)
+
+    def get_archive_path(self, task_id: str) -> Path:
+        """Get the archive directory path for a task."""
+        archive_path = settings.workspace_dir / task_id / Paths.ARCHIVE_DIR
+        archive_path.mkdir(parents=True, exist_ok=True)
+        return archive_path
+
+    def register_tool(self, task_id: str, tool: "BaseWorkflowTool") -> None:
+        """Register a tool with the orchestrator and update state."""
+        from src.alfred.orchestration.orchestrator import orchestrator
+
+        orchestrator.active_tools[task_id] = tool
+        self.update_tool_state(task_id, tool)
+        logger.info(f"Registered {tool.tool_name} tool for task {task_id}")
+
 
 # Singleton instance
 state_manager = StateManager()
+
 ``````
 ------ src/alfred/state/recovery.py ------
 ``````
@@ -2047,9 +2588,20 @@ state_manager = StateManager()
 Tool recovery functionality for Alfred workflow tools.
 Handles reconstruction of workflow tools from persisted state.
 """
+
 from typing import Dict, Optional, Type
 
-from src.alfred.core.workflow import BaseWorkflowTool, PlanTaskTool, StartTaskTool
+from src.alfred.core.workflow import (
+    BaseWorkflowTool,
+    CreateSpecTool,
+    CreateTasksTool,
+    PlanTaskTool,
+    StartTaskTool,
+    ImplementTaskTool,
+    ReviewTaskTool,
+    TestTaskTool,
+    FinalizeTaskTool,
+)
 from src.alfred.lib.logger import get_logger
 from src.alfred.state.manager import state_manager
 from src.alfred.constants import ToolName
@@ -2061,8 +2613,14 @@ class ToolRecovery:
     """Handles recovery of workflow tools from persisted state."""
 
     TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {
+        ToolName.CREATE_SPEC: CreateSpecTool,
+        ToolName.CREATE_TASKS: CreateTasksTool,
         ToolName.START_TASK: StartTaskTool,
         ToolName.PLAN_TASK: PlanTaskTool,
+        ToolName.IMPLEMENT_TASK: ImplementTaskTool,
+        ToolName.REVIEW_TASK: ReviewTaskTool,
+        ToolName.TEST_TASK: TestTaskTool,
+        ToolName.FINALIZE_TASK: FinalizeTaskTool,
     }
 
     @classmethod
@@ -2085,16 +2643,11 @@ class ToolRecovery:
             tool = tool_class(task_id=task_id)
             tool.state = persisted_tool_state.current_state
             tool.context_store = persisted_tool_state.context_store
-            tool.persona_name = persisted_tool_state.persona_name
 
-            logger.info(
-                f"Successfully recovered {tool_name} for task {task_id} in state {tool.state}"
-            )
+            logger.info(f"Successfully recovered {tool_name} for task {task_id} in state {tool.state}")
             return tool
         except Exception as e:
-            logger.error(
-                f"Failed to recover tool for task {task_id}: {e}", exc_info=True
-            )
+            logger.error(f"Failed to recover tool for task {task_id}: {e}", exc_info=True)
             return None
 
     @classmethod
@@ -2113,194 +2666,507 @@ class ToolRecovery:
 
         tool_name = persisted_tool_state.tool_name
         return tool_name in cls.TOOL_REGISTRY
+
+
+def recover_tool_from_state(task_id: str, tool_name: str) -> BaseWorkflowTool:
+    """
+    Helper function to recover or create a tool for the given task and tool name.
+    This is used by the individual tool implementations.
+    """
+    from src.alfred.orchestration.orchestrator import orchestrator
+
+    # Check if tool is already active
+    if task_id in orchestrator.active_tools:
+        tool_instance = orchestrator.active_tools[task_id]
+        logger.info(f"Found active tool for task {task_id} in state {tool_instance.state}")
+        return tool_instance
+
+    # Try to recover from persisted state
+    tool_instance = ToolRecovery.recover_tool(task_id)
+    if tool_instance:
+        orchestrator.active_tools[task_id] = tool_instance
+        logger.info(f"Recovered tool from disk for task {task_id} in state {tool_instance.state}")
+        return tool_instance
+
+    # Create new tool
+    tool_class = ToolRecovery.TOOL_REGISTRY.get(tool_name)
+    if not tool_class:
+        raise ValueError(f"Unknown tool type: {tool_name}")
+
+    tool_instance = tool_class(task_id=task_id)
+    orchestrator.active_tools[task_id] = tool_instance
+
+    # Persist the initial state
+    state_manager.update_tool_state(task_id, tool_instance)
+    logger.info(f"Created new {tool_name} tool for task {task_id}")
+
+    return tool_instance
+
+``````
+------ src/alfred/task_providers/__init__.py ------
+``````
+"""Task provider implementations for Alfred."""
+
+``````
+------ src/alfred/task_providers/base.py ------
+``````
+"""Base task provider interface."""
+
+from abc import ABC, abstractmethod
+from typing import List, Optional
+
+from src.alfred.models.schemas import Task, ToolResponse
+
+
+class BaseTaskProvider(ABC):
+    """Abstract base class for all task providers.
+
+    This defines the contract that all task providers must implement,
+    ensuring a consistent interface regardless of the underlying data source.
+    """
+
+    @abstractmethod
+    def get_task(self, task_id: str) -> Optional[Task]:
+        """Fetches the details for a single task.
+
+        Args:
+            task_id: The unique identifier for the task
+
+        Returns:
+            Task object if found, None otherwise
+        """
+        pass
+
+    @abstractmethod
+    def get_all_tasks(self) -> List[Task]:
+        """Fetches all available tasks from the source.
+
+        Returns:
+            List of all tasks from the provider
+        """
+        pass
+
+    @abstractmethod
+    def get_next_task(self) -> ToolResponse:
+        """Intelligently determines and returns the next recommended task.
+
+        Returns:
+            ToolResponse containing the recommended task and reasoning
+        """
+        pass
+
+    @abstractmethod
+    def update_task_status(self, task_id: str, new_status: str) -> bool:
+        """Updates the status of a task.
+
+        Args:
+            task_id: The unique identifier for the task
+            new_status: The new status to set
+
+        Returns:
+            True if update was successful, False otherwise
+        """
+        pass
+
+``````
+------ src/alfred/task_providers/factory.py ------
+``````
+"""Task provider factory for instantiating the correct provider based on configuration."""
+
+from src.alfred.models.alfred_config import TaskProvider as ProviderType
+from src.alfred.lib.logger import get_logger
+from .base import BaseTaskProvider
+from .local_provider import LocalTaskProvider
+from .jira_provider import JiraTaskProvider
+
+logger = get_logger(__name__)
+
+
+def get_provider() -> BaseTaskProvider:
+    """Factory function to instantiate the configured task provider.
+
+    This function reads the current Alfred configuration and returns
+    the appropriate task provider instance based on the configured
+    provider type.
+
+    Returns:
+        BaseTaskProvider: An instance of the configured task provider
+
+    Raises:
+        NotImplementedError: If the configured provider is not yet implemented
+    """
+    # Import here to avoid circular dependency
+    from src.alfred.orchestration.orchestrator import orchestrator
+
+    try:
+        # Load the current configuration
+        config = orchestrator.config_manager.load()
+        provider_type = config.providers.task_provider
+
+        logger.info(f"Instantiating task provider: {provider_type}")
+
+        # Return the appropriate provider based on configuration
+        if provider_type == ProviderType.LOCAL:
+            return LocalTaskProvider()
+        elif provider_type == ProviderType.JIRA:
+            return JiraTaskProvider()
+        elif provider_type == ProviderType.LINEAR:
+            raise NotImplementedError(f"Linear task provider is not yet implemented. Please use 'local' provider for now.")
+        else:
+            raise NotImplementedError(f"Unknown task provider type: '{provider_type}'. Supported providers: local, jira (coming soon), linear (coming soon)")
+
+    except Exception as e:
+        logger.error(f"Failed to instantiate task provider: {e}")
+        # Fall back to local provider as default
+        logger.warning("Falling back to local task provider")
+        return LocalTaskProvider()
+
+``````
+------ src/alfred/task_providers/jira_provider.py ------
+``````
+"""Jira task provider implementation (placeholder for AL-65 testing)."""
+
+from typing import List, Optional
+from datetime import datetime
+
+from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
+from src.alfred.lib.logger import get_logger
+from .base import BaseTaskProvider
+
+logger = get_logger(__name__)
+
+
+class JiraTaskProvider(BaseTaskProvider):
+    """Task provider that fetches tasks from Jira via MCP.
+
+    This is a placeholder implementation for AL-65 testing.
+    In production, this will make actual API calls via MCP tools.
+    """
+
+    def __init__(self):
+        """Initialize the Jira task provider."""
+        logger.info("Initializing JiraTaskProvider (placeholder implementation)")
+
+    def get_task(self, task_id: str) -> Optional[Task]:
+        """Fetches a task from Jira.
+
+        This is a placeholder that returns hardcoded data for testing.
+        In production, this will call MCP Atlassian tools.
+
+        Args:
+            task_id: The Jira issue key (e.g., "TS-01")
+
+        Returns:
+            Task object if found, None otherwise
+        """
+        # Placeholder implementation - return hardcoded task for testing
+        if task_id == "TS-01":
+            logger.info(f"Returning placeholder Jira task for {task_id}")
+            return Task(
+                task_id="TS-01",
+                title="Implement user authentication",
+                description="""As a user, I want to be able to log in to the application
+so that I can access my personalized content and features.
+
+This involves implementing a secure authentication system with the following components:
+- Login form with email/password
+- Password hashing and validation
+- Session management
+- Remember me functionality
+- Password reset flow""",
+                acceptance_criteria=[
+                    "Users can log in with email and password",
+                    "Passwords are securely hashed using bcrypt",
+                    "Sessions persist across browser restarts when 'Remember me' is checked",
+                    "Users can reset their password via email",
+                    "Failed login attempts are rate-limited",
+                ],
+                task_status=TaskStatus.NEW,
+            )
+
+        logger.warning(f"Task {task_id} not found in Jira (placeholder)")
+        return None
+
+    def get_all_tasks(self) -> List[Task]:
+        """Fetches all tasks from Jira.
+
+        This is a placeholder that returns an empty list.
+        In production, this will use JQL queries via MCP.
+
+        Returns:
+            List of tasks (empty in placeholder)
+        """
+        logger.info("get_all_tasks called on JiraTaskProvider (not implemented)")
+        return []
+
+    def get_next_task(self) -> ToolResponse:
+        """Get next task recommendation.
+
+        For Jira provider, this would analyze the project board.
+        Currently returns a placeholder response.
+
+        Returns:
+            ToolResponse indicating this feature is not yet implemented
+        """
+        return ToolResponse(status="error", message="get_next_task is not yet implemented for Jira provider. Please specify a task ID directly.")
+
+    def update_task_status(self, task_id: str, new_status: str) -> bool:
+        """Updates task status in Jira.
+
+        This is a placeholder that logs the update.
+        In production, this will transition the Jira issue.
+
+        Args:
+            task_id: The Jira issue key
+            new_status: The new status
+
+        Returns:
+            True (placeholder always succeeds)
+        """
+        logger.info(f"Would update Jira task {task_id} to status {new_status} (placeholder)")
+        return True
+
+``````
+------ src/alfred/task_providers/local_provider.py ------
+``````
+"""Local file system task provider implementation."""
+
+import os
+from pathlib import Path
+from typing import List, Optional
+from datetime import datetime
+
+from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
+from src.alfred.lib.md_parser import MarkdownTaskParser
+from src.alfred.lib.logger import get_logger
+from src.alfred.config.settings import settings
+from src.alfred.state.manager import state_manager
+from .base import BaseTaskProvider
+
+logger = get_logger(__name__)
+
+
+class LocalTaskProvider(BaseTaskProvider):
+    """Task provider that reads tasks from local markdown files.
+
+    This provider implements the BaseTaskProvider interface for local
+    file system based task management, reading from .alfred/tasks/*.md files.
+    """
+
+    def __init__(self):
+        """Initialize the local task provider."""
+        self.tasks_dir = settings.alfred_dir / "tasks"
+        self.parser = MarkdownTaskParser()
+
+    def get_task(self, task_id: str) -> Optional[Task]:
+        """Fetches the details for a single task from markdown file.
+
+        Args:
+            task_id: The unique identifier for the task
+
+        Returns:
+            Task object if found, None otherwise
+        """
+        task_md_path = self.tasks_dir / f"{task_id}.md"
+
+        if not task_md_path.exists():
+            logger.warning(f"Task file not found: {task_md_path}")
+            return None
+
+        try:
+            # Read and validate the markdown file
+            content = task_md_path.read_text()
+            
+            # Validate format first
+            is_valid, error_msg = self.parser.validate_format(content)
+            if not is_valid:
+                logger.error(f"Task file {task_md_path} has invalid format: {error_msg}")
+                logger.error(f"Please refer to .alfred/tasks/README.md for the correct task file format.")
+                logger.error(f"See .alfred/tasks/SAMPLE-FORMAT.md for a working example.")
+                return None
+            
+            # Parse the markdown file
+            task_data = self.parser.parse(content)
+            
+            # Validate required fields and provide helpful error if missing
+            if not task_data.get('task_id'):
+                logger.error(f"Task file {task_md_path} is missing task_id. Expected format: '# TASK: {task_id}'")
+                logger.error(f"Current format in file: {content.split('\\n')[0] if content else 'Empty file'}")
+                return None
+                
+            task_model = Task(**task_data)
+
+            # Load and merge the dynamic state
+            task_state = state_manager.load_or_create(task_id)
+            task_model.task_status = task_state.task_status
+
+            return task_model
+        except ValueError as e:
+            logger.error(f"Task file {task_md_path} has invalid format: {e}")
+            logger.error(f"Please refer to .alfred/tasks/README.md for the correct task file format.")
+            logger.error(f"See .alfred/tasks/SAMPLE-FORMAT.md for a working example.")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to load task {task_id} from {task_md_path}: {e}")
+            return None
+
+    def get_all_tasks(self) -> List[Task]:
+        """Fetches all available tasks from the tasks directory.
+
+        Returns:
+            List of all tasks found in the .alfred/tasks directory
+        """
+        tasks = []
+
+        if not self.tasks_dir.exists():
+            logger.warning(f"Tasks directory does not exist: {self.tasks_dir}")
+            return tasks
+
+        for task_file in self.tasks_dir.glob("*.md"):
+            task_id = task_file.stem
+            task = self.get_task(task_id)
+            if task:
+                tasks.append(task)
+
+        return tasks
+
+    def get_next_task(self) -> ToolResponse:
+        """Intelligently determines and returns the next recommended task.
+
+        This implementation uses the AL-61 ranking algorithm to prioritize tasks.
+
+        Returns:
+            ToolResponse containing the recommended task and reasoning
+        """
+        try:
+            all_tasks = self.get_all_tasks()
+
+            if not all_tasks:
+                return ToolResponse(status="success", message="No tasks found in the system. Please create tasks first.", data={"tasks_found": 0})
+
+            # Filter out completed tasks
+            active_tasks = [t for t in all_tasks if t.task_status != TaskStatus.DONE]
+
+            if not active_tasks:
+                return ToolResponse(status="success", message="All tasks are completed! Great work!", data={"tasks_found": len(all_tasks), "active_tasks": 0})
+
+            # Rank tasks using our prioritization algorithm
+            ranked_tasks = self._rank_tasks(active_tasks)
+
+            # Get the top task
+            recommended_task = ranked_tasks[0]
+
+            # Generate reasoning for the recommendation
+            reasoning = self._generate_recommendation_reasoning(recommended_task, ranked_tasks)
+
+            return ToolResponse(
+                status="success",
+                message=f"Recommended task: {recommended_task.task_id} - {recommended_task.title}",
+                data={
+                    "task_id": recommended_task.task_id,
+                    "title": recommended_task.title,
+                    "status": recommended_task.task_status.value,
+                    "reasoning": reasoning,
+                    "total_active_tasks": len(active_tasks),
+                    "alternatives": [
+                        {"task_id": t.task_id, "title": t.title, "status": t.task_status.value}
+                        for t in ranked_tasks[1:4]  # Show top 3 alternatives
+                    ],
+                },
+                next_prompt=f"Task {recommended_task.task_id} is ready. Use 'work_on {recommended_task.task_id}' to begin.",
+            )
+        except Exception as e:
+            logger.error(f"Failed to get next task: {e}")
+            return ToolResponse(status="error", message=f"Failed to determine next task: {str(e)}")
+
+    def update_task_status(self, task_id: str, new_status: str) -> bool:
+        """Updates the status of a task.
+
+        Args:
+            task_id: The unique identifier for the task
+            new_status: The new status to set
+
+        Returns:
+            True if update was successful, False otherwise
+        """
+        try:
+            # Convert string to TaskStatus enum
+            status_enum = TaskStatus(new_status)
+
+            # Update via state manager
+            state_manager.update_task_status(task_id, status_enum)
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update task {task_id} status to {new_status}: {e}")
+            return False
+
+    def _rank_tasks(self, tasks: List[Task]) -> List[Task]:
+        """Rank tasks based on the AL-61 prioritization algorithm.
+
+        Priority factors:
+        1. In-progress tasks (highest priority)
+        2. Tasks ready for action
+        3. Priority level (if available)
+        4. Task age (older tasks get slight boost)
+        """
+
+        def calculate_score(task: Task) -> tuple:
+            # Score is a tuple for stable sorting (higher is better)
+
+            # First priority: In-progress tasks
+            in_progress_score = (
+                1 if task.task_status in [TaskStatus.IN_DEVELOPMENT, TaskStatus.IN_REVIEW, TaskStatus.IN_TESTING, TaskStatus.PLANNING, TaskStatus.CREATING_SPEC, TaskStatus.CREATING_TASKS] else 0
+            )
+
+            # Second priority: Ready for action
+            ready_score = (
+                1
+                if task.task_status
+                in [TaskStatus.NEW, TaskStatus.READY_FOR_DEVELOPMENT, TaskStatus.READY_FOR_REVIEW, TaskStatus.READY_FOR_TESTING, TaskStatus.READY_FOR_FINALIZATION, TaskStatus.REVISIONS_REQUESTED]
+                else 0
+            )
+
+            # Third priority: Task ID numeric value (lower ID = older task = higher priority)
+            # Extract numeric part from task ID (e.g., "AL-42" -> 42)
+            try:
+                task_number = int(task.task_id.split("-")[-1])
+                # Invert so lower numbers get higher scores
+                age_score = 1000 - task_number
+            except:
+                age_score = 0
+
+            return (in_progress_score, ready_score, age_score)
+
+        # Sort tasks by score (descending)
+        return sorted(tasks, key=calculate_score, reverse=True)
+
+    def _generate_recommendation_reasoning(self, task: Task, all_ranked: List[Task]) -> str:
+        """Generate human-readable reasoning for why this task was recommended."""
+        reasons = []
+
+        # Check if it's in progress
+        if task.task_status in [TaskStatus.IN_DEVELOPMENT, TaskStatus.IN_REVIEW, TaskStatus.IN_TESTING, TaskStatus.PLANNING]:
+            reasons.append(f"Task is already in progress ({task.task_status.value})")
+
+        # Check if it's ready for action
+        elif task.task_status in [TaskStatus.NEW, TaskStatus.READY_FOR_DEVELOPMENT]:
+            reasons.append(f"Task is ready to start ({task.task_status.value})")
+
+        # Check if it needs attention
+        elif task.task_status == TaskStatus.REVISIONS_REQUESTED:
+            reasons.append("Task has requested revisions that need to be addressed")
+
+        # Add context about alternatives
+        if len(all_ranked) > 1:
+            reasons.append(f"Selected from {len(all_ranked)} active tasks based on priority")
+
+        return ". ".join(reasons) + "."
+
 ``````
 ------ src/alfred/templates/__init__.py ------
 ``````
 
-``````
------- src/alfred/templates/artifacts/Alex.md ------
-``````
----
-task_id: {{ task_id }}
-persona: {{ persona.name }}
-status: reviewed
----
-
-{# This template conditionally renders the correct artifact based on the model type #}
-{%- if artifact.high_level_strategy is defined %}
-{# This is a StrategyArtifact #}
-# Strategy: {{ task_id }}
-
-## 1. High-Level Strategy
-{{ artifact.high_level_strategy }}
-
-## 2. Key Components
-{%- for component in artifact.key_components %}
-- {{ component }}
-{%- endfor %}
-
-## 3. Architectural Decisions
-{{ artifact.architectural_decisions }}
-
-## 4. Risk Analysis
-{{ artifact.risk_analysis }}
-{%- elif artifact.detailed_design is defined %}
-{# This is a SolutionDesignArtifact #}
-# Solution Design: {{ task_id }}
-
-## 1. Approved Strategy Summary
-{{ artifact.approved_strategy_summary }}
-
-## 2. Detailed Design
-{{ artifact.detailed_design }}
-
-## 3. File Breakdown
-| File Path | Action | Change Summary |
-|-----------|--------|----------------|
-{%- for item in artifact.file_breakdown %}
-| `{{ item.file_path }}` | {{ item.action }} | {{ item.change_summary }} |
-{%- endfor %}
-
-## 4. Dependencies
-{%- if artifact.dependencies %}
-{%- for dependency in artifact.dependencies %}
-- {{ dependency }}
-{%- endfor %}
-{%- else %}
-None
-{%- endif %}
-{%- elif artifact.implementation_steps is defined %}
-{# This is an ExecutionPlanArtifact #}
-# Execution Plan: {{ task_id }}
-
-## 1. Implementation Steps
-{%- for step in artifact.implementation_steps %}
-{{ loop.index }}. {{ step }}
-{%- endfor %}
-
-## 2. File Modifications
-| File Path | Action | Description |
-|-----------|--------|-------------|
-{%- for mod in artifact.file_modifications %}
-| `{{ mod.path }}` | {{ mod.action }} | {{ mod.description }} |
-{%- endfor %}
-
-## 3. Testing Strategy
-{{ artifact.testing_strategy }}
-
-## 4. Success Criteria
-{%- for criterion in artifact.success_criteria %}
-- {{ criterion }}
-{%- endfor %}
-{%- endif %}
-
----
-*Phase completed by {{ persona.name }} ({{ persona.title }})*
-``````
------- src/alfred/templates/artifacts/Branch_Manager.md ------
-``````
----
-task_id: {{ task_id }}
-persona: {{ persona.name }}
-status: verified
----
-
-# Git Setup Complete: {{ task_id }}
-
-## Branch Information
-
-- **Branch Name:** `{{ artifact.branch_name }}`
-- **Branch Status:** {{ artifact.branch_status }}
-- **Ready for Work:** {{ artifact.ready_for_work }}
-
-## Summary
-
-The git environment has been successfully prepared for development work on the specified feature branch.
-``````
------- src/alfred/templates/artifacts/Commander.md ------
-``````
----
-task_id: {{ task_id }}
-persona: {{ persona.name }}
-status: verified
----
-
-# Task Finalization Complete: {{ task_id }}
-
-## Git Workflow Summary
-
-The feature has been successfully pushed and a Pull Request has been created.
-
-### Final Receipt
-
-- **Commit Hash:** `{{ artifact.commit_hash }}`
-- **Pull Request URL:** [{{ artifact.pull_request_url }}]({{ artifact.pull_request_url }})
-
-The Alfred workflow for this task is now complete.
-``````
------- src/alfred/templates/artifacts/James.md ------
-``````
----
-task_id: {{ task_id }}
-persona: {{ persona.name }}
-status: verified
----
-
-# Implementation Manifest: {{ task_id }}
-
-## 1. Implementation Summary
-{{ artifact.implementation_summary }}
-
-## 2. Execution Steps Completed
-{% for step in artifact.execution_steps_completed %}
-- `{{ step }}`
-{% endfor %}
-
-## 3. Testing Notes
-{{ artifact.testing_notes }}
-``````
------- src/alfred/templates/artifacts/Scaffy.md ------
-``````
----
-task_id: {{ task_id }}
-persona: {{ persona.name }}
-status: verified
----
-
-# Scaffolding Complete: {{ task_id }}
-
-## Scaffolding Summary
-
-- **Files Scaffolded**: {{ artifact.files_scaffolded | length }}
-- **TODO Items Generated**: {{ artifact.todo_items_generated }}
-- **Execution Steps Processed**: {{ artifact.execution_steps_processed | length }}
-
-## Files Modified
-The following files received TODO comments:
-{% for file in artifact.files_scaffolded %}
-- `{{ file }}`
-{% endfor %}
-``````
------- src/alfred/templates/artifacts/Valerie.md ------
-``````
----
-task_id: {{ task_id }}
-persona: {{ persona.name }}
-status: verified
----
-
-# Test Results: {{ task_id }}
-
-## Test Execution Summary
-
-**Command:** `{{ artifact.test_results.command_run }}`
-**Exit Code:** {{ artifact.test_results.exit_code }}
-
-## Test Output
-
-```
-{{ artifact.test_results.full_output }}
-```
 ``````
 ------ src/alfred/templates/artifacts/context_analysis.md ------
 ``````
@@ -2336,6 +3202,66 @@ status: verified
 {{ file_change.change_summary }}
 {% endfor %}
 ``````
+------ src/alfred/templates/artifacts/engineering_spec.md ------
+``````
+# Engineering Specification: {{ artifact.project_name }}
+
+## Overview
+{{ artifact.overview }}
+
+## Definition of Success
+
+### Product Perspective
+{{ artifact.definition_of_success.product_perspective }}
+
+### Engineering Perspective
+{{ artifact.definition_of_success.engineering_perspective }}
+
+## Functional Requirements
+{% for req in artifact.functional_requirements %}
+- {{ req.story }}
+{% endfor %}
+
+## Non-Functional Requirements
+{% for req in artifact.non_functional_requirements %}
+- {{ req }}
+{% endfor %}
+
+## Assumptions
+{% for assumption in artifact.assumptions %}
+- {{ assumption }}
+{% endfor %}
+
+## Major Design Considerations
+{{ artifact.major_design_considerations }}
+
+## Architecture
+{{ artifact.architecture_diagrams }}
+
+## API Changes
+{% for api in artifact.api_changes %}
+- {{ api }}
+{% endfor %}
+
+## Data Storage
+{% for storage in artifact.data_storage %}
+- {{ storage }}
+{% endfor %}
+
+## Dependencies
+{% for dep in artifact.dependencies %}
+- {{ dep }}
+{% endfor %}
+
+## Testing Approach
+{{ artifact.testing_approach }}
+
+## Rollout Plan
+{{ artifact.rollout_plan }}
+
+## Alternatives Considered
+{{ artifact.alternatives_considered }}
+``````
 ------ src/alfred/templates/artifacts/execution_plan.md ------
 ``````
 ## Execution Plan
@@ -2363,6 +3289,42 @@ Test:
 
 {% endfor %}
 ``````
+------ src/alfred/templates/artifacts/implementation_manifest.md ------
+``````
+# Implementation Manifest
+
+## Summary
+{{ artifact.summary }}
+
+## Completed Subtasks
+{% for subtask_id in artifact.completed_subtasks %}
+- {{ subtask_id }}
+{% endfor %}
+
+## Testing Notes
+{{ artifact.testing_notes }}
+``````
+------ src/alfred/templates/artifacts/review.md ------
+``````
+## {{ state_description }}
+
+**Task:** {{ task.task_id }} - {{ task.title }}
+
+### Review Summary
+{{ artifact.summary }}
+
+### Approval Status
+**{{ "Approved" if artifact.approved else "Revisions Requested" }}**
+
+### Feedback
+{% if artifact.feedback %}
+{% for item in artifact.feedback %}
+- {{ item }}
+{% endfor %}
+{% else %}
+- N/A
+{% endif %}
+``````
 ------ src/alfred/templates/artifacts/strategy.md ------
 ``````
 ## {{ state_description }}
@@ -2389,13 +3351,619 @@ Test:
 {{ artifact.risk_analysis }}
 {%- endif %}
 ``````
+------ src/alfred/templates/artifacts/task_creation.md ------
+``````
+# Task Breakdown
+
+## Tasks Created
+
+{% for task in artifact.tasks %}
+### {{ task.task_id }}: {{ task.title }}
+
+**Context:**  
+{{ task.context }}
+
+**Implementation Details:**  
+{{ task.implementation_details }}
+
+**Acceptance Criteria:**
+{% for ac in task.acceptance_criteria %}
+- {{ ac }}
+{% endfor %}
+
+**Verification Steps:**
+{% for step in task.ac_verification_steps %}
+- {{ step }}
+{% endfor %}
+
+---
+
+{% endfor %}
+``````
+------ src/alfred/templates/artifacts/test_result.md ------
+``````
+## {{ state_description }}
+
+**Task:** {{ task.task_id }} - {{ task.title }}
+
+### Test Execution Summary
+**Command:** `{{ artifact.command }}`
+**Exit Code:** {{ artifact.exit_code }} ({{ "Success" if artifact.exit_code == 0 else "Failure" }})
+
+### Full Output
+```
+{{ artifact.output }}
+```
+``````
+------ src/alfred/templates/engineering_spec_template.md ------
+``````
+***For any sections that do not apply, DO NOT delete them but rather explain WHY they are not relevant.***   
+
+# \[Project Name\] \- Engineering Spec
+
+
+
+# Review Status
+
+**\[Optional:** *Move to the bottom of the document once approved by everyone*\]
+
+
+# Overview
+
+\[*Provide a 1-2 paragraph overview of the project and the problem we are trying to solve. If there is a product brief, rely on that for most of the justification. If there is not a product brief, include justification for the project here. Additionally, the definition of success and the product perspective needs to be approved by Product before the spec is filled out.*\] 
+
+| Product Reviewer | Status | Notes |
+| :---- | :---- | :---- |
+| Person | Unviewed |  |
+
+## Definition of Success
+
+\[*Provide context on what success looks like for this project.*\] 
+
+### Product Perspective
+
+\[*Describe how the above definition will be measured / quantified from a product perspective.*\] 
+
+### Engineering Perspective
+
+\[*Describe how the above definition will be measured / quantified from an engineering perspective.*\] 
+
+## Glossary / Acronyms
+
+\[*Include any terms and acronyms that should be defined for reference.*\] 
+
+## Requirements
+
+### Functional Requirements
+
+*\[Provide all functional requirements as agile stories “As a user I want to X in order to doY”\]*
+
+### Non-Functional requirements
+
+*\[Provide all non functional requirements such as scalability, tps, etc\]*
+
+## Assumptions
+
+*\[Provide any assumptions about the domain\]*
+
+# Design
+
+## Major Design Considerations
+
+\[*This is the main section where major details will be documented. This may be a list of functionality, behaviors, interactions, etc. Call out major concepts and any considerations or details that a reviewer would not otherwise expect to see in a project like this. List steps in the process and main components.*\]
+
+## Architecture Diagrams
+
+\[*Add architectural diagrams, sequence diagrams, or any other drawings that help give a high-level overview of the new system or the components that are changing. For each diagram, provide a 1-2 sentence description of what the diagram shows.*\]
+
+## API
+
+\[*Identify new APIs or APIs whose behavior will be updated.*\]
+
+| API | Description |
+| :---- | :---- |
+| **\[*ApiName*\] \[Method\] \[Path\]** | \[*Description of API, request/response structure, status codes*\] |
+
+### Usage Estimates
+
+\[What is the call pattern for each API? What is the *expected volume (RPM/RPS) that could inform the need for any load tests.*\]
+
+## Events
+
+\[*Identify new event flows or events that will be updated at a high-level (e.g. new infrastructure or sequence diagrams)*\]
+
+## Front End Updates
+
+\[*If your feature or project includes front end changes add mocks for how the user experience is being changed. Be sure to include before and after which clearly articulates how our customers will use this. For Metro, this likely refers to either the Agent Customer Admin tool, or Metro UI.* \]
+
+## Data Storage
+
+\[*Where is data stored? List any new databases or tables, and provide information on stored values in the table. Include indexes and constraints. Describe any special considerations about how the data will be read and written, including frequency, expected volume, whether data can be deleted, backup, and expiration. Can the data be manually inspected for debugging or investigative purposes? Are there any provisions for updating incorrect data?*\]
+
+| Field | isRequired | Data Type | Description | Example |
+| :---- | :---- | :---- | :---- | :---- |
+| \[***FieldName***\] | \[*Yes|No*\] | \[*Dependent on technology*\] | \[*Description of data meaning.*\] | \[*Example value*\] |
+
+## Auth
+
+\[*Can this be accessed internally or externally? Are there limitations on who can access it? How will that be enforced?*\]
+
+## Resiliency
+
+\[*Describe how the product will react to diverse conditions. Ensure that we have designed for failure and can succeed in as many cases as possible. Consider using queues and/or notifications to eliminate failures and the impact of disruptions. Outline plans for failover, rollback, and retries.*\] 
+
+## Dependencies
+
+\[*List dependencies, either existing components or new required components that are outside the scope of this design. What use cases on each dependency are you using ? Action item : Verify these use cases work as expected.  For service dependencies, by sure to specify tasks for setting up network access (via Kong gateway or similar), requesting required access keys or scope permissions, etc\]*
+
+## Dependents
+
+\[*List components that will be dependent on the new features. These may be existing dependents that will be impacted by the changes, or future dependents that will be added after this project is complete. These are also called upstream dependencies*\]
+
+# Observability
+
+## Failure Scenarios
+
+\[*List out different failure scenarios and how we plan to handle them, whether it’s propagating errors to downstream dependencies, or handling the error to provide an alternate successful path. List each dependency and how the product will attempt to be successful despite the dependency’s outage. If the product itself breaks, how can we still attempt to provide success to our users (through manual means or dependents’ reactions.* \]
+
+## Logging
+
+\[*What info, warn, and error logs will be collected? What information will we need to investigate errors or interesting scenarios? Does any data need to be sent to DataLake?*\]
+
+## Metrics
+
+\[*What events deserve metrics to help us understand usage or health? What thresholds will be set for those metrics? What dashboards or reports will allow viewing of the metrics?*\]
+
+## Monitoring
+
+\[*What provisions are in place for ensuring the features are behaving as expected? How will the team know if the features are not working properly? Describe any new or existing Panoptes Monitors, Zon tests. Splunk / Umbra Dashboard metrics to track (latency, requests, dependencies to monitor). Include access and error logging to be monitored*\]
+
+# Testing
+
+\[*Describe our approach to testing the features. Consider test automation (unit tests, integration tests, user acceptance tests), post deployment tests (pre-prod and/or prod), exploratory testing, static analysis tool, security analysis tool, and code coverage. Be explicit about test priority. Define the quality criteria the features must meet. Are there any designs that need to be considered to enable the testability of the features? What services will need to be mocked and what mocked data is required during development?\]* 
+
+## Integration Tests
+
+## Internal (Manual) Tests
+
+## Performance/Load Tests
+
+## End to End Test
+
+## New technologies considered
+
+*\[List new technologies considered, if you haven’t considered them please take a minute to explore how new technologies could help\]*
+
+# Rollout Plan
+
+\[*How will this feature be rolled out? Will it be turned on in stages? Do any components need to be rolled out in order? Are there any dependencies that need to be in place before this feature? How will we validate the release(s) or decide to rollback? 
+## Pre Launch Checklist
+
+## Launch Checklist
+
+## Post Launch Checklist
+
+## A/B Testing
+
+\[*What existing A/B trials will impact this feature? Are any new A/B trials planned for experimentation or rollout? List the trials, treatments, and what they mean.*\]
+
+| Trial | Treatment | Description |
+| :---- | :---- | :---- |
+| **\[*TrialName*\]** | CONTROL | \[*Expected behavior*\] |
+|  | \[*TreatmentName*\] | \[*Expected behavior*\] |
+
+# Release Milestones
+
+\[*List the milestones that will be met during development of this project. Break the project down into as many milestones as feasible, including MVP (minimum viable product), to ensure that we are delivering incrementally. Include the approximate size of each milestone. Include future milestones that are not yet planned for delivery. You can use table to display a visual of the ticket dependenciesnbreakdown as well.*\] 
+
+# Alternatives Considered
+
+\[*List the alternatives that were considered when designing the implementation details for this project. What options did we rule out and why? Describing the alternatives will allow others to understand how we arrived at this design and not repeat evaluations of the same alternatives again. This section may also include original designs that needed to be pivoted away from during implementation. Please include a link to the Spike document so reviewers can look into the high-level alternatives considered if needed*\]
+
+# Misc Considerations
+N/A
+``````
 ------ src/alfred/templates/prompts/__init__.py ------
 ``````
 
 ``````
+------ src/alfred/templates/prompts/create_spec/awaiting_ai_review.md ------
+``````
+# AI Review: Engineering Specification
+
+## Task ID: {{ task.task_id }}
+
+Please review the engineering specification for completeness and quality.
+
+## Specification to Review
+
+{{ additional_context.drafting_spec_artifact | tojson(indent=2) }}
+
+## Review Guidelines
+
+Evaluate the specification for:
+1. Completeness of all required fields
+2. Clarity and specificity
+3. Technical soundness
+4. Alignment with PRD requirements
+
+Call `provide_review` with your assessment.
+``````
+------ src/alfred/templates/prompts/create_spec/awaiting_human_review.md ------
+``````
+# Human Review: Engineering Specification
+
+## Task ID: {{ task.task_id }}
+
+Please review the engineering specification that has been created.
+
+## Specification
+
+{{ additional_context.drafting_spec_artifact | tojson(indent=2) }}
+
+## Your Options
+
+1. **Approve**: Call `provide_review` with `is_approved=true`
+2. **Request Changes**: Call `provide_review` with `is_approved=false` and specific feedback
+
+The specification should be complete, technically sound, and ready for task breakdown.
+``````
+------ src/alfred/templates/prompts/create_spec/drafting_spec.md ------
+``````
+# Review Your Engineering Specification
+
+You previously created an engineering specification. Please review it carefully and consider if any improvements are needed.
+
+## Task ID: {{ task.task_id }}
+
+## Your Engineering Specification
+
+{{ additional_context.artifact_content }}
+
+## Review Checklist
+
+Consider the following:
+
+1. **Completeness**: Are all required fields populated with meaningful content?
+2. **Requirements Coverage**: Does the spec fully address all aspects of the PRD?
+3. **Technical Accuracy**: Are the technical choices appropriate and well-justified?
+4. **Success Metrics**: Are both product and engineering success criteria clearly defined?
+5. **API Design**: Are all API changes clearly documented with methods and descriptions?
+6. **Data Model**: Is the data storage design complete with all fields specified?
+7. **Observability**: Are failure scenarios, logging, metrics, and monitoring adequately planned?
+8. **Testing Strategy**: Is the testing approach comprehensive?
+9. **Rollout Plan**: Is there a safe, staged rollout strategy?
+10. **Dependencies**: Are all dependencies and dependents identified?
+
+## Quality Standards
+
+- Each section should provide actionable information
+- No placeholder or vague content
+- All lists should have concrete items, not generic statements
+- Technical decisions should be justified
+- Edge cases and failure modes should be considered
+
+## Next Steps
+
+If you're satisfied with the specification:
+- Call `provide_review` with `is_approved=true`
+
+If you want to make improvements:
+- Call `provide_review` with `is_approved=false` and provide specific feedback
+- You'll have the opportunity to revise the specification
+``````
+------ src/alfred/templates/prompts/create_spec/drafting_spec_initial.md ------
+``````
+# Engineering Specification Creation
+
+You are about to transform a Product Requirements Document (PRD) into a comprehensive Engineering Specification.
+
+## Task ID: {{ additional_context.task_id }}
+
+## Product Requirements Document
+
+```
+{{ additional_context.prd_content }}
+```
+
+## Your Objective
+
+Analyze the PRD above and create a structured Engineering Specification that will serve as the foundation for implementation. Your specification should be detailed enough for engineers to understand the scope, approach, and technical requirements.
+
+## Required Specification Structure
+
+Create an EngineeringSpec with the following fields:
+
+### Basic Information
+- **project_name**: Clear, descriptive name for the project
+- **overview**: High-level summary of what this project accomplishes
+- **review_status**: Leave empty initially (will be filled during reviews)
+
+### Success Metrics
+- **definition_of_success**: Object containing:
+  - `product_perspective`: How success is measured from product/user standpoint
+  - `engineering_perspective`: Technical success criteria
+
+### Requirements
+- **functional_requirements**: List of Requirement objects, each with a `story` field (e.g., "As a user, I want to...")
+- **non_functional_requirements**: List of strings for performance, scalability, security requirements
+- **assumptions**: List of assumptions being made
+- **glossary**: Dictionary of technical terms and their definitions
+
+### Design Section
+- **major_design_considerations**: Key architectural decisions and trade-offs
+- **architecture_diagrams**: Text description or links to diagrams
+- **api_changes**: List of ApiDetails objects, each with:
+  - `name_and_method`: e.g., "GET /api/users"
+  - `description`: What the API does
+- **api_usage_estimates**: Expected load and usage patterns
+- **event_flows**: Description of event-driven workflows if applicable
+- **frontend_updates**: UI/UX changes required
+- **data_storage**: List of DataStorageField objects, each with:
+  - `field_name`: Name of the field
+  - `is_required`: Boolean
+  - `data_type`: Type of data
+  - `description`: What the field stores
+  - `example`: Example value
+- **auth_details**: Authentication/authorization requirements
+- **resiliency_plan**: How the system handles failures
+- **dependencies**: External services or libraries this depends on
+- **dependents**: Services that will depend on this
+
+### Observability
+- **failure_scenarios**: What could go wrong and how to detect it
+- **logging_plan**: What to log and when
+- **metrics_plan**: Key metrics to track
+- **monitoring_plan**: Alerts and dashboards needed
+
+### Testing & Rollout
+- **testing_approach**: Unit, integration, E2E testing strategy
+- **rollout_plan**: How to deploy safely
+- **release_milestones**: Key milestones and timeline
+- **ab_testing**: List of A/B tests if applicable
+
+### Additional Considerations
+- **new_technologies_considered**: Any new tech being introduced
+- **alternatives_considered**: Other approaches that were evaluated
+- **misc_considerations**: Any other important notes
+
+## Guidelines
+
+- Be comprehensive but concise
+- Focus on clarity and completeness
+- Consider operational aspects from day one
+- Think about failure modes and recovery
+- Ensure all fields are thoughtfully populated
+
+Call `submit_work` with your completed EngineeringSpec.
+``````
+------ src/alfred/templates/prompts/create_tasks/awaiting_ai_review.md ------
+``````
+# AI Review: Task Breakdown
+
+## Task ID: {{ task.task_id }}
+
+Please review the task breakdown for completeness and quality.
+
+## Tasks to Review
+
+{{ additional_context.drafting_tasks_artifact | tojson(indent=2) }}
+
+## Review Guidelines
+
+Evaluate the task breakdown for:
+1. Complete coverage of the technical specification
+2. Logical ordering and dependencies
+3. Appropriate task granularity (1-3 days of work)
+4. Clear acceptance criteria
+5. Technical feasibility
+
+Call `provide_review` with your assessment.
+``````
+------ src/alfred/templates/prompts/create_tasks/awaiting_human_review.md ------
+``````
+# Human Review: Task Breakdown
+
+## Task ID: {{ task.task_id }}
+
+Please review the task breakdown that has been created.
+
+## Tasks
+
+{{ additional_context.drafting_tasks_artifact | tojson(indent=2) }}
+
+## Your Options
+
+1. **Approve**: Call `provide_review` with `is_approved=true`
+2. **Request Changes**: Call `provide_review` with `is_approved=false` and specific feedback
+
+The task breakdown should comprehensively cover the technical specification.
+``````
+------ src/alfred/templates/prompts/create_tasks/drafting_tasks.md ------
+``````
+# Review Your Task Breakdown
+
+You previously created a task breakdown from the technical specification. Please review it carefully.
+
+## Task ID: {{ task.task_id }}
+
+## Your Task List
+
+{{ additional_context.artifact_content }}
+
+## Review Checklist
+
+Consider the following:
+
+1. **Completeness**: Do the tasks cover all aspects of the technical specification?
+2. **Dependencies**: Are task dependencies correctly identified and ordered?
+3. **Granularity**: Are tasks appropriately sized (1-3 days of work)?
+4. **Clarity**: Is each task clear and actionable?
+5. **Technical Accuracy**: Are the technical details correct?
+6. **Missing Tasks**: Are there any gaps? Consider:
+   - Error handling tasks
+   - Testing tasks
+   - Documentation tasks
+   - Migration tasks
+   - Monitoring/logging tasks
+
+## Validation Questions
+
+- Can these tasks be executed in the specified order?
+- Are acceptance criteria measurable and clear?
+- Would a developer understand exactly what to do for each task?
+- Are effort estimates reasonable?
+
+## Next Steps
+
+If you're satisfied with the task breakdown:
+- Call `provide_review` with `is_approved=true`
+
+If you want to make improvements:
+- Call `provide_review` with `is_approved=false` and provide specific feedback
+- You'll have the opportunity to revise the task list
+``````
+------ src/alfred/templates/prompts/create_tasks/drafting_tasks_initial.md ------
+``````
+# Task Breakdown from Engineering Specification
+
+You are about to break down an Engineering Specification into individual, actionable tasks.
+
+## Task ID: {{ additional_context.task_id }}
+
+## Engineering Specification Summary
+
+**Project**: {{ additional_context.technical_spec.project_name }}
+
+**Overview**: {{ additional_context.technical_spec.overview }}
+
+### Functional Requirements
+{% for req in additional_context.technical_spec.functional_requirements %}
+- {{ req.story }}
+{% endfor %}
+
+### API Changes
+{% for api in additional_context.technical_spec.api_changes %}
+- {{ api.name_and_method }}: {{ api.description }}
+{% endfor %}
+
+### Data Storage Requirements
+{% for field in additional_context.technical_spec.data_storage %}
+- {{ field.field_name }} ({{ field.data_type }}{% if field.is_required %}, required{% endif %}): {{ field.description }}
+{% endfor %}
+
+### Major Design Considerations
+{{ additional_context.technical_spec.major_design_considerations }}
+
+### Dependencies
+{% for dep in additional_context.technical_spec.dependencies %}
+- {{ dep }}
+{% endfor %}
+
+## Your Objective
+
+Analyze the technical specification above and create a comprehensive list of Task objects that cover the entire implementation. Each task should be:
+
+1. **Atomic**: A single, focused piece of work
+2. **Actionable**: Clear about what needs to be done
+3. **Measurable**: Has clear completion criteria
+4. **Ordered**: Consider dependencies between tasks
+
+## Task Structure
+
+Each Task object should have:
+- **id**: A unique identifier (e.g., "TASK-001", "TASK-002")
+- **title**: Clear, concise title describing the work
+- **description**: Detailed description of what needs to be done
+- **acceptance_criteria**: List of criteria that must be met for completion
+- **dependencies**: List of task IDs this task depends on (if any)
+- **estimated_effort**: Rough estimate (e.g., "Small", "Medium", "Large")
+- **technical_notes**: Any technical details or considerations
+
+## Guidelines for Task Creation
+
+1. **Coverage**: Ensure all aspects of the technical spec are covered
+2. **Granularity**: Tasks should be completable in 1-3 days of work
+3. **Dependencies**: Order tasks logically based on dependencies
+4. **Categories**: Consider grouping by:
+   - Data model/schema changes
+   - API endpoints
+   - Business logic
+   - UI components
+   - Testing
+   - Documentation
+   - DevOps/Infrastructure
+
+5. **Don't Forget**:
+   - Database migrations
+   - API documentation
+   - Unit and integration tests
+   - Error handling
+   - Logging and monitoring
+   - Security implementation
+   - Performance optimizations
+
+## Example Task
+
+```json
+{
+  "id": "TASK-001",
+  "title": "Create User Authentication Schema",
+  "description": "Design and implement the database schema for user authentication including users table, sessions table, and required indexes",
+  "acceptance_criteria": [
+    "Users table created with email, password_hash, created_at fields",
+    "Sessions table created with user_id, token, expires_at fields",
+    "Appropriate indexes added for performance",
+    "Migration script created and tested"
+  ],
+  "dependencies": [],
+  "estimated_effort": "Small",
+  "technical_notes": "Use bcrypt for password hashing, consider UUID for session tokens"
+}
+```
+
+Call `submit_work` with a TaskCreationArtifact containing your list of Task objects.
+``````
+------ src/alfred/templates/prompts/finalize_task/dispatching.md ------
+``````
+# TASK: {{ task.task_id }}
+# STATE: dispatching
+
+All phases are complete. Please finalize the task.
+
+**Test Results:**
+Exit Code: {{ task.completed_tool_outputs.test_task.exit_code }}
+Output: {{ task.completed_tool_outputs.test_task.output }}
+
+If tests passed, please:
+1. Create a git commit with the changes
+2. Create a pull request if appropriate
+
+Once finalization is complete, call `alfred.submit_work` with a `FinalizeArtifact` containing:
+- commit_hash: The git commit hash (or "N/A" if not applicable)
+- pr_url: The PR URL (or "N/A" if not applicable)
+``````
+------ src/alfred/templates/prompts/finalize_task/finalizing.md ------
+``````
+# Finalization Phase
+
+You are now finalizing task {{ task.task_id }}.
+
+## Finalization Steps
+
+Create a commit and pull request for the completed work.
+
+## Required Information
+
+Create a `FinalizeArtifact` with:
+- **commit_message**: Clear, descriptive commit message
+- **pr_title**: Pull request title
+- **pr_description**: Detailed pull request description
+
+Call `submit_work` with your finalization details.
+``````
 ------ src/alfred/templates/prompts/generic/awaiting_ai_review.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.provide_review`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_ai_review
@@ -2427,7 +3995,6 @@ Call `alfred.provide_review`.
 ``````
 ------ src/alfred/templates/prompts/generic/awaiting_human_review.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.provide_review`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_human_review
@@ -2447,9 +4014,103 @@ Present the artifact to the human developer for their review and approval. They 
 -   If they approve, call `alfred.provide_review` with `is_approved=True`.
 -   If they request changes, call `alfred.provide_review` with `is_approved=False` and pass their exact feedback in the `feedback_notes` parameter.
 ``````
+------ src/alfred/templates/prompts/implement_task/awaiting_ai_review.md ------
+``````
+# AI Review Required
+
+## Task: {{ task.task_id }}
+
+Your implementation manifest has been submitted and is now ready for AI review.
+
+### Submitted Implementation Manifest
+
+{% if artifact_content %}
+{{ artifact_content | tojson(indent=2) }}
+{% elif additional_context.artifact_content %}
+{{ additional_context.artifact_content | tojson(indent=2) }}
+{% else %}
+Error: No artifact content found
+{% endif %}
+
+### Review Process
+
+The AI will now review your implementation for:
+- Completeness of subtask completion
+- Quality of implementation summary
+- Adequacy of testing notes
+
+Please wait for the AI review to complete.
+``````
+------ src/alfred/templates/prompts/implement_task/awaiting_human_review.md ------
+``````
+# Human Review Required
+
+## Task: {{ task.task_id }}
+
+Your implementation has passed AI review and now requires human approval.
+
+### Implementation Summary
+
+{% if additional_context.implementing_artifact %}
+{{ additional_context.implementing_artifact.summary }}
+
+### Completed Subtasks
+{% for subtask_id in additional_context.implementing_artifact.completed_subtasks %}
+- {{ subtask_id }}
+{% endfor %}
+
+### Testing Notes
+{{ additional_context.implementing_artifact.testing_notes }}
+{% else %}
+Implementation artifact not found in context.
+{% endif %}
+
+### Next Steps
+
+Please wait for human review and approval to proceed to the next phase.
+``````
+------ src/alfred/templates/prompts/implement_task/dispatching.md ------
+``````
+# TASK: {{ task.task_id }}
+# STATE: dispatching
+
+The Execution Plan is ready. Please execute all subtasks from the plan.
+
+**Execution Plan:**
+{{ task.completed_tool_outputs.plan_task.execution_plan | tojson(indent=2) }}
+
+Once all subtasks are complete, call `alfred.submit_work` with an `ImplementationManifestArtifact` containing:
+- summary: Brief summary of what was implemented
+- completed_subtasks: List of completed subtask IDs
+- testing_notes: Any notes for the testing phase
+``````
+------ src/alfred/templates/prompts/implement_task/implementing.md ------
+``````
+# Implementation Phase
+
+You are now in the implementation phase for task {{ task.task_id }}.
+
+## Your Execution Plan
+
+{% if additional_context.execution_plan %}
+{{ additional_context.execution_plan | tojson(indent=2) }}
+{% else %}
+No execution plan found. Please check the planning phase outputs.
+{% endif %}
+
+## Your Mission
+
+Implement the subtasks from the execution plan. As you complete each subtask, call `mark_subtask_complete` to track progress.
+
+When all subtasks are complete, submit an `ImplementationManifestArtifact` with:
+- **summary**: Brief summary of what was implemented
+- **completed_subtasks**: List of completed subtask IDs
+- **testing_notes**: Any notes about testing or validation
+
+Call `submit_work` with your final implementation manifest.
+``````
 ------ src/alfred/templates/prompts/plan_task/awaiting_ai_review.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.provide_review`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_ai_review
@@ -2498,7 +4159,6 @@ Call `alfred.provide_review`.
 ``````
 ------ src/alfred/templates/prompts/plan_task/awaiting_human_review.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.provide_review`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_human_review
@@ -2546,21 +4206,11 @@ Based on the human developer's response:
 ``````
 ------ src/alfred/templates/prompts/plan_task/contextualize.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: contextualize
 
 I am beginning the planning process for '{{ task.title }}'.
-
----
-### **Persona Guidelines**
-
-**Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {% if persona.human %}{{ persona.human.communication_style }}{% else %}{{ persona.communication_style }}{% endif %}
-
-You MUST embody this persona. **Do not use repetitive, canned phrases.** Your first message to the user should be a unique greeting based on the persona's `greeting` and `style`. For example: `{% if persona.human %}{{ persona.human.greeting }}{% else %}{{ persona.greeting }}{% endif %}` (Use creative greetings each time). Adapt your language to feel like a genuine, collaborative partner.
----
 
 **Task Context:**
 - **Goal:** {{ task.context }}
@@ -2627,7 +4277,6 @@ You MUST now call `alfred.submit_work` with a `ContextAnalysisArtifact`.
 ``````
 ------ src/alfred/templates/prompts/plan_task/design.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: design
@@ -2699,7 +4348,6 @@ You MUST now call `alfred.submit_work` with a `DesignArtifact`.
 ``````
 ------ src/alfred/templates/prompts/plan_task/generate_subtasks.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: generate_subtasks
@@ -3141,20 +4789,12 @@ Generate subtasks now, with surgical precision.
 ``````
 ------ src/alfred/templates/prompts/plan_task/review_context.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: review_context
 
 My initial analysis has generated a list of questions that must be answered to proceed.
 
----
-### **Persona Guidelines**
-
-**Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {% if persona.human %}{{ persona.human.communication_style }}{% else %}{{ persona.communication_style }}{% endif %}
-
-You are now in a **Clarification Loop**. Your goal is to get complete answers for all your questions from the human developer.
 ---
 ### **Directive: Manage Clarification Dialogue**
 
@@ -3197,7 +4837,6 @@ You are now in a **Clarification Loop**. Your goal is to get complete answers fo
 ``````
 ------ src/alfred/templates/prompts/plan_task/review_design.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: review_design
@@ -3240,7 +4879,6 @@ If the design is flawed or incomplete, call `alfred.provide_review` with `is_app
 ``````
 ------ src/alfred/templates/prompts/plan_task/review_plan.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: review_plan
@@ -3284,7 +4922,6 @@ If the plan is flawed, call `provide_review` with `is_approved=False` and detail
 ``````
 ------ src/alfred/templates/prompts/plan_task/review_strategy.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: review_strategy
@@ -3328,7 +4965,6 @@ If the strategy is flawed, call `alfred.provide_review` with `is_approved=False`
 ``````
 ------ src/alfred/templates/prompts/plan_task/strategize.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: strategize
@@ -3352,12 +4988,6 @@ Please enhance your StrategyArtifact by incorporating this feedback. Consider ho
 {% else %}
 No specific clarifications were provided. Proceed based on the original task context and approved requirements.
 {% endif %}
-
----
-### **Thinking Methodology**
-{% for principle in persona.thinking_methodology %}
-- {{ principle }}
-{% endfor %}
 
 ---
 ### **Directive: Develop Technical Strategy**
@@ -3403,16 +5033,112 @@ You MUST now call `alfred.submit_work` with a `StrategyArtifact`.
 ``````
 ------ src/alfred/templates/prompts/plan_task/verified.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: verified
 
 # TODO: Implement full prompt.
 ``````
+------ src/alfred/templates/prompts/review_task/awaiting_ai_review.md ------
+``````
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_ai_review
+
+I have submitted the review artifact. I must now perform a self-review to ensure the feedback is clear, actionable, and fair.
+
+**My Submitted Artifact:**
+```json
+{{ additional_context.artifact_content | tojson(indent=2) }}
+```
+
+---
+### **Directive: AI Self-Review**
+
+**Review Checklist:**
+1. **Clarity:** Is the `summary` clear? Is the `feedback` specific and easy to understand?
+2. **Actionability:** If `approved` is false, does the feedback give the developer a clear path to fixing the issues?
+3. **Tone:** Is the feedback constructive and professional?
+
+---
+### **Required Action**
+Call `alfred.provide_review` with `is_approved=True` if the review artifact is high quality.
+``````
+------ src/alfred/templates/prompts/review_task/awaiting_human_review.md ------
+``````
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_human_review
+
+The review artifact has passed AI review and is now ready for your final approval.
+
+**Review Summary:**
+{{ additional_context.review_artifact.summary }}
+
+**Approval Status:** {{ "Approved" if additional_context.review_artifact.approved else "Changes Requested" }}
+
+**Feedback:**
+{% for item in additional_context.review_artifact.feedback %}
+- {{ item }}
+{% endfor %}
+
+---
+### **Required Action**
+
+Based on your assessment:
+- If you agree with the review, call `alfred.provide_review` with `is_approved=True`
+- If you want to modify the review, call `alfred.provide_review` with `is_approved=False` and provide feedback
+``````
+------ src/alfred/templates/prompts/review_task/dispatching.md ------
+``````
+# TASK: {{ task.task_id }}
+# STATE: dispatching
+
+Please review the implementation that was just completed.
+
+**Implementation Summary:**
+{{ task.completed_tool_outputs.implement_task.summary }}
+
+**Completed Subtasks:**
+{{ task.completed_tool_outputs.implement_task.completed_subtasks | tojson(indent=2) }}
+
+Review the code changes for:
+- Correctness and completeness
+- Code quality and standards
+- Security considerations
+- Performance implications
+
+Once your review is complete, call `alfred.submit_work` with a `ReviewArtifact` containing:
+- summary: Review summary
+- approved: true/false
+- feedback: List of feedback items
+``````
+------ src/alfred/templates/prompts/review_task/reviewing.md ------
+``````
+# Code Review Phase
+
+You are now reviewing the implementation for task {{ task.task_id }}.
+
+## Implementation Details
+
+Review the changes made during the implementation phase. Look for:
+- Code quality and style
+- Potential bugs or issues
+- Performance concerns
+- Security considerations
+- Best practices
+
+## Your Review
+
+Create a `ReviewArtifact` with:
+- **review_summary**: Overall assessment of the implementation
+- **issues_found**: List of any issues discovered
+- **suggestions**: List of improvement suggestions
+
+Call `submit_work` with your review findings.
+``````
 ------ src/alfred/templates/prompts/start_task/awaiting_ai_review.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.provide_review`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_ai_review
@@ -3461,7 +5187,6 @@ Call `alfred.provide_review`.
 ``````
 ------ src/alfred/templates/prompts/start_task/awaiting_branch_creation.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.start_task`
 # TASK: {{ task.task_id }}
 # STATE: branch_created
@@ -3511,14 +5236,11 @@ You MUST now call `alfred.submit_work` with a `BranchCreationArtifact`.
 ``````
 ------ src/alfred/templates/prompts/start_task/awaiting_git_status.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.start_task`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_git_status
 
-Welcome. I am {{ persona.name }}, your {{ persona.title }}.
-
-{{ persona.context }}
+Welcome. Let's begin setting up the workspace for this task.
 
 ---
 ### **System Checkpoint: Environment Assessment**
@@ -3565,7 +5287,6 @@ You MUST now call `alfred.submit_work` with a `GitStatusArtifact`.
 ``````
 ------ src/alfred/templates/prompts/start_task/awaiting_human_review.md ------
 ``````
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.provide_review`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_human_review
@@ -3608,41 +5329,558 @@ Call `alfred.provide_review`.
 - If you approve proceeding to the next step, set `is_approved=True`.
 - If you need changes or have concerns, set `is_approved=False` and provide `feedback_notes` with your specific requirements.
 ``````
+------ src/alfred/templates/prompts/test_task/awaiting_ai_review.md ------
+``````
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_ai_review
+
+I have submitted the test results. I must now perform an automated analysis of the results to determine the pass/fail status.
+
+**My Submitted Artifact:**
+```json
+{{ additional_context.artifact_content | tojson(indent=2) }}
+```
+
+---
+### **Directive: Automated Test Result Analysis**
+
+**Analysis Rule:**
+- Examine the `exit_code` field in the artifact.
+- If `exit_code` is `0`, the test run is considered a **PASS**.
+- If `exit_code` is anything other than `0`, the test run is a **FAIL**.
+
+---
+### **Required Action**
+Call `alfred.provide_review`.
+- Set `is_approved=True` if `exit_code` is `0`.
+- Set `is_approved=False` if `exit_code` is not `0`. Provide `feedback_notes` stating "Tests failed with exit code [exit_code]. See output for details."
+``````
+------ src/alfred/templates/prompts/test_task/awaiting_human_review.md ------
+``````
+# TOOL: `alfred.provide_review`
+# TASK: {{ task.task_id }}
+# STATE: awaiting_human_review
+
+The test results have been analyzed and are ready for your review.
+
+**Test Command:** `{{ additional_context.test_artifact.command }}`
+
+**Exit Code:** {{ additional_context.test_artifact.exit_code }} ({{ "PASS" if additional_context.test_artifact.exit_code == 0 else "FAIL" }})
+
+**Test Output:**
+```
+{{ additional_context.test_artifact.output }}
+```
+
+---
+### **Required Action**
+
+Based on the test results:
+- If tests are satisfactory, call `alfred.provide_review` with `is_approved=True`
+- If tests need to be re-run or modified, call `alfred.provide_review` with `is_approved=False` and provide feedback
+``````
+------ src/alfred/templates/prompts/test_task/dispatching.md ------
+``````
+# TASK: {{ task.task_id }}
+# STATE: dispatching
+
+Please run the test suite to verify the implementation.
+
+**Testing Notes from Implementation:**
+{{ task.completed_tool_outputs.implement_task.testing_notes }}
+
+Run the appropriate test command (e.g., `uv run python -m pytest tests/ -v`) and report the results.
+
+Once testing is complete, call `alfred.submit_work` with a `TestResultArtifact` containing:
+- command: The test command that was run
+- exit_code: The exit code (0 for success)
+- output: The test output
+``````
+------ src/alfred/templates/prompts/test_task/testing.md ------
+``````
+# Testing Phase
+
+You are now in the testing phase for task {{ task.task_id }}.
+
+## Test Objectives
+
+Run tests to validate the implementation. This includes:
+- Unit tests
+- Integration tests
+- Any manual validation required
+
+## Test Results
+
+Create a `TestResultArtifact` with:
+- **test_summary**: Overall test results summary
+- **tests_run**: List of test names/identifiers that were executed
+- **test_results**: List of test result objects with:
+  - `name`: Test name
+  - `status`: "passed" or "failed"
+  - `message`: Optional failure message
+
+Call `submit_work` with your test results.
+``````
 ------ src/alfred/templates/prompts/verified.md ------
 ``````
-# Task Complete: {{ persona.name }}
+# Task Complete
 
-Task `{{ task_id }}` has been successfully completed by {{ persona.title }} ({{ persona.name }}).
+Task `{{ task_id }}` has been successfully completed.
 
 The work has been verified and is ready for the next phase of the workflow.
 
-**Status:** {{ persona.completion_status }}
-
-This is an informational prompt. No further action is required from this persona.
+This is an informational prompt. No further action is required.
 ``````
 ------ src/alfred/tools/__init__.py ------
 ``````
+
+``````
+------ src/alfred/tools/approve_and_advance.py ------
+``````
+from src.alfred.state.manager import state_manager
+from src.alfred.models.schemas import TaskStatus, ToolResponse
+from src.alfred.constants import ToolName
+from src.alfred.lib.artifact_manager import artifact_manager
+from src.alfred.lib.logger import get_logger
+
+logger = get_logger(__name__)
+
+STATUS_TRANSITION_MAP = {
+    TaskStatus.CREATING_SPEC: TaskStatus.SPEC_COMPLETED,
+    TaskStatus.CREATING_TASKS: TaskStatus.TASKS_CREATED,
+    TaskStatus.PLANNING: TaskStatus.READY_FOR_DEVELOPMENT,
+    TaskStatus.IN_DEVELOPMENT: TaskStatus.READY_FOR_REVIEW,
+    TaskStatus.IN_REVIEW: TaskStatus.READY_FOR_TESTING,
+    TaskStatus.IN_TESTING: TaskStatus.READY_FOR_FINALIZATION,
+    TaskStatus.READY_FOR_FINALIZATION: TaskStatus.DONE,
+}
+
+ARTIFACT_PRODUCER_MAP = {
+    TaskStatus.CREATING_SPEC: ToolName.CREATE_SPEC,
+    TaskStatus.CREATING_TASKS: ToolName.CREATE_TASKS,
+    TaskStatus.PLANNING: ToolName.PLAN_TASK,
+    TaskStatus.IN_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
+    TaskStatus.IN_REVIEW: ToolName.REVIEW_TASK,
+    TaskStatus.IN_TESTING: ToolName.TEST_TASK,
+    TaskStatus.READY_FOR_FINALIZATION: ToolName.FINALIZE_TASK,
+}
+
+
+def approve_and_advance_impl(task_id: str) -> ToolResponse:
+    task_state = state_manager.load_or_create(task_id)
+    current_status = task_state.task_status
+
+    if current_status not in STATUS_TRANSITION_MAP:
+        return ToolResponse(status="error", message=f"Cannot advance task '{task_id}'. Its status is '{current_status.value}', which is not a completed phase.")
+
+    producer_tool_name = ARTIFACT_PRODUCER_MAP.get(current_status)
+    if producer_tool_name:
+        # Determine workflow step number based on status
+        workflow_step_map = {
+            TaskStatus.CREATING_SPEC: 1,
+            TaskStatus.CREATING_TASKS: 2,
+            TaskStatus.PLANNING: 3,
+            TaskStatus.IN_DEVELOPMENT: 4,
+            TaskStatus.IN_REVIEW: 5,
+            TaskStatus.IN_TESTING: 6,
+            TaskStatus.READY_FOR_FINALIZATION: 7,
+        }
+        workflow_step = workflow_step_map.get(current_status, 0)
+
+        # Archive the scratchpad BEFORE transitioning
+        artifact_manager.archive_scratchpad(task_id, producer_tool_name, workflow_step)
+        logger.info(f"Archived scratchpad for tool '{producer_tool_name}' at workflow step {workflow_step}")
+
+        final_artifact = task_state.completed_tool_outputs.get(producer_tool_name)
+        if final_artifact:
+            artifact_manager.archive_final_artifact(task_id, producer_tool_name, final_artifact)
+            logger.info(f"Archived final artifact for phase '{current_status.value}'.")
+        else:
+            logger.warning(f"No final artifact found for tool '{producer_tool_name}' to archive.")
+
+    next_status = STATUS_TRANSITION_MAP[current_status]
+    state_manager.update_task_status(task_id, next_status)
+
+    message = f"Phase '{current_status.value}' approved. Task '{task_id}' is now in status '{next_status.value}'."
+    logger.info(message)
+
+    if next_status == TaskStatus.DONE:
+        message += "\n\nThe task is fully complete."
+        return ToolResponse(status="success", message=message)
+
+    return ToolResponse(status="success", message=message, next_prompt=f"To proceed, call `alfred.work_on(task_id='{task_id}')` to get the next action.")
+
+``````
+------ src/alfred/tools/create_spec.py ------
+``````
+# src/alfred/tools/create_spec.py
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.constants import ToolName
+from src.alfred.core.workflow import CreateSpecTool
+from src.alfred.models.planning_artifacts import PRDInputArtifact
+from src.alfred.models.engineering_spec import EngineeringSpec
+from src.alfred.state.manager import state_manager
+
+
+async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
+    """
+    Initializes the workflow for creating a technical specification from a PRD.
+
+    This is the first tool in the "idea-to-code" pipeline. It takes a Product
+    Requirements Document (PRD) and guides the transformation into a structured
+    Technical Specification that can be used for engineering planning.
+
+    Args:
+        task_id: The unique identifier for the epic/feature (e.g., "EPIC-01")
+        prd_content: The raw PRD content to analyze
+
+    Returns:
+        ToolResponse containing the first prompt to guide spec creation
+    """
+    # Load or create task state
+    task_state = state_manager.load_or_create_task_state(task_id)
+
+    # Update status to creating_spec
+    from src.alfred.models.schemas import TaskStatus
+
+    state_manager.update_task_status(task_id, TaskStatus.CREATING_SPEC)
+
+    # Initialize the create_spec tool
+    tool = CreateSpecTool(task_id)
+
+    # Store the PRD content in context
+    prd_artifact = PRDInputArtifact(prd_content=prd_content)
+    tool.context_store["prd_input"] = prd_artifact
+
+    # Register the tool
+    state_manager.register_tool(task_id, tool)
+
+    # Dispatch immediately to drafting state
+    tool.dispatch()
+    state_manager.update_tool_state(task_id, tool)
+
+    # Load the drafting prompt
+    from src.alfred.core.prompter import prompter
+    from src.alfred.lib.task_utils import load_task
+
+    task = load_task(task_id)
+    if not task:
+        # Create a basic task object for the spec creation phase
+        from src.alfred.models.schemas import Task
+
+        task = Task(
+            task_id=task_id,
+            title=f"Create specification for {task_id}",
+            context="Creating engineering specification from PRD",
+            implementation_details="Transform PRD into engineering specification",
+            task_status=TaskStatus.CREATING_SPEC,
+        )
+
+    prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=tool.tool_name,
+        state=tool.state,
+        additional_context={
+            "task_id": task_id,
+            "prd_content": prd_content,
+        },
+    )
+
+    return ToolResponse(status="success", message=f"Starting specification creation for task '{task_id}'.", next_prompt=prompt)
+
+``````
+------ src/alfred/tools/create_tasks.py ------
+``````
+# src/alfred/tools/create_tasks.py
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.constants import ToolName
+from src.alfred.core.workflow import CreateTasksTool
+from src.alfred.models.engineering_spec import EngineeringSpec
+from src.alfred.lib.logger import get_logger
+from src.alfred.state.manager import state_manager
+
+logger = get_logger(__name__)
+
+
+async def create_tasks_impl(task_id: str) -> ToolResponse:
+    """
+    Initializes the workflow for creating tasks from a technical specification.
+
+    This is the second tool in the "idea-to-code" pipeline. It takes a completed
+    Technical Specification and breaks it down into actionable Task objects that
+    can be individually planned and implemented.
+
+    Args:
+        task_id: The unique identifier for the epic/feature that has a completed spec
+
+    Returns:
+        ToolResponse containing the first prompt to guide task creation
+    """
+    # Load the task state
+    task_state = state_manager.load_or_create_task_state(task_id)
+
+    from src.alfred.models.schemas import TaskStatus
+
+    # Check if we have a completed technical spec
+    if task_state.task_status != TaskStatus.SPEC_COMPLETED:
+        return ToolResponse(status="error", message=f"Task {task_id} does not have a completed technical specification. Current status: {task_state.task_status.value}")
+
+    # Load the engineering spec from archive
+    archive_path = state_manager.get_archive_path(task_id)
+    spec_file = archive_path / "engineering_spec.json"
+
+    if not spec_file.exists():
+        return ToolResponse(status="error", message=f"Technical specification not found for task {task_id}. Please complete create_spec first.")
+
+    try:
+        import json
+
+        with open(spec_file, "r") as f:
+            spec_data = json.load(f)
+        tech_spec = EngineeringSpec(**spec_data)
+    except Exception as e:
+        logger.error(f"Failed to load technical spec for {task_id}: {e}")
+        return ToolResponse(status="error", message=f"Failed to load technical specification: {str(e)}")
+
+    # Update status
+    state_manager.update_task_status(task_id, TaskStatus.CREATING_TASKS)
+
+    # Initialize the create_tasks tool
+    tool = CreateTasksTool(task_id)
+
+    # Store the technical spec in context
+    tool.context_store["technical_spec"] = tech_spec
+
+    # Register the tool
+    state_manager.register_tool(task_id, tool)
+
+    # Dispatch immediately to drafting state
+    tool.dispatch()
+    state_manager.update_tool_state(task_id, tool)
+
+    # Load the drafting prompt with the technical spec
+    from src.alfred.core.prompter import prompter
+    from src.alfred.lib.task_utils import load_task
+
+    task = load_task(task_id)
+    if not task:
+        # Create a basic task object for the task creation phase
+        from src.alfred.models.schemas import Task
+
+        task = Task(
+            task_id=task_id,
+            title=f"Create tasks for {task_id}",
+            context="Breaking down engineering specification into tasks",
+            implementation_details="Transform engineering spec into actionable tasks",
+            task_status=TaskStatus.CREATING_TASKS,
+        )
+
+    prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=tool.tool_name,
+        state=tool.state,
+        additional_context={
+            "task_id": task_id,
+            "technical_spec": tech_spec.model_dump(),
+        },
+    )
+
+    return ToolResponse(status="success", message=f"Starting task breakdown for '{task_id}'.", next_prompt=prompt)
+
+``````
+------ src/alfred/tools/finalize_task.py ------
+``````
+from src.alfred.models.schemas import ToolResponse, TaskStatus
+from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.lib.logger import get_logger
+from src.alfred.lib.task_utils import load_task
+from src.alfred.state.manager import state_manager
+from src.alfred.state.recovery import ToolRecovery
+from src.alfred.core.workflow import FinalizeTaskTool
+from src.alfred.core.prompter import prompter
+from src.alfred.constants import ToolName
+
+logger = get_logger(__name__)
+
+
+async def finalize_task_impl(task_id: str) -> ToolResponse:
+    """
+    Finalize task entry point - handles the completion phase
+    """
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    if task_id in orchestrator.active_tools:
+        tool_instance = orchestrator.active_tools[task_id]
+        logger.info(f"Found active tool for task {task_id} in state {tool_instance.state}")
+    else:
+        tool_instance = ToolRecovery.recover_tool(task_id)
+        if tool_instance:
+            orchestrator.active_tools[task_id] = tool_instance
+            logger.info(f"Recovered tool from disk for task {task_id} in state {tool_instance.state}")
+        else:
+            if task.task_status != TaskStatus.READY_FOR_FINALIZATION:
+                return ToolResponse(status="error", message=f"Task '{task_id}' has status '{task.task_status.value}'. Finalization can only start on a 'ready_for_finalization' task.")
+
+            tool_instance = FinalizeTaskTool(task_id=task_id)
+            orchestrator.active_tools[task_id] = tool_instance
+            state_manager.update_task_status(task_id, TaskStatus.READY_FOR_FINALIZATION)
+
+            # Dispatch immediately to finalizing state
+            tool_instance.dispatch()
+            state_manager.update_tool_state(task_id, tool_instance)
+            logger.info(f"Created new finalize tool for task {task_id}")
+
+    prompt_context = tool_instance.context_store.copy()
+    prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=tool_instance.tool_name,
+        state=tool_instance.state,
+        additional_context=prompt_context,
+    )
+
+    message = f"Finalization phase initiated for task '{task_id}'."
+    return ToolResponse(status="success", message=message, next_prompt=prompt)
+
+``````
+------ src/alfred/tools/get_next_task.py ------
+``````
+"""Get next task implementation using the task provider factory."""
+
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.task_providers.factory import get_provider
+from src.alfred.lib.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+async def get_next_task_impl() -> ToolResponse:
+    """Gets the next recommended task using the configured provider.
+
+    This tool intelligently determines which task should be worked on next
+    based on task status, priority, and other factors. It uses the configured
+    task provider (local, jira, linear) to fetch and rank tasks.
+
+    Returns:
+        ToolResponse containing:
+        - The recommended task ID and details
+        - Reasoning for the recommendation
+        - Alternative tasks that could be worked on
+        - A prompt suggesting how to proceed
+    """
+    try:
+        # Get the configured task provider
+        provider = get_provider()
+
+        # Delegate to the provider's implementation
+        return provider.get_next_task()
+
+    except NotImplementedError as e:
+        # Handle providers that aren't implemented yet
+        logger.error(f"Provider not implemented: {e}")
+        return ToolResponse(status="error", message=str(e))
+    except Exception as e:
+        # Handle any other errors
+        logger.error(f"Failed to get next task: {e}")
+        return ToolResponse(status="error", message=f"Failed to get next task: {str(e)}")
+
+``````
+------ src/alfred/tools/implement_task.py ------
+``````
+from src.alfred.models.schemas import ToolResponse, TaskStatus
+from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.lib.logger import get_logger
+from src.alfred.lib.task_utils import load_task
+from src.alfred.state.manager import state_manager
+from src.alfred.state.recovery import ToolRecovery
+from src.alfred.core.workflow import ImplementTaskTool
+from src.alfred.core.prompter import prompter
+from src.alfred.constants import ToolName
+
+logger = get_logger(__name__)
+
+
+async def implement_task_impl(task_id: str) -> ToolResponse:
+    """
+    Implementation task entry point - handles the development phase
+    """
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    if task_id in orchestrator.active_tools:
+        tool_instance = orchestrator.active_tools[task_id]
+        logger.info(f"Found active tool for task {task_id} in state {tool_instance.state}")
+    else:
+        tool_instance = ToolRecovery.recover_tool(task_id)
+        if tool_instance:
+            orchestrator.active_tools[task_id] = tool_instance
+            logger.info(f"Recovered tool from disk for task {task_id} in state {tool_instance.state}")
+        else:
+            if task.task_status != TaskStatus.READY_FOR_DEVELOPMENT:
+                return ToolResponse(status="error", message=f"Task '{task_id}' has status '{task.task_status.value}'. Implementation can only start on a 'ready_for_development' task.")
+
+            tool_instance = ImplementTaskTool(task_id=task_id)
+            orchestrator.active_tools[task_id] = tool_instance
+            state_manager.update_task_status(task_id, TaskStatus.IN_DEVELOPMENT)
+
+            # Dispatch immediately to implementing state
+            tool_instance.dispatch()
+            state_manager.update_tool_state(task_id, tool_instance)
+            logger.info(f"Created new implementation tool for task {task_id}")
+
+    # Load execution plan from previous phase
+    task_state = state_manager.load_or_create(task_id)
+    logger.info(f"Completed tool outputs: {list(task_state.completed_tool_outputs.keys())}")
+    plan_task_outputs = task_state.completed_tool_outputs.get(ToolName.PLAN_TASK, {})
+    logger.info(f"Plan task outputs type: {type(plan_task_outputs)}")
+
+    # The execution plan IS the plan_task output (it's the ExecutionPlanArtifact)
+    if plan_task_outputs and isinstance(plan_task_outputs, dict) and "subtasks" in plan_task_outputs:
+        # Store with the key that mark_subtask_complete expects
+        tool_instance.context_store["execution_plan_artifact"] = plan_task_outputs
+        logger.info(f"Loaded execution plan with {len(plan_task_outputs.get('subtasks', []))} subtasks")
+    else:
+        logger.warning("No execution plan found from plan_task phase")
+
+    prompt_context = tool_instance.context_store.copy()
+    prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=tool_instance.tool_name,
+        state=tool_instance.state,
+        additional_context=prompt_context,
+    )
+
+    message = f"Implementation initiated for task '{task_id}'."
+    return ToolResponse(status="success", message=message, next_prompt=prompt)
 
 ``````
 ------ src/alfred/tools/initialize.py ------
 ``````
 """
 Initialization tool for Alfred.
+
+This module provides the interactive initialize_project tool that sets up the
+.alfred directory with provider-specific configuration.
 """
 
-import shutil
+import logging
 from pathlib import Path
+import shutil
 
 from src.alfred.config.manager import ConfigManager
 from src.alfred.config.settings import settings
-from src.alfred.models.alfred_config import AlfredConfig, ProviderConfig, TaskProvider
+from src.alfred.constants import ResponseStatus
+from src.alfred.models.alfred_config import TaskProvider
 from src.alfred.models.schemas import ToolResponse
+
+logger = logging.getLogger(__name__)
 
 
 def initialize_project(provider: str | None = None, test_dir: Path | None = None) -> ToolResponse:
-    """
-    Initializes the project workspace by creating the .alfred directory with
-    provider-specific configuration.
+    """Initialize Alfred with provider selection.
 
     Args:
         provider: Provider choice ('jira', 'linear', or 'local'). If None, returns available choices.
@@ -3654,44 +5892,38 @@ def initialize_project(provider: str | None = None, test_dir: Path | None = None
     alfred_dir = test_dir if test_dir is not None else settings.alfred_dir
 
     # Check if already initialized
-    if alfred_dir.exists() and (alfred_dir / "workflow.yml").exists():
-        return ToolResponse(status="success", message=f"Project already initialized at '{alfred_dir}'. No changes were made.")
+    if _is_already_initialized(alfred_dir):
+        return _create_already_initialized_response(alfred_dir)
 
     # Return choices if no provider specified
     if provider is None:
         return _get_provider_choices_response()
 
     try:
-        # Validate provider choice
+        # Validate and perform initialization
         provider_choice = _validate_provider_choice(provider)
+        return _perform_initialization(provider_choice, alfred_dir)
 
-        # Create base directory
-        alfred_dir.mkdir(parents=True, exist_ok=True)
+    except KeyboardInterrupt:
+        return ToolResponse(status=ResponseStatus.ERROR, message="Initialization cancelled by user.")
+    except (OSError, shutil.Error, ValueError) as e:
+        return ToolResponse(
+            status=ResponseStatus.ERROR,
+            message=f"Failed to initialize project. Error: {e}",
+        )
 
-        # Copy default workflow file
-        workflow_file = alfred_dir / settings.workflow_filename
-        shutil.copyfile(settings.packaged_workflow_file, workflow_file)
 
-        # Copy default persona and template directories
-        shutil.copytree(settings.packaged_personas_dir, alfred_dir / "personas")
-        shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates")
+def _is_already_initialized(alfred_dir: Path) -> bool:
+    """Check if project is already initialized."""
+    return alfred_dir.exists() and (alfred_dir / "workflow.yml").exists()
 
-        # Create workspace directory
-        workspace_dir = alfred_dir / "workspace"
-        workspace_dir.mkdir(exist_ok=True)
 
-        # Create configuration with selected provider
-        config_manager = ConfigManager(alfred_dir)
-        config = AlfredConfig(providers=ProviderConfig(task_provider=TaskProvider(provider_choice)))
-        config_manager.save(config)
-
-        # Setup provider-specific resources
-        _setup_provider_resources(provider_choice, alfred_dir)
-
-        return ToolResponse(status="success", message=f"Successfully initialized Alfred project in '{alfred_dir}' with {provider_choice} provider.")
-
-    except (OSError, shutil.Error) as e:
-        return ToolResponse(status="error", message=f"Failed to initialize project due to a file system error: {e}")
+def _create_already_initialized_response(alfred_dir: Path) -> ToolResponse:
+    """Create response for already initialized project."""
+    return ToolResponse(
+        status=ResponseStatus.SUCCESS,
+        message=f"Project already initialized at '{alfred_dir}'. No changes were made.",
+    )
 
 
 def _get_provider_choices_response() -> ToolResponse:
@@ -3727,18 +5959,127 @@ def _validate_provider_choice(provider: str) -> str:
     """Validate and normalize provider choice."""
     provider_choice = provider.lower()
     if provider_choice not in ["jira", "linear", "local"]:
-        raise ValueError(f"Invalid provider '{provider}'. Must be 'jira', 'linear', or 'local'.")
+        msg = f"Invalid provider '{provider}'. Must be 'jira', 'linear', or 'local'."
+        raise ValueError(msg)
     return provider_choice
+
+
+def _perform_initialization(provider_choice: str, alfred_dir: Path) -> ToolResponse:
+    """Perform the actual initialization setup."""
+    # Create directories
+    _create_project_directories(alfred_dir)
+
+    # Copy default workflow file
+    _copy_workflow_file(alfred_dir)
+
+    # Copy default templates to user workspace
+    _copy_default_templates(alfred_dir)
+
+    # Setup provider-specific configuration
+    result = _setup_provider_configuration(provider_choice, alfred_dir)
+    if result["status"] == ResponseStatus.ERROR:
+        return ToolResponse(status=ResponseStatus.ERROR, message=result["message"])
+
+    return ToolResponse(
+        status=ResponseStatus.SUCCESS,
+        message=f"Successfully initialized Alfred project in '{alfred_dir}' with {provider_choice} provider.",
+    )
+
+
+def _create_project_directories(alfred_dir: Path) -> None:
+    """Create the necessary project directories."""
+    alfred_dir.mkdir(parents=True, exist_ok=True)
+    (alfred_dir / "workspace").mkdir(exist_ok=True)
+    (alfred_dir / "specs").mkdir(exist_ok=True)
+    (alfred_dir / "tasks").mkdir(exist_ok=True)
+    logger.info(f"Created project directories at {alfred_dir}")
+
+
+def _copy_workflow_file(alfred_dir: Path) -> None:
+    """Copy the default workflow file."""
+    workflow_file = alfred_dir / settings.workflow_filename
+    shutil.copyfile(settings.packaged_workflow_file, workflow_file)
+    logger.info(f"Copied workflow file to {workflow_file}")
+
+
+def _copy_default_templates(alfred_dir: Path) -> None:
+    """Copy default templates to user workspace for customization."""
+    try:
+        shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates", dirs_exist_ok=True)
+        logger.info(f"Copied templates to {alfred_dir / 'templates'}")
+    except (OSError, shutil.Error) as e:
+        msg = f"Failed to copy templates: {e}"
+        raise OSError(msg) from e
+
+
+def _setup_provider_configuration(provider_choice: str, alfred_dir: Path) -> dict:
+    """Setup provider-specific configuration."""
+    config_manager = ConfigManager(alfred_dir)
+
+    if provider_choice == "jira":
+        return _setup_jira_provider(config_manager, alfred_dir)
+    if provider_choice == "linear":
+        return _setup_linear_provider(config_manager, alfred_dir)
+    if provider_choice == "local":
+        return _setup_local_provider(config_manager, alfred_dir)
+
+    return {"status": ResponseStatus.ERROR, "message": f"Unknown provider: {provider_choice}"}
+
+
+def _setup_jira_provider(config_manager: ConfigManager, alfred_dir: Path) -> dict:
+    """Setup Jira provider with MCP connectivity check."""
+    if _validate_mcp_connectivity("jira"):
+        config = config_manager.create_default()
+        config.providers.task_provider = TaskProvider.JIRA
+        config_manager.save(config)
+        _setup_provider_resources("jira", alfred_dir)
+        logger.info("Configured Jira provider")
+        return {"status": ResponseStatus.SUCCESS}
+    return {
+        "status": ResponseStatus.ERROR,
+        "message": "Could not connect to the Atlassian MCP server. Please ensure it is running and accessible.",
+    }
+
+
+def _setup_linear_provider(config_manager: ConfigManager, alfred_dir: Path) -> dict:
+    """Setup Linear provider with MCP connectivity check."""
+    if _validate_mcp_connectivity("linear"):
+        config = config_manager.create_default()
+        config.providers.task_provider = TaskProvider.LINEAR
+        config_manager.save(config)
+        _setup_provider_resources("linear", alfred_dir)
+        logger.info("Configured Linear provider")
+        return {"status": ResponseStatus.SUCCESS}
+    return {
+        "status": ResponseStatus.ERROR,
+        "message": "Could not connect to the Linear MCP server. Please ensure it is running and accessible.",
+    }
+
+
+def _setup_local_provider(config_manager: ConfigManager, alfred_dir: Path) -> dict:
+    """Setup local provider with tasks inbox and README."""
+    # Create configuration
+    config = config_manager.create_default()
+    config.providers.task_provider = TaskProvider.LOCAL
+    config_manager.save(config)
+
+    # Setup provider resources
+    _setup_provider_resources("local", alfred_dir)
+
+    logger.info("Configured local provider")
+    return {"status": ResponseStatus.SUCCESS}
 
 
 def _setup_provider_resources(provider: str, alfred_dir: Path) -> None:
     """Setup provider-specific resources."""
-    if provider == "local":
-        # Create tasks inbox for local provider
-        tasks_dir = alfred_dir / "tasks"
-        tasks_dir.mkdir(exist_ok=True)
+    # Always create tasks directory for cache-first architecture
+    tasks_dir = alfred_dir / "tasks"
+    tasks_dir.mkdir(exist_ok=True)
 
-        readme_path = tasks_dir / "README.md"
+    # Create README with provider-specific content
+    readme_path = tasks_dir / "README.md"
+
+    if provider == "local":
         readme_content = """# Local Task Files
 
 This directory is your task inbox for Alfred.
@@ -3762,9 +6103,53 @@ Detailed description of what needs to be done
 - [ ] Criterion 3
 ```
 
-When you run `begin_task("TASK-ID")`, Alfred will read the corresponding file and start the workflow.
+When you run `work_on("TASK-ID")`, Alfred will read the corresponding file and start the workflow.
 """
-        readme_path.write_text(readme_content, encoding="utf-8")
+    else:
+        # For Jira/Linear providers
+        readme_content = f"""# Alfred Task Cache
+
+This directory contains the local markdown representation of all tasks Alfred is aware of.
+
+Since you're using the **{provider}** provider, this directory acts as a local cache. Tasks are fetched from {provider.capitalize()} and stored here before being worked on.
+
+## Task Format
+
+All cached tasks follow the same markdown format:
+
+```markdown
+# TASK-ID
+
+## Summary
+Brief summary of the task
+
+## Description
+Detailed description of what needs to be done
+
+## Acceptance Criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
+- [ ] Criterion 3
+```
+
+Tasks will be automatically cached here when you work on them using `work_on("TASK-ID")`.
+"""
+
+    readme_path.write_text(readme_content, encoding="utf-8")
+    logger.info(f"Created {provider} provider resources at {tasks_dir}")
+
+
+def _validate_mcp_connectivity(provider: str) -> bool:
+    """Check if required MCP tools are available for the given provider.
+
+    This is a placeholder for actual MCP connectivity validation.
+    In a production system, this would attempt to call MCP tools
+    to verify they are available and responding.
+    """
+    # TODO: Implement actual MCP tool availability check
+    # For now, we'll simulate the check and return True
+    logger.info(f"Simulating MCP connectivity check for {provider} provider")
+    return True
 
 ``````
 ------ src/alfred/tools/plan_task.py ------
@@ -3778,7 +6163,6 @@ from src.alfred.lib.logger import get_logger, setup_task_logging
 from src.alfred.lib.task_utils import load_task
 from src.alfred.models.schemas import TaskStatus, ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.state.manager import state_manager
 from src.alfred.state.recovery import ToolRecovery
 
@@ -3791,20 +6175,23 @@ async def plan_task_impl(task_id: str) -> ToolResponse:
 
     task = load_task(task_id)
     if not task:
-        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+        return ToolResponse(
+            status="error", 
+            message=f"Task '{task_id}' not found. Please ensure:\n"
+                    f"1. Task file exists at .alfred/tasks/{task_id}.md\n"
+                    f"2. Task file follows the correct format (see .alfred/tasks/README.md)\n"
+                    f"3. Review .alfred/tasks/SAMPLE-FORMAT.md for a working example\n"
+                    f"4. Check logs for specific parsing errors if file exists"
+        )
 
     if task_id in orchestrator.active_tools:
         tool_instance = orchestrator.active_tools[task_id]
-        logger.info(
-            f"Found active tool for task {task_id} in state {tool_instance.state}"
-        )
+        logger.info(f"Found active tool for task {task_id} in state {tool_instance.state}")
     else:
         tool_instance = ToolRecovery.recover_tool(task_id)
         if tool_instance:
             orchestrator.active_tools[task_id] = tool_instance
-            logger.info(
-                f"Recovered tool from disk for task {task_id} in state {tool_instance.state}"
-            )
+            logger.info(f"Recovered tool from disk for task {task_id} in state {tool_instance.state}")
         else:
             if task.task_status not in [TaskStatus.NEW, TaskStatus.PLANNING]:
                 return ToolResponse(
@@ -3821,27 +6208,18 @@ async def plan_task_impl(task_id: str) -> ToolResponse:
             state_manager.update_tool_state(task_id, tool_instance)
             logger.info(f"Created new planning tool for task {task_id}")
 
-    try:
-        persona_config = load_persona(tool_instance.persona_name or "planning")
-    except FileNotFoundError as e:
-        return ToolResponse(status="error", message=str(e))
-
     prompt_context = tool_instance.context_store.copy()
     prompt = prompter.generate_prompt(
         task=task,
         tool_name=tool_instance.tool_name,
         state=tool_instance.state,
-        persona_config=persona_config,
         additional_context=prompt_context,
     )
 
-    message = (
-        f"Planning initiated for task '{task_id}'."
-        if tool_instance.state == PlanTaskState.CONTEXTUALIZE.value
-        else f"Resumed planning for task '{task_id}' from state '{tool_instance.state}'."
-    )
+    message = f"Planning initiated for task '{task_id}'." if tool_instance.state == PlanTaskState.CONTEXTUALIZE.value else f"Resumed planning for task '{task_id}' from state '{tool_instance.state}'."
 
     return ToolResponse(status="success", message=message, next_prompt=prompt)
+
 ``````
 ------ src/alfred/tools/progress.py ------
 ``````
@@ -3849,6 +6227,7 @@ async def plan_task_impl(task_id: str) -> ToolResponse:
 """
 Progress tracking tools for Alfred workflow system.
 """
+
 from src.alfred.lib.logger import get_logger
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
@@ -3900,31 +6279,81 @@ def mark_subtask_complete_impl(task_id: str, subtask_id: str) -> ToolResponse:
             "progress_percentage": progress,
         },
     )
+
 ``````
 ------ src/alfred/tools/provide_review.py ------
 ``````
 # src/alfred/tools/provide_review.py
 from src.alfred.config.manager import ConfigManager
 from src.alfred.config.settings import settings
-from src.alfred.constants import ToolName
+from src.alfred.constants import ToolName, ArtifactKeys
 from src.alfred.core.prompter import prompter
-from src.alfred.core.workflow import ReviewState
 from src.alfred.core.context_builder import ContextBuilder
 from src.alfred.lib.logger import cleanup_task_logging, get_logger
 from src.alfred.lib.task_utils import load_task
 from src.alfred.models.schemas import TaskStatus, ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.state.manager import state_manager
 
 logger = get_logger(__name__)
 
-# Force server reload marker - AL-09 implementation active
+
+def _is_ai_review_state(state: str) -> bool:
+    """Check if the current state is an AI review state."""
+    return state.endswith("_awaiting_ai_review")
+
+
+def _is_human_review_state(state: str) -> bool:
+    """Check if the current state is a human review state."""
+    return state.endswith("_awaiting_human_review")
+
+
+def _is_autonomous_mode_enabled() -> bool:
+    """Check if autonomous mode is enabled in configuration."""
+    config_manager = ConfigManager(settings.alfred_dir)
+    config = config_manager.load()
+    return config.features.autonomous_mode
+
+
+def _handle_rejection(active_tool, current_state: str) -> str:
+    """Handle review rejection by transitioning back to previous state."""
+    logger.info(f"Review rejected, transitioning back from '{current_state}'")
+    active_tool.request_revision()
+    logger.info(f"After revision, new state is '{active_tool.state}'")
+    return "Revision requested. Returning to previous step."
+
+
+def _handle_ai_review_approval(active_tool, task_id: str) -> str:
+    """Handle AI review approval, checking for autonomous mode."""
+    active_tool.ai_approve()
+
+    if _is_autonomous_mode_enabled():
+        logger.info(f"Autonomous mode enabled. Bypassing human review for task {task_id}.")
+        active_tool.human_approve()
+        return "AI review approved. Autonomous mode bypassed human review."
+
+    return "AI review approved. Awaiting human review."
+
+
+def _handle_human_review_approval(active_tool) -> str:
+    """Handle human review approval."""
+    active_tool.human_approve()
+    return "Human review approved. Proceeding to next step."
+
 
 def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
     """Processes review feedback, advancing the active tool's State Machine."""
+    # Try to get active tool or recover it from state
     if task_id not in orchestrator.active_tools:
-        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
+        # Try to recover the tool from persisted state
+        from src.alfred.state.recovery import ToolRecovery
+
+        recovered_tool = ToolRecovery.recover_tool(task_id)
+        if recovered_tool:
+            orchestrator.active_tools[task_id] = recovered_tool
+            logger.info(f"Recovered tool for task {task_id} from persisted state")
+        else:
+            return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
 
     active_tool = orchestrator.active_tools[task_id]
     task = load_task(task_id)
@@ -3933,57 +6362,67 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
 
     current_state = active_tool.state
     logger.info(f"Processing review for task {task_id} in state '{current_state}', approved={is_approved}")
-    
+
     if not is_approved:
-        logger.info(f"Review rejected, transitioning back from '{current_state}'")
-        active_tool.request_revision()
-        message = "Revision requested. Returning to previous step."
-        logger.info(f"After revision, new state is '{active_tool.state}'")
+        message = _handle_rejection(active_tool, current_state)
     else:
-        if current_state == ReviewState.AWAITING_AI_REVIEW.value:
-            active_tool.ai_approve()
-            config_manager = ConfigManager(settings.alfred_dir)
-            config = config_manager.load()
-            if config.features.autonomous_mode:
-                logger.info(f"Autonomous mode enabled. Bypassing human review for task {task_id}.")
-                active_tool.human_approve()
-                message = "AI review approved. Autonomous mode bypassed human review."
-            else:
-                message = "AI review approved. Awaiting human review."
-        elif current_state == ReviewState.AWAITING_HUMAN_REVIEW.value:
-            active_tool.human_approve()
-            message = "Human review approved. Proceeding to next step."
+        if _is_ai_review_state(current_state):
+            message = _handle_ai_review_approval(active_tool, task_id)
+        elif _is_human_review_state(current_state):
+            message = _handle_human_review_approval(active_tool)
         else:
             return ToolResponse(status="error", message=f"Cannot provide review from non-review state '{active_tool.state}'.")
 
     state_manager.update_tool_state(task_id, active_tool)
 
     if active_tool.is_terminal:
-        # --- ADD THIS LOGIC ---
-        if active_tool.tool_name == ToolName.START_TASK:
-            final_task_status = TaskStatus.PLANNING
-            handoff_message = f"Setup for task {task_id} is complete. The task is now '{final_task_status.value}'. Call 'plan_task' to begin planning."
-        # --- END ADDED LOGIC ---
-        elif active_tool.tool_name == ToolName.PLAN_TASK:
-            final_task_status = TaskStatus.READY_FOR_DEVELOPMENT
-            handoff_message = f"Planning for task {task_id} is complete. The task is now '{final_task_status.value}'. To begin implementation, use the 'implement_task' tool."
-        else:
-            final_task_status = TaskStatus.DONE # Default fallback
-            handoff_message = f"Tool '{active_tool.tool_name}' for task {task_id} completed."
+        # The tool's internal workflow is DONE. Its ONLY job now is to hand off.
+        tool_name = active_tool.tool_name
+        logger.info(f"[DEBUG] Tool {tool_name} reached terminal state for task {task_id}")
 
-        state_manager.update_task_status(task_id, final_task_status)
+        # 1. Save the tool's final, most important artifact to the persistent TaskState.
+        #    This makes it available for approve_and_advance to archive.
+        task_state = state_manager.load_or_create(task_id)
+        final_artifact_state = active_tool.get_final_work_state()
+        # CRITICAL FIX: Use centralized key generation to ensure consistency
+        final_artifact_key = ArtifactKeys.get_artifact_key(final_artifact_state)
+
+        # Debug logging
+        logger.info(f"[DEBUG] Final artifact state: {final_artifact_state}")
+        logger.info(f"[DEBUG] Looking for key: {final_artifact_key}")
+        logger.info(f"[DEBUG] Context store keys: {list(active_tool.context_store.keys())}")
+
+        final_artifact = active_tool.context_store.get(final_artifact_key)
+
+        if final_artifact:
+            # Save the RAW artifact object directly. This is the key change.
+            logger.info(f"[DEBUG] Found final artifact of type: {type(final_artifact)}")
+            task_state.completed_tool_outputs[tool_name] = final_artifact
+            state_manager.save_task_state(task_state)
+            logger.info(f"Saved final output artifact from '{tool_name}' to persistent state for task {task_id}.")
+        else:
+            logger.warning(f"[DEBUG] Final artifact key '{final_artifact_key}' not found in context store!")
+
+        # 2. Clean up the ephemeral tool instance.
         state_manager.clear_tool_state(task_id)
         del orchestrator.active_tools[task_id]
         cleanup_task_logging(task_id)
-        logger.info(f"Tool '{active_tool.tool_name}' for task {task_id} completed. Task status updated to '{final_task_status.value}'.")
-        
-        return ToolResponse(status="success", message=message, next_prompt=handoff_message)
+
+        # 3. Create the handoff prompt.
+        handoff_message = (
+            f"The '{tool_name}' workflow has completed successfully. "
+            f"The final artifact has been generated and reviewed.\n\n"
+            f"To formally approve this phase, archive the results, and advance the task, "
+            f"you MUST now call `alfred.approve_and_advance(task_id='{task_id}')`."
+        )
+
+        logger.info(f"Tool '{tool_name}' for task {task_id} finished. Awaiting final approval via approve_and_advance.")
+
+        return ToolResponse(status="success", message=f"'{tool_name}' completed. Awaiting final approval.", next_prompt=handoff_message)
     else:
-        persona_config = load_persona(active_tool.persona_name)
-        
         # CRITICAL: Force visible logging to verify code execution
         logger.warning(f"[AL-09 VERIFICATION] Building context for state '{active_tool.state}', is_approved={is_approved}")
-        
+
         # Build proper context based on transition type
         if not is_approved:
             # Rejection: returning to work state, need feedback context
@@ -3992,7 +6431,7 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
             additional_context = ContextBuilder.build_feedback_context(
                 active_tool,
                 active_tool.state,  # Current state after revision
-                feedback_notes
+                feedback_notes,
             )
             logger.info(f"[FEEDBACK LOOP] Context keys after building: {list(additional_context.keys())}")
             logger.info(f"[FEEDBACK LOOP] Has feedback_notes: {'feedback_notes' in additional_context}")
@@ -4001,15 +6440,71 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
             # Approval: moving forward, standard context
             logger.info(f"[FEEDBACK LOOP] Building standard context for approval flow")
             additional_context = ContextBuilder.build_standard_context(active_tool)
-            
+
         next_prompt = prompter.generate_prompt(
             task=task,
             tool_name=active_tool.tool_name,
             state=active_tool.state,
-            persona_config=persona_config,
             additional_context=additional_context,
         )
         return ToolResponse(status="success", message=message, next_prompt=next_prompt)
+
+``````
+------ src/alfred/tools/review_task.py ------
+``````
+from src.alfred.models.schemas import ToolResponse, TaskStatus
+from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.lib.logger import get_logger
+from src.alfred.lib.task_utils import load_task
+from src.alfred.state.manager import state_manager
+from src.alfred.state.recovery import ToolRecovery
+from src.alfred.core.workflow import ReviewTaskTool
+from src.alfred.core.prompter import prompter
+from src.alfred.constants import ToolName
+
+logger = get_logger(__name__)
+
+
+async def review_task_impl(task_id: str) -> ToolResponse:
+    """
+    Review task entry point - handles the code review phase
+    """
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    if task_id in orchestrator.active_tools:
+        tool_instance = orchestrator.active_tools[task_id]
+        logger.info(f"Found active tool for task {task_id} in state {tool_instance.state}")
+    else:
+        tool_instance = ToolRecovery.recover_tool(task_id)
+        if tool_instance:
+            orchestrator.active_tools[task_id] = tool_instance
+            logger.info(f"Recovered tool from disk for task {task_id} in state {tool_instance.state}")
+        else:
+            if task.task_status != TaskStatus.READY_FOR_REVIEW:
+                return ToolResponse(status="error", message=f"Task '{task_id}' has status '{task.task_status.value}'. Review can only start on a 'ready_for_review' task.")
+
+            tool_instance = ReviewTaskTool(task_id=task_id)
+            orchestrator.active_tools[task_id] = tool_instance
+            state_manager.update_task_status(task_id, TaskStatus.IN_REVIEW)
+
+            # Dispatch immediately to reviewing state
+            tool_instance.dispatch()
+            state_manager.update_tool_state(task_id, tool_instance)
+            logger.info(f"Created new review tool for task {task_id}")
+
+    prompt_context = tool_instance.context_store.copy()
+    prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=tool_instance.tool_name,
+        state=tool_instance.state,
+        additional_context=prompt_context,
+    )
+
+    message = f"Code review initiated for task '{task_id}'."
+    return ToolResponse(status="success", message=message, next_prompt=prompt)
+
 ``````
 ------ src/alfred/tools/start_task.py ------
 ``````
@@ -4017,13 +6512,13 @@ def provide_review_impl(task_id: str, is_approved: bool, feedback_notes: str = "
 """
 The start_task tool, re-architected as a stateful workflow tool.
 """
+
 from src.alfred.core.prompter import prompter
 from src.alfred.core.workflow import StartTaskTool
 from src.alfred.lib.logger import get_logger, setup_task_logging
 from src.alfred.lib.task_utils import load_task
 from src.alfred.models.schemas import TaskStatus, ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.state.manager import state_manager
 from src.alfred.state.recovery import ToolRecovery
 
@@ -4058,21 +6553,16 @@ def start_task_impl(task_id: str) -> ToolResponse:
             state_manager.update_tool_state(task_id, tool_instance)
             logger.info(f"Created new start_task tool for task {task_id}")
 
-    try:
-        persona_config = load_persona(tool_instance.persona_name)
-    except FileNotFoundError as e:
-        return ToolResponse(status="error", message=str(e))
-
     prompt = prompter.generate_prompt(
         task=task,
         tool_name=tool_instance.tool_name,
         state=tool_instance.state,
-        persona_config=persona_config,
     )
 
     message = f"Starting setup for task '{task_id}'. Current step: {tool_instance.state}."
 
     return ToolResponse(status="success", message=message, next_prompt=prompt)
+
 ``````
 ------ src/alfred/tools/submit_work.py ------
 ``````
@@ -4087,7 +6577,6 @@ from src.alfred.lib.logger import get_logger
 from src.alfred.lib.task_utils import load_task
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.state.manager import state_manager
 from src.alfred.constants import ArtifactKeys, Triggers, ResponseStatus, LogMessages, ErrorMessages
 
@@ -4096,8 +6585,17 @@ logger = get_logger(__name__)
 
 def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     """Implements the logic for submitting a work artifact to the active tool."""
+    # Try to get active tool or recover it from state
     if task_id not in orchestrator.active_tools:
-        return ToolResponse(status=ResponseStatus.ERROR, message=f"{LogMessages.NO_ACTIVE_TOOL.format(task_id=task_id)} Cannot submit work.")
+        # Try to recover the tool from persisted state
+        from src.alfred.state.recovery import ToolRecovery
+
+        recovered_tool = ToolRecovery.recover_tool(task_id)
+        if recovered_tool:
+            orchestrator.active_tools[task_id] = recovered_tool
+            logger.info(f"Recovered tool for task {task_id} from persisted state")
+        else:
+            return ToolResponse(status=ResponseStatus.ERROR, message=f"{LogMessages.NO_ACTIVE_TOOL.format(task_id=task_id)} Cannot submit work.")
 
     active_tool = orchestrator.active_tools[task_id]
     task = load_task(task_id)
@@ -4118,11 +6616,6 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     else:
         validated_artifact = artifact
 
-    try:
-        persona_config = load_persona(active_tool.persona_name)
-    except FileNotFoundError as e:
-        return ToolResponse(status=ResponseStatus.ERROR, message=str(e))
-
     trigger = Triggers.submit_trigger(current_state_val)
     if not hasattr(active_tool, trigger):
         return ToolResponse(status=ResponseStatus.ERROR, message=f"Invalid action: cannot submit from state '{current_state_val}'. No trigger '{trigger}' exists.")
@@ -4135,63 +6628,232 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
     temp_context = active_tool.context_store.copy()
     artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
     temp_context[artifact_key] = validated_artifact
-    temp_context[ArtifactKeys.ARTIFACT_CONTENT_KEY] = json.dumps(artifact, indent=2)
+    # For review states, we need the artifact as an object, not a string
+    temp_context[ArtifactKeys.ARTIFACT_CONTENT_KEY] = validated_artifact
 
     next_prompt = prompter.generate_prompt(
         task=task,
         tool_name=active_tool.tool_name,
         state=next_state,
-        persona_config=persona_config,
         additional_context=temp_context,
     )
 
     active_tool.context_store[artifact_key] = validated_artifact
-    artifact_manager.append_to_scratchpad(task_id=task_id, state_name=current_state_val, artifact=validated_artifact, persona_config=persona_config)
-    
+    artifact_manager.append_to_scratchpad(task_id=task_id, state_name=current_state_val, artifact=validated_artifact)
+
     getattr(active_tool, trigger)()
     logger.info(LogMessages.STATE_TRANSITION.format(task_id=task_id, trigger=trigger, state=active_tool.state))
 
     state_manager.update_tool_state(task_id, active_tool)
 
     return ToolResponse(status=ResponseStatus.SUCCESS, message="Work submitted. Awaiting review.", next_prompt=next_prompt)
+
+``````
+------ src/alfred/tools/test_task.py ------
+``````
+from src.alfred.models.schemas import ToolResponse, TaskStatus
+from src.alfred.orchestration.orchestrator import orchestrator
+from src.alfred.lib.logger import get_logger
+from src.alfred.lib.task_utils import load_task
+from src.alfred.state.manager import state_manager
+from src.alfred.state.recovery import ToolRecovery
+from src.alfred.core.workflow import TestTaskTool
+from src.alfred.core.prompter import prompter
+from src.alfred.constants import ToolName
+
+logger = get_logger(__name__)
+
+
+async def test_task_impl(task_id: str) -> ToolResponse:
+    """
+    Test task entry point - handles the testing phase
+    """
+    task = load_task(task_id)
+    if not task:
+        return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+
+    if task_id in orchestrator.active_tools:
+        tool_instance = orchestrator.active_tools[task_id]
+        logger.info(f"Found active tool for task {task_id} in state {tool_instance.state}")
+    else:
+        tool_instance = ToolRecovery.recover_tool(task_id)
+        if tool_instance:
+            orchestrator.active_tools[task_id] = tool_instance
+            logger.info(f"Recovered tool from disk for task {task_id} in state {tool_instance.state}")
+        else:
+            if task.task_status != TaskStatus.READY_FOR_TESTING:
+                return ToolResponse(status="error", message=f"Task '{task_id}' has status '{task.task_status.value}'. Testing can only start on a 'ready_for_testing' task.")
+
+            tool_instance = TestTaskTool(task_id=task_id)
+            orchestrator.active_tools[task_id] = tool_instance
+            state_manager.update_task_status(task_id, TaskStatus.IN_TESTING)
+
+            # Dispatch immediately to testing state
+            tool_instance.dispatch()
+            state_manager.update_tool_state(task_id, tool_instance)
+            logger.info(f"Created new test tool for task {task_id}")
+
+    prompt_context = tool_instance.context_store.copy()
+    prompt = prompter.generate_prompt(
+        task=task,
+        tool_name=tool_instance.tool_name,
+        state=tool_instance.state,
+        additional_context=prompt_context,
+    )
+
+    message = f"Testing phase initiated for task '{task_id}'."
+    return ToolResponse(status="success", message=message, next_prompt=prompt)
+
+``````
+------ src/alfred/tools/work_on.py ------
+``````
+from src.alfred.state.manager import state_manager
+from src.alfred.models.schemas import TaskStatus, ToolResponse
+from src.alfred.constants import ToolName
+from src.alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
+from src.alfred.task_providers.factory import get_provider
+from src.alfred.lib.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+def work_on_impl(task_id: str) -> ToolResponse:
+    # Step 1: Check if the task exists locally first (cache-first architecture)
+    if not does_task_exist_locally(task_id):
+        logger.info(f"Task '{task_id}' not found in local cache. Fetching from provider...")
+
+        # Task is not in our local cache, fetch from provider
+        provider = get_provider()
+
+        try:
+            # Delegate to the provider to fetch the task
+            task = provider.get_task(task_id)
+
+            if not task:
+                return ToolResponse(
+                    status="error", 
+                    message=f"Task '{task_id}' could not be found. Please check:\n"
+                            f"1. Task ID is correct (case-sensitive)\n"
+                            f"2. For local tasks: File exists at .alfred/tasks/{task_id}.md\n"
+                            f"3. For remote tasks: Task exists in your configured provider (Jira/Linear)\n"
+                            f"4. Task file format is valid (see .alfred/tasks/README.md)\n"
+                            f"5. Run 'alfred.get_next_task()' to see available tasks"
+                )
+
+            # Step 2: Cache the fetched task locally
+            write_task_to_markdown(task)
+            logger.info(f"Successfully cached task '{task_id}' from provider")
+
+        except Exception as e:
+            logger.error(f"Failed to fetch task from provider: {e}")
+            return ToolResponse(status="error", message=f"Failed to fetch task '{task_id}' from provider: {str(e)}")
+
+    # Step 3: Now that the task is guaranteed to be local, proceed with the
+    # original "Smart Dispatch" logic
+    task_state = state_manager.load_or_create_task_state(task_id)
+    task_status = task_state.task_status
+
+    handoff_tool_map = {
+        TaskStatus.NEW: ToolName.PLAN_TASK,  # Start with creating spec for new epics
+        TaskStatus.CREATING_SPEC: ToolName.CREATE_SPEC,
+        TaskStatus.SPEC_COMPLETED: ToolName.CREATE_TASKS,
+        TaskStatus.CREATING_TASKS: ToolName.CREATE_TASKS,
+        TaskStatus.TASKS_CREATED: ToolName.PLAN_TASK,  # After tasks are created, plan the first one
+        TaskStatus.PLANNING: ToolName.PLAN_TASK,
+        TaskStatus.READY_FOR_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
+        TaskStatus.IN_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
+        TaskStatus.READY_FOR_REVIEW: ToolName.REVIEW_TASK,
+        TaskStatus.IN_REVIEW: ToolName.REVIEW_TASK,
+        TaskStatus.READY_FOR_TESTING: ToolName.TEST_TASK,
+        TaskStatus.IN_TESTING: ToolName.TEST_TASK,
+        TaskStatus.READY_FOR_FINALIZATION: ToolName.FINALIZE_TASK,
+    }
+
+    if task_status in handoff_tool_map:
+        handoff_tool = handoff_tool_map[task_status]
+        message = f"Task '{task_id}' is in status '{task_status.value}'. The next action is to use the '{handoff_tool}' tool."
+        next_prompt = f"To proceed with task '{task_id}', call `alfred.{handoff_tool}(task_id='{task_id}')`."
+        return ToolResponse(status="success", message=message, next_prompt=next_prompt)
+
+    if task_status == TaskStatus.DONE:
+        return ToolResponse(status="success", message=f"Task '{task_id}' is already done. No further action is required.")
+
+    return ToolResponse(status="error", message=f"Unhandled status '{task_status.value}' for task '{task_id}'.")
+
 ``````
 ------ src/alfred/workflow.yml ------
 ``````
-# Default Alfred workflow configuration
-# This file defines the workflow structure and persona mappings
+# Default Alfred Workflow Configuration
+# This file can be customized per project by editing .alfred/workflow.yml
 
+# Tool enable/disable settings
 tools:
-  start_task:
-    persona: onboarding
-    states:
-      - initialized
-      - git_status_checked
-      - branch_created
-      - awaiting_ai_review
-      - awaiting_human_review
-      - completed
-      
+  # Core workflow tools
+  create_spec:
+    enabled: true
+    description: "Create technical specification from PRD"
+  
+  create_tasks:
+    enabled: true
+    description: "Break down spec into actionable tasks"
+  
   plan_task:
-    persona: planning
-    states:
-      - contextualize
-      - review_context
-      - strategize
-      - review_strategy
-      - design
-      - review_design
-      - generate_subtasks
-      - review_plan
-      - awaiting_ai_review
-      - awaiting_human_review
-      - verified
-      
+    enabled: true
+    description: "Create detailed execution plan for a task"
+    
   implement_task:
-    persona: implementation
-    states:
-      - initialized
-      - in_progress
-      - awaiting_ai_review
-      - awaiting_human_review
-      - completed
+    enabled: true
+    description: "Execute the planned implementation"
+    
+  review_task:
+    enabled: true
+    description: "Perform code review"
+    
+  test_task:
+    enabled: true
+    description: "Run and validate tests"
+    
+  finalize_task:
+    enabled: true
+    description: "Create commit and pull request"
+
+# Workflow configuration
+workflow:
+  # Whether to require human approval at review gates
+  require_human_approval: true
+  
+  # Whether to enable AI self-review steps
+  enable_ai_review: true
+  
+  # Maximum thinking time for AI in seconds
+  max_thinking_time: 300
+  
+  # Whether to create branches automatically
+  auto_create_branches: true
+
+# Provider-specific settings (overridden by .alfred/config.json)
+providers:
+  jira:
+    # Jira-specific workflow settings
+    transition_on_start: true
+    transition_on_complete: true
+    
+  linear:
+    # Linear-specific workflow settings
+    update_status: true
+    
+  local:
+    # Local provider settings
+    task_file_pattern: "*.md"
+
+# Debug settings
+debug:
+  # Whether to save detailed debug logs
+  save_debug_logs: true
+  
+  # Whether to save state snapshots
+  save_state_snapshots: true
+  
+  # Log level (DEBUG, INFO, WARNING, ERROR)
+  log_level: INFO
 ``````

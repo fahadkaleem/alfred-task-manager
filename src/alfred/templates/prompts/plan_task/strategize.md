@@ -1,4 +1,3 @@
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: strategize
@@ -22,12 +21,6 @@ Please enhance your StrategyArtifact by incorporating this feedback. Consider ho
 {% else %}
 No specific clarifications were provided. Proceed based on the original task context and approved requirements.
 {% endif %}
-
----
-### **Thinking Methodology**
-{% for principle in persona.thinking_methodology %}
-- {{ principle }}
-{% endfor %}
 
 ---
 ### **Directive: Develop Technical Strategy**

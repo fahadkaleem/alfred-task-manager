@@ -1,20 +1,25 @@
 """
 Initialization tool for Alfred.
+
+This module provides the interactive initialize_project tool that sets up the
+.alfred directory with provider-specific configuration.
 """
 
-import shutil
+import logging
 from pathlib import Path
+import shutil
 
 from src.alfred.config.manager import ConfigManager
 from src.alfred.config.settings import settings
-from src.alfred.models.alfred_config import AlfredConfig, ProviderConfig, TaskProvider
+from src.alfred.constants import ResponseStatus
+from src.alfred.models.alfred_config import TaskProvider
 from src.alfred.models.schemas import ToolResponse
+
+logger = logging.getLogger(__name__)
 
 
 def initialize_project(provider: str | None = None, test_dir: Path | None = None) -> ToolResponse:
-    """
-    Initializes the project workspace by creating the .alfred directory with
-    provider-specific configuration.
+    """Initialize Alfred with provider selection.
 
     Args:
         provider: Provider choice ('jira', 'linear', or 'local'). If None, returns available choices.
@@ -26,44 +31,38 @@ def initialize_project(provider: str | None = None, test_dir: Path | None = None
     alfred_dir = test_dir if test_dir is not None else settings.alfred_dir
 
     # Check if already initialized
-    if alfred_dir.exists() and (alfred_dir / "workflow.yml").exists():
-        return ToolResponse(status="success", message=f"Project already initialized at '{alfred_dir}'. No changes were made.")
+    if _is_already_initialized(alfred_dir):
+        return _create_already_initialized_response(alfred_dir)
 
     # Return choices if no provider specified
     if provider is None:
         return _get_provider_choices_response()
 
     try:
-        # Validate provider choice
+        # Validate and perform initialization
         provider_choice = _validate_provider_choice(provider)
+        return _perform_initialization(provider_choice, alfred_dir)
 
-        # Create base directory
-        alfred_dir.mkdir(parents=True, exist_ok=True)
+    except KeyboardInterrupt:
+        return ToolResponse(status=ResponseStatus.ERROR, message="Initialization cancelled by user.")
+    except (OSError, shutil.Error, ValueError) as e:
+        return ToolResponse(
+            status=ResponseStatus.ERROR,
+            message=f"Failed to initialize project. Error: {e}",
+        )
 
-        # Copy default workflow file
-        workflow_file = alfred_dir / settings.workflow_filename
-        shutil.copyfile(settings.packaged_workflow_file, workflow_file)
 
-        # Copy default persona and template directories
-        shutil.copytree(settings.packaged_personas_dir, alfred_dir / "personas")
-        shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates")
+def _is_already_initialized(alfred_dir: Path) -> bool:
+    """Check if project is already initialized."""
+    return alfred_dir.exists() and (alfred_dir / "workflow.yml").exists()
 
-        # Create workspace directory
-        workspace_dir = alfred_dir / "workspace"
-        workspace_dir.mkdir(exist_ok=True)
 
-        # Create configuration with selected provider
-        config_manager = ConfigManager(alfred_dir)
-        config = AlfredConfig(providers=ProviderConfig(task_provider=TaskProvider(provider_choice)))
-        config_manager.save(config)
-
-        # Setup provider-specific resources
-        _setup_provider_resources(provider_choice, alfred_dir)
-
-        return ToolResponse(status="success", message=f"Successfully initialized Alfred project in '{alfred_dir}' with {provider_choice} provider.")
-
-    except (OSError, shutil.Error) as e:
-        return ToolResponse(status="error", message=f"Failed to initialize project due to a file system error: {e}")
+def _create_already_initialized_response(alfred_dir: Path) -> ToolResponse:
+    """Create response for already initialized project."""
+    return ToolResponse(
+        status=ResponseStatus.SUCCESS,
+        message=f"Project already initialized at '{alfred_dir}'. No changes were made.",
+    )
 
 
 def _get_provider_choices_response() -> ToolResponse:
@@ -99,18 +98,127 @@ def _validate_provider_choice(provider: str) -> str:
     """Validate and normalize provider choice."""
     provider_choice = provider.lower()
     if provider_choice not in ["jira", "linear", "local"]:
-        raise ValueError(f"Invalid provider '{provider}'. Must be 'jira', 'linear', or 'local'.")
+        msg = f"Invalid provider '{provider}'. Must be 'jira', 'linear', or 'local'."
+        raise ValueError(msg)
     return provider_choice
+
+
+def _perform_initialization(provider_choice: str, alfred_dir: Path) -> ToolResponse:
+    """Perform the actual initialization setup."""
+    # Create directories
+    _create_project_directories(alfred_dir)
+
+    # Copy default workflow file
+    _copy_workflow_file(alfred_dir)
+
+    # Copy default templates to user workspace
+    _copy_default_templates(alfred_dir)
+
+    # Setup provider-specific configuration
+    result = _setup_provider_configuration(provider_choice, alfred_dir)
+    if result["status"] == ResponseStatus.ERROR:
+        return ToolResponse(status=ResponseStatus.ERROR, message=result["message"])
+
+    return ToolResponse(
+        status=ResponseStatus.SUCCESS,
+        message=f"Successfully initialized Alfred project in '{alfred_dir}' with {provider_choice} provider.",
+    )
+
+
+def _create_project_directories(alfred_dir: Path) -> None:
+    """Create the necessary project directories."""
+    alfred_dir.mkdir(parents=True, exist_ok=True)
+    (alfred_dir / "workspace").mkdir(exist_ok=True)
+    (alfred_dir / "specs").mkdir(exist_ok=True)
+    (alfred_dir / "tasks").mkdir(exist_ok=True)
+    logger.info(f"Created project directories at {alfred_dir}")
+
+
+def _copy_workflow_file(alfred_dir: Path) -> None:
+    """Copy the default workflow file."""
+    workflow_file = alfred_dir / settings.workflow_filename
+    shutil.copyfile(settings.packaged_workflow_file, workflow_file)
+    logger.info(f"Copied workflow file to {workflow_file}")
+
+
+def _copy_default_templates(alfred_dir: Path) -> None:
+    """Copy default templates to user workspace for customization."""
+    try:
+        shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates", dirs_exist_ok=True)
+        logger.info(f"Copied templates to {alfred_dir / 'templates'}")
+    except (OSError, shutil.Error) as e:
+        msg = f"Failed to copy templates: {e}"
+        raise OSError(msg) from e
+
+
+def _setup_provider_configuration(provider_choice: str, alfred_dir: Path) -> dict:
+    """Setup provider-specific configuration."""
+    config_manager = ConfigManager(alfred_dir)
+
+    if provider_choice == "jira":
+        return _setup_jira_provider(config_manager, alfred_dir)
+    if provider_choice == "linear":
+        return _setup_linear_provider(config_manager, alfred_dir)
+    if provider_choice == "local":
+        return _setup_local_provider(config_manager, alfred_dir)
+
+    return {"status": ResponseStatus.ERROR, "message": f"Unknown provider: {provider_choice}"}
+
+
+def _setup_jira_provider(config_manager: ConfigManager, alfred_dir: Path) -> dict:
+    """Setup Jira provider with MCP connectivity check."""
+    if _validate_mcp_connectivity("jira"):
+        config = config_manager.create_default()
+        config.providers.task_provider = TaskProvider.JIRA
+        config_manager.save(config)
+        _setup_provider_resources("jira", alfred_dir)
+        logger.info("Configured Jira provider")
+        return {"status": ResponseStatus.SUCCESS}
+    return {
+        "status": ResponseStatus.ERROR,
+        "message": "Could not connect to the Atlassian MCP server. Please ensure it is running and accessible.",
+    }
+
+
+def _setup_linear_provider(config_manager: ConfigManager, alfred_dir: Path) -> dict:
+    """Setup Linear provider with MCP connectivity check."""
+    if _validate_mcp_connectivity("linear"):
+        config = config_manager.create_default()
+        config.providers.task_provider = TaskProvider.LINEAR
+        config_manager.save(config)
+        _setup_provider_resources("linear", alfred_dir)
+        logger.info("Configured Linear provider")
+        return {"status": ResponseStatus.SUCCESS}
+    return {
+        "status": ResponseStatus.ERROR,
+        "message": "Could not connect to the Linear MCP server. Please ensure it is running and accessible.",
+    }
+
+
+def _setup_local_provider(config_manager: ConfigManager, alfred_dir: Path) -> dict:
+    """Setup local provider with tasks inbox and README."""
+    # Create configuration
+    config = config_manager.create_default()
+    config.providers.task_provider = TaskProvider.LOCAL
+    config_manager.save(config)
+
+    # Setup provider resources
+    _setup_provider_resources("local", alfred_dir)
+
+    logger.info("Configured local provider")
+    return {"status": ResponseStatus.SUCCESS}
 
 
 def _setup_provider_resources(provider: str, alfred_dir: Path) -> None:
     """Setup provider-specific resources."""
-    if provider == "local":
-        # Create tasks inbox for local provider
-        tasks_dir = alfred_dir / "tasks"
-        tasks_dir.mkdir(exist_ok=True)
+    # Always create tasks directory for cache-first architecture
+    tasks_dir = alfred_dir / "tasks"
+    tasks_dir.mkdir(exist_ok=True)
 
-        readme_path = tasks_dir / "README.md"
+    # Create README with provider-specific content
+    readme_path = tasks_dir / "README.md"
+
+    if provider == "local":
         readme_content = """# Local Task Files
 
 This directory is your task inbox for Alfred.
@@ -134,6 +242,50 @@ Detailed description of what needs to be done
 - [ ] Criterion 3
 ```
 
-When you run `begin_task("TASK-ID")`, Alfred will read the corresponding file and start the workflow.
+When you run `work_on("TASK-ID")`, Alfred will read the corresponding file and start the workflow.
 """
-        readme_path.write_text(readme_content, encoding="utf-8")
+    else:
+        # For Jira/Linear providers
+        readme_content = f"""# Alfred Task Cache
+
+This directory contains the local markdown representation of all tasks Alfred is aware of.
+
+Since you're using the **{provider}** provider, this directory acts as a local cache. Tasks are fetched from {provider.capitalize()} and stored here before being worked on.
+
+## Task Format
+
+All cached tasks follow the same markdown format:
+
+```markdown
+# TASK-ID
+
+## Summary
+Brief summary of the task
+
+## Description
+Detailed description of what needs to be done
+
+## Acceptance Criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
+- [ ] Criterion 3
+```
+
+Tasks will be automatically cached here when you work on them using `work_on("TASK-ID")`.
+"""
+
+    readme_path.write_text(readme_content, encoding="utf-8")
+    logger.info(f"Created {provider} provider resources at {tasks_dir}")
+
+
+def _validate_mcp_connectivity(provider: str) -> bool:
+    """Check if required MCP tools are available for the given provider.
+
+    This is a placeholder for actual MCP connectivity validation.
+    In a production system, this would attempt to call MCP tools
+    to verify they are available and responding.
+    """
+    # TODO: Implement actual MCP tool availability check
+    # For now, we'll simulate the check and return True
+    logger.info(f"Simulating MCP connectivity check for {provider} provider")
+    return True

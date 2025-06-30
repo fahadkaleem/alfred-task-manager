@@ -2,13 +2,13 @@
 """
 The start_task tool, re-architected as a stateful workflow tool.
 """
+
 from src.alfred.core.prompter import prompter
 from src.alfred.core.workflow import StartTaskTool
 from src.alfred.lib.logger import get_logger, setup_task_logging
 from src.alfred.lib.task_utils import load_task
 from src.alfred.models.schemas import TaskStatus, ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.orchestration.persona_loader import load_persona
 from src.alfred.state.manager import state_manager
 from src.alfred.state.recovery import ToolRecovery
 
@@ -43,16 +43,10 @@ def start_task_impl(task_id: str) -> ToolResponse:
             state_manager.update_tool_state(task_id, tool_instance)
             logger.info(f"Created new start_task tool for task {task_id}")
 
-    try:
-        persona_config = load_persona(tool_instance.persona_name)
-    except FileNotFoundError as e:
-        return ToolResponse(status="error", message=str(e))
-
     prompt = prompter.generate_prompt(
         task=task,
         tool_name=tool_instance.tool_name,
         state=tool_instance.state,
-        persona_config=persona_config,
     )
 
     message = f"Starting setup for task '{task_id}'. Current step: {tool_instance.state}."

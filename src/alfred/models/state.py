@@ -3,6 +3,7 @@
 Pydantic models for Alfred's state management.
 This module defines the single source of truth for task state.
 """
+
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -22,18 +23,18 @@ class WorkflowState(BaseModel):
     tool_name: str
     current_state: str  # String representation of the state enum
     context_store: Dict[str, Any] = Field(default_factory=dict)
-    persona_name: str
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
-class UnifiedTaskState(BaseModel):
+class TaskState(BaseModel):
     """
-    The single, unified state object for a task.
-    This is the schema for the new `task_state.json` file.
+    The single state object for a task.
+    This is the schema for the `task_state.json` file.
     """
 
     task_id: str
     task_status: TaskStatus = Field(default=TaskStatus.NEW)
     active_tool_state: Optional[WorkflowState] = Field(default=None)
+    completed_tool_outputs: Dict[str, Any] = Field(default_factory=dict)
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())

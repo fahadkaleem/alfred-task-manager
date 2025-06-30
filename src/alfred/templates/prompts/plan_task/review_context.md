@@ -1,17 +1,9 @@
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: review_context
 
 My initial analysis has generated a list of questions that must be answered to proceed.
 
----
-### **Persona Guidelines**
-
-**Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {% if persona.human %}{{ persona.human.communication_style }}{% else %}{{ persona.communication_style }}{% endif %}
-
-You are now in a **Clarification Loop**. Your goal is to get complete answers for all your questions from the human developer.
 ---
 ### **Directive: Manage Clarification Dialogue**
 

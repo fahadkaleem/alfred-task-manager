@@ -10,13 +10,12 @@ from src.alfred.config.settings import settings
 from src.alfred.models.schemas import Task
 from src.alfred.constants import TemplatePaths
 from src.alfred.lib.logger import get_logger
-from src.alfred.models.config import PersonaConfig
 
 logger = get_logger(__name__)
 
 
 class Prompter:
-    """Generates persona-driven, state-aware prompts for the AI agent."""
+    """Generates state-aware prompts for the AI agent."""
 
     def __init__(self):
         # Reuse existing settings to find the templates directory
@@ -36,7 +35,7 @@ class Prompter:
         # Add custom filters
         self.jinja_env.filters["fromjson"] = json.loads
         self.jinja_env.filters["tojson"] = self._pydantic_safe_tojson
-    
+
     def _pydantic_safe_tojson(self, obj, indent=2):
         """Custom JSON filter that handles Pydantic models"""
         if isinstance(obj, BaseModel):
@@ -48,7 +47,6 @@ class Prompter:
         task: Task,
         tool_name: str,
         state,  # Can be Enum or str
-        persona_config: PersonaConfig,  # CHANGE THIS: No longer a Dict, it's the Pydantic object
         additional_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
@@ -58,7 +56,6 @@ class Prompter:
             task: The full structured Task object.
             tool_name: The name of the active tool (e.g., 'plan_task').
             state: The current state from the tool's SM (Enum or str).
-            persona_config: The PersonaConfig Pydantic object for the tool's persona.
             additional_context: Ad-hoc data like review feedback.
 
         Returns:
@@ -66,8 +63,16 @@ class Prompter:
         """
         # Handle both Enum and string state values
         state_value = state.value if hasattr(state, "value") else state
-        template_path = TemplatePaths.PROMPT_PATTERN.format(tool_name=tool_name, state=state_value)
-        
+
+        # Map dynamic review states to generic templates
+        template_state = state_value
+        if state_value.endswith("_awaiting_ai_review"):
+            template_state = "awaiting_ai_review"
+        elif state_value.endswith("_awaiting_human_review"):
+            template_state = "awaiting_human_review"
+
+        template_path = TemplatePaths.PROMPT_PATTERN.format(tool_name=tool_name, state=template_state)
+
         logger.info(f"[PROMPTER] Generating prompt for tool='{tool_name}', state='{state_value}'")
         logger.info(f"[PROMPTER] Additional context keys: {list(additional_context.keys()) if additional_context else 'None'}")
 
@@ -84,28 +89,9 @@ class Prompter:
             "task": task,
             "tool_name": tool_name,
             "state": state_value,
-            "persona": persona_config,  # Pass the object directly
             "additional_context": additional_context or {},
         }
-        
-        # AL-11: Simplified logic, as we now always have the Pydantic object
-        ai_config = persona_config.ai
-        
-        # Get state-specific analysis patterns
-        analysis_patterns = ai_config.analysis_patterns.get(state_value, [])
-        validation_criteria = ai_config.validation_criteria.get(state_value, [])
-        
-        # Inject AI directives into context
-        render_context["ai_directives"] = {
-            "style": ai_config.style,
-            "analysis_patterns": analysis_patterns,
-            "validation_criteria": validation_criteria,
-        }
-        
-        logger.info(f"[PROMPTER] AL-11: Injecting AI directives for state '{state_value}'")
-        logger.info(f"[PROMPTER] AL-11: Analysis patterns count: {len(analysis_patterns)}")
-        logger.info(f"[PROMPTER] AL-11: Validation criteria count: {len(validation_criteria)}")
-        
+
         # Log important context details for debugging
         if additional_context and "feedback_notes" in additional_context:
             logger.info(f"[PROMPTER DEBUG] Feedback notes present (first 100 chars): {additional_context['feedback_notes'][:100]}")
@@ -113,19 +99,19 @@ class Prompter:
             artifact_keys = [k for k in additional_context.keys() if k.endswith("_artifact")]
             if artifact_keys:
                 logger.info(f"[PROMPTER DEBUG] Artifact keys in context: {artifact_keys}")
-        
+
         # Log what's being passed to template
         logger.info(f"[PROMPTER DEBUG] Rendering template with additional_context keys: {list(additional_context.keys()) if additional_context else 'None'}")
-        
+
         rendered = template.render(render_context)
-        
+
         # Check if feedback section was rendered
         if additional_context and "feedback_notes" in additional_context:
             if "Building on Your Previous Analysis" in rendered:
                 logger.info("[PROMPTER DEBUG] Feedback section successfully rendered in template")
             else:
                 logger.warning("[PROMPTER DEBUG] Feedback section NOT rendered despite feedback_notes present!")
-        
+
         return rendered
 
 

@@ -153,6 +153,11 @@ if not items:
 
 ```python
 # Good comments
+import time
+from typing import List, Optional
+from epicmanager.models.user import User
+
+MAX_RETRY_ATTEMPTS = 3
 
 # We need to retry 3 times due to external API rate limiting
 for attempt in range(MAX_RETRY_ATTEMPTS):
@@ -208,6 +213,10 @@ def process_order(order):
         log_transaction()
 
 # Good
+from epicmanager.models.order import Order, OrderStatus
+
+BULK_DISCOUNT_RATE = 0.1
+
 def process_order(order: Order) -> None:
     if not can_process_order(order):
         return
@@ -229,6 +238,11 @@ def reserve_order_items(order: Order) -> None:
 def apply_order_discounts(order: Order) -> None:
     if order.qualifies_for_bulk_discount():
         order.apply_discount(BULK_DISCOUNT_RATE)
+
+def finalize_order(order: Order) -> None:
+    """Complete order processing with confirmation and notifications."""
+    order.status = OrderStatus.CONFIRMED
+    # Additional finalization logic here
 ```
 
 ### Parameters
@@ -247,6 +261,8 @@ def format_date(date, use_long_format):
     return date.strftime("%m/%d/%Y")
 
 # Good
+from dataclasses import dataclass
+
 @dataclass
 class CreateUserRequest:
     name: str
@@ -256,7 +272,7 @@ class CreateUserRequest:
     phone: str
     is_admin: bool = False
 
-def create_user(request: CreateUserRequest) -> User:
+def create_user(request: CreateUserRequest) -> 'User':
     pass
 
 def format_date_short(date: datetime) -> str:
@@ -281,6 +297,9 @@ def get_user(user_id):
         return None
 
 # Good
+from epicmanager.models.user import User
+from epicmanager.exceptions import DatabaseConnectionError, ServiceUnavailableError, UserNotFoundError
+
 def get_user_by_id(user_id: int) -> User:
     if not isinstance(user_id, int) or user_id <= 0:
         raise ValueError(f"Invalid user_id: {user_id}. Must be a positive integer.")
@@ -298,7 +317,8 @@ def get_user_by_id(user_id: int) -> User:
 Always use type hints for function parameters and return values. For forward references, you can either use quotes or import annotations from `__future__` - both approaches are acceptable:
 
 ```python
-from typing import List, Optional, Dict, Union, Tuple
+from typing import List, Optional, Dict, Union, Tuple, Generator
+from epicmanager.models.task import Task, TaskStatus
 
 def find_tasks_by_status(
     status: TaskStatus,
@@ -309,19 +329,33 @@ def find_tasks_by_status(
 
 def parse_configuration(
     config_data: Dict[str, Union[str, int, bool]]
-) -> Tuple[Config, List[str]]:
+) -> Tuple['Config', List[str]]:
+    """Parse configuration data and return a Config object with validation errors."""
     pass
 
 # Option 1: Use quotes for forward references
+from typing import Generic, TypeVar
+
+TResult = TypeVar('TResult')
+
 class RepositoryResult(Generic[TResult]):
+    def __init__(self, data: TResult):
+        self.data = data
+    
     @classmethod
     def success(cls, data: TResult) -> 'RepositoryResult[TResult]':
         return cls(data=data)
 
 # Option 2: Use future annotations (if you prefer cleaner syntax)
 from __future__ import annotations
+from typing import Generic, TypeVar
+
+TResult = TypeVar('TResult')
 
 class RepositoryResult(Generic[TResult]):
+    def __init__(self, data: TResult):
+        self.data = data
+    
     @classmethod
     def success(cls, data: TResult) -> RepositoryResult[TResult]:  # No quotes needed
         return cls(data=data)
@@ -351,7 +385,7 @@ def process_data(data: list) -> dict:
     pass
 
 # Good
-def process_user_profiles(profiles: List[UserProfile]) -> Dict[str, ValidationResult]:
+def process_user_profiles(profiles: List['UserProfile']) -> Dict[str, 'ValidationResult']:
     pass
 ```
 
@@ -359,7 +393,7 @@ def process_user_profiles(profiles: List[UserProfile]) -> Dict[str, ValidationRe
 ```python
 from typing import Union
 
-def handle_response(response: Union[SuccessResponse, ErrorResponse]) -> ProcessingResult:
+def handle_response(response: Union['SuccessResponse', 'ErrorResponse']) -> 'ProcessingResult':
     pass
 ```
 
@@ -368,7 +402,7 @@ def handle_response(response: Union[SuccessResponse, ErrorResponse]) -> Processi
 Use Pydantic for all data validation and serialization. Pydantic models provide automatic validation, serialization, and clear documentation:
 
 ```python
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
@@ -380,22 +414,9 @@ class TaskPriority(str, Enum):
     LOW = "low"
 
 class CreateTaskRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = Field(None, max_length=2000)
-    priority: TaskPriority = TaskPriority.MEDIUM
-    due_date: Optional[datetime] = None
-    assigned_to: Optional[int] = Field(None, gt=0)
-    tags: List[str] = Field(default_factory=list, max_items=10)
-
-    @validator('due_date')
-    def due_date_must_be_future(cls, value):
-        if value and value < datetime.now():
-            raise ValueError('Due date must be in the future')
-        return value
-
-    class Config:
-        use_enum_values = True
-        json_schema_extra = {
+    model_config = ConfigDict(
+        use_enum_values=True,
+        json_schema_extra={
             "example": {
                 "title": "Implement user authentication",
                 "description": "Add JWT-based authentication to the API",
@@ -403,15 +424,33 @@ class CreateTaskRequest(BaseModel):
                 "assigned_to": 42
             }
         }
+    )
+    
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=2000)
+    priority: TaskPriority = TaskPriority.MEDIUM
+    due_date: Optional[datetime] = None
+    assigned_to: Optional[int] = Field(None, gt=0)
+    tags: List[str] = Field(default_factory=list, max_items=10)
+
+    @field_validator('due_date')
+    @classmethod
+    def due_date_must_be_future(cls, value):
+        if value and value < datetime.now():
+            raise ValueError('Due date must be in the future')
+        return value
 ```
 
 ### Pydantic Best Practices
 
 1. **Use Field() for validation and documentation**:
 ```python
+from decimal import Decimal
+from pydantic import Field, BaseModel
+
 class User(BaseModel):
     age: int = Field(..., ge=0, le=150, description="User's age in years")
-    email: str = Field(..., regex=r'^[\w\.-]+@[\w\.-]+\.\w+$')
+    email: str = Field(..., pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')
     balance: Decimal = Field(..., decimal_places=2, ge=Decimal('0'))
 ```
 
@@ -513,7 +552,8 @@ class Task(BaseModel):
     status: TaskStatus
     priority: TaskPriority
 
-    @validator('status', pre=True)
+    @field_validator('status', mode='before')
+    @classmethod
     def validate_status(cls, value):
         if isinstance(value, str):
             return TaskStatus(value)
@@ -576,6 +616,8 @@ def test_user():
     assert u.name == "John"
 
 # Good
+from epicmanager.models.user import User
+
 def test_user_creation_with_valid_data_sets_correct_attributes():
     # Arrange
     expected_name = "John Doe"
@@ -596,9 +638,15 @@ def test_user_creation_with_valid_data_sets_correct_attributes():
 **ALWAYS use `Mapped` type annotations** for SQLAlchemy ORM models to ensure proper type checking and avoid `# type: ignore` workarounds:
 
 ```python
-from sqlalchemy import String, Integer, ForeignKey
+from sqlalchemy import String, Integer, ForeignKey, Enum, Column
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from typing import Optional, List
+from enum import Enum as PyEnum
+
+class ProjectStatus(str, PyEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    PLANNING = "planning"
 
 class Base(DeclarativeBase):
     pass
@@ -631,21 +679,43 @@ class ProjectORM(Base):
 ```python
 from typing import Optional, List
 from sqlalchemy.orm import Session
+from epicmanager.models.project import Project  # Domain model
 
 class ProjectRepository:
     def __init__(self, session: Session):
         self.session = session
 
     def find_by_id(self, project_id: int) -> Optional[Project]:
-        return self.session.query(ProjectORM).filter_by(id=project_id).first()
+        orm_project = self.session.query(ProjectORM).filter_by(id=project_id).first()
+        return self._to_domain_model(orm_project) if orm_project else None
 
     def find_active_projects(self) -> List[Project]:
-        return self.session.query(ProjectORM).filter_by(is_active=True).all()
+        orm_projects = self.session.query(ProjectORM).filter_by(status=ProjectStatus.ACTIVE).all()
+        return [self._to_domain_model(p) for p in orm_projects]
 
     def save(self, project: Project) -> Project:
-        self.session.add(project)
+        orm_project = self._to_orm_model(project)
+        self.session.add(orm_project)
         self.session.commit()
-        return project
+        return self._to_domain_model(orm_project)
+    
+    def _to_domain_model(self, orm_project: ProjectORM) -> Project:
+        # Convert ORM model to domain model
+        return Project(
+            id=orm_project.id,
+            name=orm_project.name,
+            description=orm_project.description,
+            status=orm_project.status
+        )
+    
+    def _to_orm_model(self, project: Project) -> ProjectORM:
+        # Convert domain model to ORM model
+        return ProjectORM(
+            id=project.id,
+            name=project.name,
+            description=project.description,
+            status=project.status
+        )
 ```
 
 ### Type Checking Philosophy
@@ -781,6 +851,9 @@ TaskServiceImpl.py  # Java-style naming
 Use generators for large datasets:
 
 ```python
+from typing import List, Generator
+from epicmanager.models.task import Task
+
 # Bad - loads everything into memory
 def get_all_active_tasks() -> List[Task]:
     return [task for task in database.query_all_tasks() if task.is_active]
