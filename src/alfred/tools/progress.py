@@ -2,6 +2,7 @@
 """
 Progress tracking tools for Alfred workflow system.
 """
+
 from src.alfred.lib.logger import get_logger
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator

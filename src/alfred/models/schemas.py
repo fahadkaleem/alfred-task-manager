@@ -21,6 +21,10 @@ class TaskStatus(str, Enum):
     """Enumeration for the high-level status of a Task."""
 
     NEW = "new"
+    CREATING_SPEC = "creating_spec"
+    SPEC_COMPLETED = "spec_completed"
+    CREATING_TASKS = "creating_tasks"
+    TASKS_CREATED = "tasks_created"
     PLANNING = "planning"
     READY_FOR_DEVELOPMENT = "ready_for_development"
     IN_DEVELOPMENT = "in_development"

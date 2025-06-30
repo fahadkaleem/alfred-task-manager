@@ -13,9 +13,16 @@ from typing import Final
 class ToolName:
     """Tool name constants."""
 
+    CREATE_SPEC: Final[str] = "create_spec"
+    CREATE_TASKS: Final[str] = "create_tasks"
     START_TASK: Final[str] = "start_task"
     PLAN_TASK: Final[str] = "plan_task"
     IMPLEMENT_TASK: Final[str] = "implement_task"
+    REVIEW_TASK: Final[str] = "review_task"
+    TEST_TASK: Final[str] = "test_task"
+    FINALIZE_TASK: Final[str] = "finalize_task"
+    WORK_ON: Final[str] = "work_on"
+    APPROVE_AND_ADVANCE: Final[str] = "approve_and_advance"
 
 
 # Directory and File Names
@@ -25,7 +32,6 @@ class Paths:
     # Directories
     ALFRED_DIR: Final[str] = ".alfred"
     WORKSPACE_DIR: Final[str] = "workspace"
-    PERSONAS_DIR: Final[str] = "personas"
     TEMPLATES_DIR: Final[str] = "templates"
     ARCHIVE_DIR: Final[str] = "archive"
     DEBUG_DIR: Final[str] = "debug"
@@ -75,11 +81,31 @@ class ArtifactKeys:
 
     # State to artifact name mapping
     STATE_TO_ARTIFACT_MAP: Final[dict] = {
+        # PlanTask states
         PlanTaskStates.CONTEXTUALIZE: "context",
         PlanTaskStates.STRATEGIZE: "strategy",
         PlanTaskStates.DESIGN: "design",
         PlanTaskStates.GENERATE_SUBTASKS: "execution_plan",
+        # Other tool states
+        "drafting_spec": "drafting_spec",
+        "drafting_tasks": "drafting_tasks",
+        "implementing": "implementing",
+        "reviewing": "reviewing",
+        "testing": "testing",
+        "finalizing": "finalizing",
     }
+
+    @staticmethod
+    def get_base_state_name(state: str) -> str:
+        """Extract base state name from a potentially suffixed state.
+
+        Example: 'strategize_awaiting_ai_review' -> 'strategize'
+        """
+        if state.endswith("_awaiting_ai_review") or state.endswith("_awaiting_human_review"):
+            # Remove the review suffix
+            parts = state.rsplit("_awaiting_", 1)
+            return parts[0]
+        return state
 
     ARTIFACT_SUFFIX: Final[str] = "_artifact"
     ARTIFACT_CONTENT_KEY: Final[str] = "artifact_content"
@@ -87,7 +113,8 @@ class ArtifactKeys:
     @staticmethod
     def get_artifact_key(state: str) -> str:
         """Get the artifact key for a given state."""
-        artifact_name = ArtifactKeys.STATE_TO_ARTIFACT_MAP.get(state, state)
+        base_state = ArtifactKeys.get_base_state_name(state)
+        artifact_name = ArtifactKeys.STATE_TO_ARTIFACT_MAP.get(base_state, base_state)
         return f"{artifact_name}{ArtifactKeys.ARTIFACT_SUFFIX}"
 
 
@@ -109,6 +136,8 @@ class Triggers:
 
     AI_APPROVE: Final[str] = "ai_approve"
     REQUEST_REVISION: Final[str] = "request_revision"
+    HUMAN_APPROVE: Final[str] = "human_approve"
+    SUBMIT_WORK: Final[str] = "submit_work"
 
     @staticmethod
     def submit_trigger(state: str) -> str:

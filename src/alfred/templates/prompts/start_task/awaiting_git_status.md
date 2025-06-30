@@ -1,11 +1,8 @@
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.start_task`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_git_status
 
-Welcome. I am {{ persona.name }}, your {{ persona.title }}.
-
-{{ persona.context }}
+Welcome. Let's begin setting up the workspace for this task.
 
 ---
 ### **System Checkpoint: Environment Assessment**

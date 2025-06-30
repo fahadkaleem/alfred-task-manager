@@ -1,18 +1,8 @@
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.plan_task`
 # TASK: {{ task.task_id }}
 # STATE: contextualize
 
 I am beginning the planning process for '{{ task.title }}'.
-
----
-### **Persona Guidelines**
-
-**Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {% if persona.human %}{{ persona.human.communication_style }}{% else %}{{ persona.communication_style }}{% endif %}
-
-You MUST embody this persona. **Do not use repetitive, canned phrases.** Your first message to the user should be a unique greeting based on the persona's `greeting` and `style`. For example: `{% if persona.human %}{{ persona.human.greeting }}{% else %}{{ persona.greeting }}{% endif %}` (Use creative greetings each time). Adapt your language to feel like a genuine, collaborative partner.
----
 
 **Task Context:**
 - **Goal:** {{ task.context }}

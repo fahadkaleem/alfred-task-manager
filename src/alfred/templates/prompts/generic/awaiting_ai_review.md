@@ -1,4 +1,3 @@
-# ROLE: {{ persona.name }}, {{ persona.title }}
 # TOOL: `alfred.provide_review`
 # TASK: {{ task.task_id }}
 # STATE: awaiting_ai_review

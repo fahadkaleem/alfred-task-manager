@@ -43,11 +43,6 @@ class Settings(BaseSettings):
         return Path(__file__).parent.parent / Paths.WORKFLOW_FILE
 
     @property
-    def packaged_personas_dir(self) -> Path:
-        """Get the path to the default personas directory inside the package."""
-        return Path(__file__).parent.parent / Paths.PERSONAS_DIR
-
-    @property
     def packaged_templates_dir(self) -> Path:
         """Get the path to the default templates directory inside the package."""
         return Path(__file__).parent.parent / Paths.TEMPLATES_DIR

@@ -1,7 +1,7 @@
 # src/alfred/models/planning_artifacts.py
 from pydantic import BaseModel, Field
 from typing import List, Dict, Literal
-from .schemas import Subtask
+from .schemas import Subtask, Task
 
 
 class ContextAnalysisArtifact(BaseModel):
@@ -43,3 +43,35 @@ class BranchCreationArtifact(BaseModel):
     branch_name: str
     success: bool
     details: str
+
+
+class ImplementationManifestArtifact(BaseModel):
+    summary: str
+    completed_subtasks: List[str]
+    testing_notes: str
+
+
+class ReviewArtifact(BaseModel):
+    summary: str
+    approved: bool
+    feedback: List[str]
+
+
+class TestResultArtifact(BaseModel):
+    command: str
+    exit_code: int
+    output: str
+
+
+class FinalizeArtifact(BaseModel):
+    commit_hash: str
+    pr_url: str
+
+
+# Pre-planning Phase Artifacts
+class PRDInputArtifact(BaseModel):
+    prd_content: str = Field(description="The raw text or content of the Product Requirements Document.")
+
+
+class TaskCreationArtifact(BaseModel):
+    tasks: List[Task] = Field(description="A list of all generated Task objects.")
