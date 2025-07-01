@@ -1,6 +1,6 @@
 from src.alfred.state.manager import state_manager
 from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.constants import ToolName
+from src.alfred.core.workflow_config import WorkflowConfiguration
 from src.alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
 from src.alfred.task_providers.factory import get_provider
 from src.alfred.lib.logger import get_logger
@@ -9,85 +9,71 @@ logger = get_logger(__name__)
 
 
 def work_on_impl(task_id: str) -> ToolResponse:
+    """Smart dispatch using centralized workflow configuration."""
+    
     # Step 1: Check if the task exists locally first (cache-first architecture)
     if not does_task_exist_locally(task_id):
         logger.info(f"Task '{task_id}' not found in local cache. Fetching from provider...")
-
+        
         # Task is not in our local cache, fetch from provider
         provider = get_provider()
-
+        
         try:
             # Delegate to the provider to fetch the task
             task = provider.get_task(task_id)
-
+            
             if not task:
                 return ToolResponse(
                     status="error",
-                    message=f"""Task '{task_id}' could not be found.
-
-**Troubleshooting Steps:**
-1. **Check Task ID:** Ensure '{task_id}' is correct (case-sensitive)
-2. **Local Tasks:** Verify file exists at `.alfred/tasks/{task_id}.md`
-3. **Remote Tasks:** Confirm task exists in your provider (Jira/Linear)
-4. **File Format:** Check task file follows proper format (see `.alfred/tasks/README.md`)
-
-**Next Actions:**
-- See available tasks: `alfred.get_next_task()`
-- Check task directory: `ls .alfred/tasks/`
-- Initialize project: `alfred.initialize_project()` (if needed)""",
+                    message=f"Task '{task_id}' could not be found. Please check:\n"
+                    f"1. Task ID is correct (case-sensitive)\n"
+                    f"2. For local tasks: File exists at .alfred/tasks/{task_id}.md\n"
+                    f"3. For remote tasks: Task exists in your configured provider (Jira/Linear)\n"
+                    f"4. Task file format is valid (see .alfred/tasks/README.md)\n"
+                    f"5. Run 'alfred.get_next_task()' to see available tasks",
                 )
-
+            
             # Step 2: Cache the fetched task locally
             write_task_to_markdown(task)
             logger.info(f"Successfully cached task '{task_id}' from provider")
-
+            
         except Exception as e:
             logger.error(f"Failed to fetch task from provider: {e}")
-            return ToolResponse(status="error", message=f"Failed to fetch task '{task_id}' from provider: {str(e)}")
-
-    # Step 3: Now that the task is guaranteed to be local, proceed with the
-    # original "Smart Dispatch" logic
+            return ToolResponse(
+                status="error",
+                message=f"Failed to fetch task '{task_id}' from provider: {str(e)}"
+            )
+    
+    # Step 3: Use centralized workflow config for smart dispatch
     task_state = state_manager.load_or_create_task_state(task_id)
     task_status = task_state.task_status
-
-    handoff_tool_map = {
-        TaskStatus.NEW: ToolName.PLAN_TASK,  # Start with creating spec for new epics
-        TaskStatus.CREATING_SPEC: ToolName.CREATE_SPEC,
-        TaskStatus.SPEC_COMPLETED: ToolName.CREATE_TASKS_FROM_SPEC,
-        TaskStatus.CREATING_TASKS: ToolName.CREATE_TASKS_FROM_SPEC,
-        TaskStatus.TASKS_CREATED: ToolName.PLAN_TASK,  # After tasks are created, plan the first one
-        TaskStatus.PLANNING: ToolName.PLAN_TASK,
-        TaskStatus.READY_FOR_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
-        TaskStatus.IN_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
-        TaskStatus.READY_FOR_REVIEW: ToolName.REVIEW_TASK,
-        TaskStatus.IN_REVIEW: ToolName.REVIEW_TASK,
-        TaskStatus.READY_FOR_TESTING: ToolName.TEST_TASK,
-        TaskStatus.IN_TESTING: ToolName.TEST_TASK,
-        TaskStatus.READY_FOR_FINALIZATION: ToolName.FINALIZE_TASK,
-    }
-
-    if task_status in handoff_tool_map:
-        handoff_tool = handoff_tool_map[task_status]
+    
+    # Get the appropriate tool from workflow configuration
+    next_tool = WorkflowConfiguration.get_tool_for_status(task_status)
+    
+    if next_tool:
+        phase = WorkflowConfiguration.get_phase(task_status)
+        message = (
+            f"Task '{task_id}' is in status '{task_status.value}'. "
+            f"The next action is to use the '{next_tool}' tool."
+        )
         
-        # Check if there's an active tool that might need completion first
-        task_state = state_manager.load_or_create_task_state(task_id)
-        active_tool_note = ""
-        if task_state.active_tool_state:
-            tool_name = task_state.active_tool_state.tool_name
-            tool_state = task_state.active_tool_state.current_state
-            if tool_state.endswith('_awaiting_human_review') or tool_state.endswith('_awaiting_ai_review'):
-                active_tool_note = f"\n\n**Note:** '{tool_name}' tool is active and awaiting review. You may need to call `alfred.approve_review(task_id='{task_id}')` first to complete the current phase."
+        if phase and phase.description:
+            message += f"\nPhase: {phase.description}"
         
-        message = f"Task '{task_id}' is in status '{task_status.value}'. The next action is to use the '{handoff_tool}' tool."
-        next_prompt = f"""**Primary Action:**
-Call `alfred.{handoff_tool}(task_id='{task_id}')` to proceed with the {task_status.value} phase.
-
-**If that fails:**
-- Check for active tools: `alfred.work_on_task(task_id='{task_id}')` 
-- Get task list: `alfred.get_next_task()`{active_tool_note}"""
+        next_prompt = f"To proceed with task '{task_id}', call `alfred.{next_tool}(task_id='{task_id}')`."
         return ToolResponse(status="success", message=message, next_prompt=next_prompt)
-
-    if task_status == TaskStatus.DONE:
-        return ToolResponse(status="success", message=f"Task '{task_id}' is already done. No further action is required.")
-
-    return ToolResponse(status="error", message=f"Unhandled status '{task_status.value}' for task '{task_id}'.")
+    
+    # Check if task is done
+    if WorkflowConfiguration.is_terminal_status(task_status):
+        return ToolResponse(
+            status="success",
+            message=f"Task '{task_id}' is already done. No further action is required."
+        )
+    
+    # Unknown status
+    return ToolResponse(
+        status="error",
+        message=f"Unhandled status '{task_status.value}' for task '{task_id}'. "
+                f"This may be a configuration error."
+    )

@@ -22,6 +22,7 @@ from src.alfred.constants import ToolName
 from src.alfred.tools.registry import tool_registry
 from src.alfred.tools.create_spec import create_spec_impl
 from alfred.tools.create_tasks_from_spec import create_tasks_from_spec_impl
+from src.alfred.tools.create_task import create_task_impl
 from src.alfred.tools.finalize_task import finalize_task_impl, finalize_task_handler
 from src.alfred.tools.get_next_task import get_next_task_impl
 from src.alfred.tools.implement_task import implement_task_impl, implement_task_handler
@@ -236,6 +237,102 @@ async def create_tasks_from_spec(task_id: str) -> ToolResponse:
 
     Example:
         create_tasks_from_spec("EPIC-01") -> Guides creation of task list from spec
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
+@log_tool_transaction(create_task_impl)
+async def create_task(task_content: str) -> ToolResponse:
+    """
+    Creates a new task in the Alfred system using the standardized task template format.
+
+    This tool provides the standard way to create tasks within Alfred, ensuring proper
+    format validation and consistent task structure. It validates the task content
+    against the required template format and saves it to the .alfred/tasks directory.
+
+    The tool validates and requires:
+    - **First line format**: Must be '# TASK: <task_id>' 
+    - **Required sections**: Title, Context, Implementation Details, Acceptance Criteria
+    - **Section headers**: All sections must use '##' markdown headers
+    - **Non-empty content**: Task content cannot be empty
+    - **Unique task_id**: Task ID must not already exist
+
+    Template Format (copy and modify this exact structure):
+    ```markdown
+    # TASK: YOUR-TASK-ID
+
+    ## Title
+    Brief descriptive title for the task
+
+    ## Context
+    Background information explaining why this task is needed, business context,
+    and any relevant background that helps understand the requirements.
+
+    ## Implementation Details
+    Detailed description of what needs to be implemented, technical approach,
+    and specific requirements for the implementation.
+
+    ## Acceptance Criteria
+    - Clear, testable criteria that define when the task is complete
+    - Each criterion should be specific and measurable
+    - Use bullet points for each criterion
+
+    ## AC Verification
+    - Optional section describing how to verify each acceptance criterion
+    - Testing steps or validation procedures
+
+    ## Dev Notes
+    - Optional section for additional development notes
+    - Architecture considerations, gotchas, or helpful context
+    ```
+
+    Args:
+        task_content (str): Raw markdown content following the exact template format above
+
+    Returns:
+        ToolResponse: Contains:
+            - success: Whether task was created successfully
+            - data.task_id: The extracted task ID
+            - data.file_path: Path where task was saved
+            - data.task_title: The task title
+            - data.template: Full template format (if validation fails)
+            - data.help: Specific guidance on format requirements
+
+    Examples:
+        # Valid task creation
+        create_task('''# TASK: AUTH-001
+
+        ## Title
+        Implement user authentication system
+
+        ## Context
+        Need to add secure user login functionality to support multiple user roles.
+
+        ## Implementation Details
+        Create JWT-based authentication with role-based access control.
+
+        ## Acceptance Criteria
+        - Users can login with email/password
+        - JWT tokens are properly validated
+        - Role-based permissions are enforced
+        ''')
+
+    Validation Errors:
+        If the format is incorrect, the tool returns the complete template format
+        with specific error guidance. Common issues:
+        - Missing '# TASK: <task_id>' first line
+        - Missing required sections (Title, Context, Implementation Details, Acceptance Criteria)
+        - Incorrect section headers (must use '##')
+        - Empty content
+        - Duplicate task_id
+
+    Next Actions:
+        After successful creation, use work_on_task(task_id) to start working on the task.
+
+    Note: This tool enforces the exact template format to ensure consistency across
+    all tasks in the Alfred system. The template format is non-negotiable and must
+    be followed precisely for successful task creation.
     """
     pass  # Implementation handled by decorator
 

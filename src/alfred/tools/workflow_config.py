@@ -9,6 +9,7 @@ from enum import Enum
 from src.alfred.core.workflow import BaseWorkflowTool
 from src.alfred.models.schemas import TaskStatus
 from src.alfred.state.manager import state_manager
+from src.alfred.core.workflow_config import TOOL_ENTRY_POINTS, WorkflowConfiguration
 
 
 @dataclass
@@ -100,8 +101,9 @@ WORKFLOW_TOOL_CONFIGS = {
         tool_class=PlanTaskTool,
         required_status=None,  # Special validation in setup
         entry_status_map={
-            TaskStatus.NEW: TaskStatus.PLANNING,
-            TaskStatus.PLANNING: TaskStatus.PLANNING,
+            status: WorkflowConfiguration.get_phase(status).next_status
+            for status in TOOL_ENTRY_POINTS[ToolName.PLAN_TASK]
+            if WorkflowConfiguration.get_phase(status) and WorkflowConfiguration.get_phase(status).next_status
         },
         dispatch_on_init=False,  # Plan task doesn't auto-dispatch
     ),
@@ -110,8 +112,9 @@ WORKFLOW_TOOL_CONFIGS = {
         tool_class=ImplementTaskTool,
         required_status=TaskStatus.READY_FOR_DEVELOPMENT,
         entry_status_map={
-            TaskStatus.READY_FOR_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
-            TaskStatus.IN_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
+            status: WorkflowConfiguration.get_phase(status).next_status
+            for status in TOOL_ENTRY_POINTS[ToolName.IMPLEMENT_TASK]
+            if WorkflowConfiguration.get_phase(status) and WorkflowConfiguration.get_phase(status).next_status
         },
         dispatch_on_init=True,
         dispatch_state_attr=ImplementTaskState.DISPATCHING.value,
@@ -123,8 +126,9 @@ WORKFLOW_TOOL_CONFIGS = {
         tool_class=ReviewTaskTool,
         required_status=TaskStatus.READY_FOR_REVIEW,
         entry_status_map={
-            TaskStatus.READY_FOR_REVIEW: TaskStatus.IN_REVIEW,
-            TaskStatus.IN_REVIEW: TaskStatus.IN_REVIEW,
+            status: WorkflowConfiguration.get_phase(status).next_status
+            for status in TOOL_ENTRY_POINTS[ToolName.REVIEW_TASK]
+            if WorkflowConfiguration.get_phase(status) and WorkflowConfiguration.get_phase(status).next_status
         },
         dispatch_on_init=True,
         dispatch_state_attr=ReviewTaskState.DISPATCHING.value,
@@ -135,8 +139,9 @@ WORKFLOW_TOOL_CONFIGS = {
         tool_class=TestTaskTool,
         required_status=TaskStatus.READY_FOR_TESTING,
         entry_status_map={
-            TaskStatus.READY_FOR_TESTING: TaskStatus.IN_TESTING,
-            TaskStatus.IN_TESTING: TaskStatus.IN_TESTING,
+            status: WorkflowConfiguration.get_phase(status).next_status
+            for status in TOOL_ENTRY_POINTS[ToolName.TEST_TASK]
+            if WorkflowConfiguration.get_phase(status) and WorkflowConfiguration.get_phase(status).next_status
         },
         dispatch_on_init=True,
         dispatch_state_attr=TestTaskState.DISPATCHING.value,
@@ -147,8 +152,9 @@ WORKFLOW_TOOL_CONFIGS = {
         tool_class=FinalizeTaskTool,
         required_status=TaskStatus.READY_FOR_FINALIZATION,
         entry_status_map={
-            TaskStatus.READY_FOR_FINALIZATION: TaskStatus.IN_FINALIZATION,
-            TaskStatus.IN_FINALIZATION: TaskStatus.IN_FINALIZATION,
+            status: WorkflowConfiguration.get_phase(status).next_status
+            for status in TOOL_ENTRY_POINTS[ToolName.FINALIZE_TASK]
+            if WorkflowConfiguration.get_phase(status) and WorkflowConfiguration.get_phase(status).next_status
         },
         dispatch_on_init=True,
         dispatch_state_attr=FinalizeTaskState.DISPATCHING.value,

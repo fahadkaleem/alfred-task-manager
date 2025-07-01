@@ -79,6 +79,79 @@ class LocalTaskProvider(BaseTaskProvider):
             logger.error(f"Failed to load task {task_id} from {task_md_path}: {e}")
             return None
 
+    def get_task_with_error_details(self, task_id: str) -> tuple[Optional[Task], Optional[str]]:
+        """Fetches the details for a single task with detailed error information.
+
+        Args:
+            task_id: The unique identifier for the task
+
+        Returns:
+            Tuple of (Task object if found or None, error message if failed or None)
+        """
+        task_md_path = self.tasks_dir / f"{task_id}.md"
+
+        if not task_md_path.exists():
+            # Read the template content to show the user
+            template_path = Path(__file__).parent.parent / "templates" / "task_template.md"
+            template_content = ""
+            if template_path.exists():
+                template_content = template_path.read_text()
+                # Replace the sample task ID with the requested one
+                template_content = template_content.replace("SAMPLE-001", task_id)
+            
+            error_msg = f"Task '{task_id}' doesn't exist.\n\n"
+            error_msg += f"To create it, save this content as:\n{task_md_path}\n\n"
+            error_msg += f"--- TEMPLATE ---\n{template_content}\n--- END TEMPLATE ---"
+            return None, error_msg
+
+        try:
+            # Read and validate the markdown file
+            content = task_md_path.read_text()
+
+            # Validate format first
+            is_valid, error_msg = self.parser.validate_format(content)
+            if not is_valid:
+                # Read the template content to show the user
+                template_path = Path(__file__).parent.parent / "templates" / "task_template.md"
+                template_content = ""
+                if template_path.exists():
+                    template_content = template_path.read_text()
+                    # Replace the sample task ID with the requested one
+                    template_content = template_content.replace("SAMPLE-001", task_id)
+                
+                detailed_error = f"Task file has invalid format: {error_msg}\n\n"
+                detailed_error += f"File location: {task_md_path}\n\n"
+                detailed_error += f"Expected format:\n"
+                detailed_error += f"--- TEMPLATE ---\n{template_content}\n--- END TEMPLATE ---"
+                return None, detailed_error
+
+            # Parse the markdown file
+            task_data = self.parser.parse(content)
+
+            # Validate required fields and provide helpful error if missing
+            if not task_data.get("task_id"):
+                error_msg = f"Task file is missing task_id.\n\n"
+                error_msg += f"Expected format: '# TASK: {task_id}'\n"
+                error_msg += f"Current first line: {content.split('\\n')[0] if content else 'Empty file'}\n"
+                error_msg += f"File location: {task_md_path}"
+                return None, error_msg
+
+            task_model = Task(**task_data)
+
+            # Load and merge the dynamic state
+            task_state = state_manager.load_or_create(task_id)
+            task_model.task_status = task_state.task_status
+
+            return task_model, None
+        except ValueError as e:
+            detailed_error = f"Task file has invalid format: {e}\n\n"
+            detailed_error += f"File location: {task_md_path}\n"
+            detailed_error += f"Template reference: src/alfred/templates/task_template.md"
+            return None, detailed_error
+        except Exception as e:
+            error_msg = f"Failed to load task {task_id} from {task_md_path}: {e}"
+            return None, error_msg
+
     def get_all_tasks(self) -> List[Task]:
         """Fetches all available tasks from the tasks directory.
 

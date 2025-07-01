@@ -5,7 +5,7 @@ from typing import Optional, Type, Any
 from src.alfred.core.prompter import generate_prompt
 from src.alfred.core.workflow import BaseWorkflowTool
 from src.alfred.lib.logger import get_logger, setup_task_logging
-from src.alfred.lib.task_utils import load_task
+from src.alfred.lib.task_utils import load_task, load_task_with_error_details
 from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
 from src.alfred.state.manager import state_manager
@@ -32,9 +32,9 @@ class BaseToolHandler(ABC):
         """Template method defining the algorithm structure for all tools."""
         setup_task_logging(task_id)
 
-        task = load_task(task_id)
+        task, error_msg = load_task_with_error_details(task_id)
         if not task:
-            return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+            return ToolResponse(status="error", message=error_msg or f"Task '{task_id}' not found.")
 
         get_tool_result = self._get_or_create_tool(task_id, task)
         if isinstance(get_tool_result, ToolResponse):
