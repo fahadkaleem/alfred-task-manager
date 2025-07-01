@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "epic-task-manager"
+name = "alfred-task-manager"
 version = "0.1.0"
-description = "An MCP server for epic software development workflow management"
+description = "An MCP server for orchestrated software development workflow management"
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
 dependencies = [

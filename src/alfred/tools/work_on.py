@@ -23,12 +23,18 @@ def work_on_impl(task_id: str) -> ToolResponse:
             if not task:
                 return ToolResponse(
                     status="error",
-                    message=f"Task '{task_id}' could not be found. Please check:\n"
-                    f"1. Task ID is correct (case-sensitive)\n"
-                    f"2. For local tasks: File exists at .alfred/tasks/{task_id}.md\n"
-                    f"3. For remote tasks: Task exists in your configured provider (Jira/Linear)\n"
-                    f"4. Task file format is valid (see .alfred/tasks/README.md)\n"
-                    f"5. Run 'alfred.get_next_task()' to see available tasks",
+                    message=f"""Task '{task_id}' could not be found.
+
+**Troubleshooting Steps:**
+1. **Check Task ID:** Ensure '{task_id}' is correct (case-sensitive)
+2. **Local Tasks:** Verify file exists at `.alfred/tasks/{task_id}.md`
+3. **Remote Tasks:** Confirm task exists in your provider (Jira/Linear)
+4. **File Format:** Check task file follows proper format (see `.alfred/tasks/README.md`)
+
+**Next Actions:**
+- See available tasks: `alfred.get_next_task()`
+- Check task directory: `ls .alfred/tasks/`
+- Initialize project: `alfred.initialize_project()` (if needed)""",
                 )
 
             # Step 2: Cache the fetched task locally
@@ -62,8 +68,23 @@ def work_on_impl(task_id: str) -> ToolResponse:
 
     if task_status in handoff_tool_map:
         handoff_tool = handoff_tool_map[task_status]
+        
+        # Check if there's an active tool that might need completion first
+        task_state = state_manager.load_or_create_task_state(task_id)
+        active_tool_note = ""
+        if task_state.active_tool_state:
+            tool_name = task_state.active_tool_state.tool_name
+            tool_state = task_state.active_tool_state.current_state
+            if tool_state.endswith('_awaiting_human_review') or tool_state.endswith('_awaiting_ai_review'):
+                active_tool_note = f"\n\n**Note:** '{tool_name}' tool is active and awaiting review. You may need to call `alfred.approve_review(task_id='{task_id}')` first to complete the current phase."
+        
         message = f"Task '{task_id}' is in status '{task_status.value}'. The next action is to use the '{handoff_tool}' tool."
-        next_prompt = f"To proceed with task '{task_id}', call `alfred.{handoff_tool}(task_id='{task_id}')`."
+        next_prompt = f"""**Primary Action:**
+Call `alfred.{handoff_tool}(task_id='{task_id}')` to proceed with the {task_status.value} phase.
+
+**If that fails:**
+- Check for active tools: `alfred.work_on_task(task_id='{task_id}')` 
+- Get task list: `alfred.get_next_task()`{active_tool_note}"""
         return ToolResponse(status="success", message=message, next_prompt=next_prompt)
 
     if task_status == TaskStatus.DONE:

@@ -75,8 +75,7 @@ class GenericWorkflowHandler(BaseToolHandler):
             dispatch_method()
 
             # Persist the state change
-            with state_manager.transaction() as uow:
-                uow.update_tool_state(task.task_id, tool_instance)
+            state_manager.update_tool_state(task.task_id, tool_instance)
 
             logger.info(f"Dispatched '{self.config.tool_name}' for task {task.task_id} to state '{tool_instance.state}'.")
 
