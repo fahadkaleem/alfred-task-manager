@@ -54,8 +54,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         else:
             return ToolResponse(status="error", message=f"Cannot provide review from non-review state '{current_state}'.")
 
-    with state_manager.transaction() as uow:
-        uow.update_tool_state(task_id, active_tool)
+    state_manager.update_tool_state(task_id, active_tool)
 
     if active_tool.is_terminal:
         tool_name = active_tool.tool_name
@@ -63,23 +62,29 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         key = ArtifactKeys.get_artifact_key(final_state)
         artifact = active_tool.context_store.get(key)
 
-        with state_manager.transaction() as uow:
-            if artifact:
-                uow.add_completed_output(task_id, tool_name, artifact)
-            uow.clear_tool_state(task_id)
+        if artifact:
+            state_manager.add_completed_output(task_id, tool_name, artifact)
+        state_manager.clear_tool_state(task_id)
 
         orchestrator.active_tools.pop(task_id, None)
         cleanup_task_logging(task_id)
 
-        handoff = f"The '{tool_name}' workflow has completed successfully. To formally approve this phase, call `alfred.approve_and_advance(task_id='{task_id}')`."
+        handoff = f"""The '{tool_name}' workflow has completed successfully! 
+
+**Next Action Required:**
+Call `alfred.approve_and_advance(task_id='{task_id}')` to:
+- Archive the completed work
+- Advance to the next phase  
+- Update task status
+
+**Alternative:** If you need to review the work first, call `alfred.work_on_task(task_id='{task_id}')` to see current status."""
         return ToolResponse(status="success", message=f"'{tool_name}' completed. Awaiting final approval.", next_prompt=handoff)
 
     if not is_approved and feedback_notes:
         # Store feedback in the tool's context for persistence
         active_tool.context_store["feedback_notes"] = feedback_notes
         # Persist the updated tool state with feedback
-        with state_manager.transaction() as uow:
-            uow.update_tool_state(task_id, active_tool)
+        state_manager.update_tool_state(task_id, active_tool)
 
     # Always use the tool's context (which now includes feedback if present)
     ctx = active_tool.context_store.copy()

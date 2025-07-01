@@ -58,8 +58,7 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
         tool_instance.context_store["completed_subtasks"] = sorted(list(completed_subtasks))  # Store sorted for consistency
 
         # Persist the updated tool state
-        with state_manager.transaction() as uow:
-            uow.update_tool_state(task.task_id, tool_instance)
+        state_manager.update_tool_state(task.task_id, tool_instance)
 
         # Generate a progress report message
         completed_count = len(completed_subtasks)

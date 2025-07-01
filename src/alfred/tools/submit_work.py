@@ -87,8 +87,7 @@ class SubmitWorkHandler(BaseToolHandler):
         logger.info(LogMessages.STATE_TRANSITION.format(task_id=task.task_id, trigger=trigger_name, state=tool_instance.state))
 
         # 4. Persist the new state
-        with state_manager.transaction() as uow:
-            uow.update_tool_state(task.task_id, tool_instance)
+        state_manager.update_tool_state(task.task_id, tool_instance)
 
         # This handler's job is done; we return None to let the main execute method generate the response
         return None

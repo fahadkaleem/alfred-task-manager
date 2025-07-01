@@ -32,7 +32,26 @@ def approve_and_advance_impl(task_id: str) -> ToolResponse:
     current_status = task_state.task_status
 
     if current_status not in STATUS_TRANSITION_MAP:
-        return ToolResponse(status="error", message=f"Cannot advance task '{task_id}'. Its status is '{current_status.value}', which is not a completed phase.")
+        # Provide helpful guidance based on current status
+        if current_status in [TaskStatus.NEW, TaskStatus.READY_FOR_DEVELOPMENT, TaskStatus.READY_FOR_REVIEW, TaskStatus.READY_FOR_TESTING, TaskStatus.READY_FOR_FINALIZATION]:
+            suggestion = f"Call `alfred.work_on_task(task_id='{task_id}')` to start the next workflow phase."
+        elif current_status == TaskStatus.DONE:
+            suggestion = "Task is already complete. No further action needed."
+        else:
+            suggestion = f"Complete the current '{current_status.value}' phase first, then try again."
+        
+        return ToolResponse(
+            status="error", 
+            message=f"""Cannot advance task '{task_id}' - Current status is '{current_status.value}', which is not a completed phase.
+
+**What this means:** 
+- Task status: {current_status.value} (not a completing state)
+- Only phases ending with 'in_*' can be advanced (e.g., in_development, in_review)
+
+**Next Action:** {suggestion}
+
+**Valid advance states:** {', '.join([s.value for s in STATUS_TRANSITION_MAP.keys()])}"""
+        )
 
     producer_tool_name = ARTIFACT_PRODUCER_MAP.get(current_status)
     if producer_tool_name:
