@@ -49,17 +49,20 @@ class SubmitWorkHandler(BaseToolHandler):
         current_state_enum = tool_instance.state
         current_state_val = tool_instance.state.value if hasattr(tool_instance.state, "value") else tool_instance.state
 
-        # 1. Validate the artifact against the model for the current state
+        # 1. Normalize artifact fields before validation
+        normalized_artifact = self._normalize_artifact(artifact)
+
+        # 2. Validate the artifact against the model for the current state
         artifact_model = tool_instance.artifact_map.get(current_state_enum)
         if artifact_model:
             try:
-                validated_artifact = artifact_model.model_validate(artifact)
+                validated_artifact = artifact_model.model_validate(normalized_artifact)
                 logger.info(LogMessages.ARTIFACT_VALIDATED.format(state=current_state_val, model=artifact_model.__name__))
             except ValidationError as e:
                 error_msg = f"{ErrorMessages.VALIDATION_FAILED.format(state=current_state_val)}. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
                 return ToolResponse(status=ResponseStatus.ERROR, message=error_msg)
         else:
-            validated_artifact = artifact  # No model to validate against
+            validated_artifact = normalized_artifact  # No model to validate against
 
         # 2. Store artifact and update scratchpad
         artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
@@ -89,6 +92,29 @@ class SubmitWorkHandler(BaseToolHandler):
 
         # This handler's job is done; we return None to let the main execute method generate the response
         return None
+
+    def _normalize_artifact(self, artifact: dict) -> dict:
+        """Normalize artifact fields to handle case-insensitive inputs."""
+        if not isinstance(artifact, dict):
+            return artifact
+
+        normalized = artifact.copy()
+
+        # Normalize file_breakdown operations (for DesignArtifact)
+        if "file_breakdown" in normalized and isinstance(normalized["file_breakdown"], list):
+            for file_change in normalized["file_breakdown"]:
+                if isinstance(file_change, dict) and "operation" in file_change:
+                    # Normalize operation to uppercase
+                    file_change["operation"] = file_change["operation"].upper()
+
+        # Normalize subtasks operations (for ExecutionPlanArtifact)
+        if "subtasks" in normalized and isinstance(normalized["subtasks"], list):
+            for subtask in normalized["subtasks"]:
+                if isinstance(subtask, dict) and "operation" in subtask:
+                    # Normalize operation to uppercase
+                    subtask["operation"] = subtask["operation"].upper()
+
+        return normalized
 
 
 submit_work_handler = SubmitWorkHandler()
