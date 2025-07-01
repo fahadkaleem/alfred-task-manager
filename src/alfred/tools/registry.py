@@ -25,10 +25,16 @@ class ToolConfig:
     """Immutable configuration for a registered tool."""
 
     name: str
-    handler_class: Type["BaseToolHandler"]  # Use forward reference
+    handler_class: Any  # Can be Type or Callable returning instance
     tool_class: Type[BaseWorkflowTool]
     entry_status_map: Dict[TaskStatus, TaskStatus]
     implementation: Callable[..., Coroutine[Any, Any, ToolResponse]]
+
+    def get_handler(self):
+        """Get handler instance, handling both class and instance cases."""
+        if callable(self.handler_class):
+            return self.handler_class()
+        return self.handler_class
 
 
 class ToolRegistry:
@@ -40,7 +46,7 @@ class ToolRegistry:
     def register(
         self,
         name: str,
-        handler_class: Type["BaseToolHandler"],  # Use forward reference
+        handler_class: Any,  # Can be Type or Callable returning instance
         tool_class: Type[BaseWorkflowTool],
         entry_status_map: Dict[TaskStatus, TaskStatus],
     ):

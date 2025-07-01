@@ -22,19 +22,20 @@ from src.alfred.constants import ToolName
 from src.alfred.tools.registry import tool_registry
 from src.alfred.tools.create_spec import create_spec_impl
 from src.alfred.tools.create_tasks import create_tasks_impl
-from src.alfred.tools.finalize_task import finalize_task_impl, FinalizeTaskHandler, finalize_task_handler
+from src.alfred.tools.finalize_task import finalize_task_impl, finalize_task_handler
 from src.alfred.tools.get_next_task import get_next_task_impl
-from src.alfred.tools.implement_task import implement_task_impl, ImplementTaskHandler, implement_task_handler
+from src.alfred.tools.implement_task import implement_task_impl, implement_task_handler
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
-from src.alfred.tools.plan_task import plan_task_impl, PlanTaskHandler
+from src.alfred.tools.plan_task import plan_task_impl, plan_task_handler
 from src.alfred.core.workflow import PlanTaskTool, ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
 from src.alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
 from src.alfred.tools.approve_review import approve_review_impl
 from src.alfred.tools.request_revision import request_revision_impl
-from src.alfred.tools.review_task import ReviewTaskHandler, review_task_handler
+from src.alfred.tools.review_task import review_task_handler
 from src.alfred.tools.submit_work import submit_work_handler
-from src.alfred.tools.test_task import TestTaskHandler, test_task_handler
+from src.alfred.tools.test_task import test_task_handler
 from src.alfred.tools.work_on import work_on_impl
+from src.alfred.tools.workflow_config import WORKFLOW_TOOL_CONFIGS
 
 logger = get_logger(__name__)
 
@@ -241,9 +242,7 @@ async def create_tasks(task_id: str) -> ToolResponse:
 
 # THIS IS THE FIX for Blocker #2
 @app.tool()
-@tool_registry.register(
-    name=ToolName.PLAN_TASK, handler_class=PlanTaskHandler, tool_class=PlanTaskTool, entry_status_map={TaskStatus.NEW: TaskStatus.PLANNING, TaskStatus.PLANNING: TaskStatus.PLANNING}
-)
+@tool_registry.register(name=ToolName.PLAN_TASK, handler_class=lambda: plan_task_handler, tool_class=PlanTaskTool, entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.PLAN_TASK].entry_status_map)
 async def plan_task(task_id: str) -> ToolResponse:
     """
     Initiates the detailed technical planning for a specific task.
@@ -276,8 +275,7 @@ async def plan_task(task_id: str) -> ToolResponse:
         - Planning tool instance registered and active
         - First planning prompt returned for contextualization phase
     """
-    handler = PlanTaskHandler()
-    return await handler.execute(task_id)
+    return await plan_task_impl(task_id)
 
 
 @app.tool()
@@ -475,13 +473,9 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
 @app.tool()
 @tool_registry.register(
     name=ToolName.IMPLEMENT_TASK,
-    handler_class=ImplementTaskHandler,
+    handler_class=lambda: implement_task_handler,
     tool_class=ImplementTaskTool,
-    # THIS IS FIX #6: Add self-map for IN_DEVELOPMENT
-    entry_status_map={
-        TaskStatus.READY_FOR_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
-        TaskStatus.IN_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
-    },
+    entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.IMPLEMENT_TASK].entry_status_map,
 )
 async def implement_task(task_id: str) -> ToolResponse:
     """
@@ -515,12 +509,9 @@ async def implement_task(task_id: str) -> ToolResponse:
 @app.tool()
 @tool_registry.register(
     name=ToolName.REVIEW_TASK,
-    handler_class=ReviewTaskHandler,
+    handler_class=lambda: review_task_handler,
     tool_class=ReviewTaskTool,
-    entry_status_map={
-        TaskStatus.READY_FOR_REVIEW: TaskStatus.IN_REVIEW,
-        TaskStatus.IN_REVIEW: TaskStatus.IN_REVIEW,
-    },
+    entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.REVIEW_TASK].entry_status_map,
 )
 async def review_task(task_id: str) -> ToolResponse:
     """
@@ -578,12 +569,9 @@ async def review_task(task_id: str) -> ToolResponse:
 @app.tool()
 @tool_registry.register(
     name=ToolName.TEST_TASK,
-    handler_class=TestTaskHandler,
+    handler_class=lambda: test_task_handler,
     tool_class=TestTaskTool,
-    entry_status_map={
-        TaskStatus.READY_FOR_TESTING: TaskStatus.IN_TESTING,
-        TaskStatus.IN_TESTING: TaskStatus.IN_TESTING,
-    },
+    entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.TEST_TASK].entry_status_map,
 )
 async def test_task(task_id: str) -> ToolResponse:
     """
@@ -651,12 +639,9 @@ async def test_task(task_id: str) -> ToolResponse:
 @app.tool()
 @tool_registry.register(
     name=ToolName.FINALIZE_TASK,
-    handler_class=FinalizeTaskHandler,
+    handler_class=lambda: finalize_task_handler,
     tool_class=FinalizeTaskTool,
-    entry_status_map={
-        TaskStatus.READY_FOR_FINALIZATION: TaskStatus.IN_FINALIZATION,
-        TaskStatus.IN_FINALIZATION: TaskStatus.IN_FINALIZATION,
-    },
+    entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.FINALIZE_TASK].entry_status_map,
 )
 @log_tool_transaction(finalize_task_impl)
 async def finalize_task(task_id: str) -> ToolResponse:

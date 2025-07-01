@@ -5122,22 +5122,50 @@ Once finalization is complete, call `alfred.submit_work` with a `FinalizeArtifac
 ``````
 ------ src/alfred/templates/prompts/finalize_task/finalizing.md ------
 ``````
-# Finalization Phase
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-You are now finalizing task ${task_id}.
+# OBJECTIVE
+Create a git commit and pull request for the completed implementation.
 
-## Finalization Steps
+# BACKGROUND
+The implementation has been completed and tested. Now create the final commit and pull request to complete the task workflow.
 
-Create a commit and pull request for the completed work.
+# INSTRUCTIONS
+1. Create a descriptive git commit with all changes
+2. Push the changes to a new branch or existing feature branch
+3. Create a pull request with proper description
+4. Capture the actual commit hash and PR URL
 
-## Required Information
+# CONSTRAINTS
+- Use descriptive commit messages following project standards
+- Include the task ID in commit message and PR title
+- Ensure all changes are committed before creating PR
 
-Create a `FinalizeArtifact` with:
-- **commit_message**: Clear, descriptive commit message
-- **pr_title**: Pull request title
-- **pr_description**: Detailed pull request description
+# OUTPUT
+Create a FinalizeArtifact with these exact fields:
+- **commit_hash**: The actual git SHA hash of the created commit
+- **pr_url**: The actual URL of the created pull request
 
-Call `submit_work` with your finalization details.
+**Required Action:** Call `alfred.submit_work` with a `FinalizeArtifact`
+
+# EXAMPLES
+```json
+{
+  "commit_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0",
+  "pr_url": "https://github.com/user/repo/pull/123"
+}
+```
+
+```json
+{
+  "commit_hash": "f9e8d7c6b5a4958372615048392817465029384756",
+  "pr_url": "https://github.com/myorg/myproject/pull/456"
+}
+```
 ``````
 ------ src/alfred/templates/prompts/implement_task/dispatching.md ------
 ``````
@@ -5648,27 +5676,57 @@ Once your review is complete, call `alfred.submit_work` with a `ReviewArtifact` 
 ``````
 ------ src/alfred/templates/prompts/review_task/reviewing.md ------
 ``````
-# Code Review Phase
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-You are now reviewing the implementation for task ${task_id}.
+# OBJECTIVE
+Perform code review and provide structured feedback on the implementation.
 
-## Implementation Details
+# BACKGROUND
+Review the completed implementation for code quality, correctness, and adherence to requirements. The implementation details and acceptance criteria are available for reference.
 
-Review the changes made during the implementation phase. Look for:
-- Code quality and style
-- Potential bugs or issues
-- Performance concerns
-- Security considerations
-- Best practices
+# INSTRUCTIONS
+1. Review the implementation thoroughly
+2. Check for code quality, bugs, performance, and security issues
+3. Determine if the implementation meets the requirements
+4. Provide specific feedback if changes are needed
 
-## Your Review
+# CONSTRAINTS
+- Be thorough but focus on substantive issues
+- Provide actionable feedback if requesting changes
+- Base approval decision on code quality and completeness
 
-Create a `ReviewArtifact` with:
-- **review_summary**: Overall assessment of the implementation
-- **issues_found**: List of any issues discovered
-- **suggestions**: List of improvement suggestions
+# OUTPUT
+Create a ReviewArtifact with these exact fields:
+- **summary**: Overall assessment of the implementation quality
+- **approved**: Boolean - true if code passes review, false if changes needed  
+- **feedback**: Array of specific feedback strings (empty array if approved)
 
-Call `submit_work` with your review findings.
+**Required Action:** Call `alfred.submit_work` with a `ReviewArtifact`
+
+# EXAMPLES
+```json
+{
+  "summary": "Implementation looks good with proper error handling",
+  "approved": true,
+  "feedback": []
+}
+```
+
+```json
+{
+  "summary": "Several issues found that need to be addressed",
+  "approved": false,
+  "feedback": [
+    "Add input validation for user email field",
+    "Fix potential null pointer exception in line 45",
+    "Add unit tests for error handling scenarios"
+  ]
+}
+```
 ``````
 ------ src/alfred/templates/prompts/start_task/awaiting_branch_creation.md ------
 ``````
@@ -5775,28 +5833,53 @@ Once testing is complete, call `alfred.submit_work` with a `TestResultArtifact` 
 ``````
 ------ src/alfred/templates/prompts/test_task/testing.md ------
 ``````
-# Testing Phase
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-You are now in the testing phase for task ${task_id}.
+# OBJECTIVE
+Execute tests and report the results in a structured format.
 
-## Test Objectives
+# BACKGROUND
+Run the test suite to validate the implementation and capture the complete results. This includes unit tests, integration tests, and any manual validation required.
 
-Run tests to validate the implementation. This includes:
-- Unit tests
-- Integration tests
-- Any manual validation required
+# INSTRUCTIONS
+1. Execute the appropriate test command for this codebase
+2. Capture the complete output including any error messages
+3. Record the exact command used and exit code
+4. Report all results in the required format
 
-## Test Results
+# CONSTRAINTS
+- Use the standard test command for this project
+- Capture the complete output, not just a summary
+- Report actual exit codes (0 = success, non-zero = failure)
 
-Create a `TestResultArtifact` with:
-- **test_summary**: Overall test results summary
-- **tests_run**: List of test names/identifiers that were executed
-- **test_results**: List of test result objects with:
-  - `name`: Test name
-  - `status`: "passed" or "failed"
-  - `message`: Optional failure message
+# OUTPUT
+Create a TestResultArtifact with these exact fields:
+- **command**: The exact test command that was executed
+- **exit_code**: Integer exit code from test execution (0 = success)
+- **output**: Complete text output from the test execution
 
-Call `submit_work` with your test results.
+**Required Action:** Call `alfred.submit_work` with a `TestResultArtifact`
+
+# EXAMPLES
+```json
+{
+  "command": "python -m pytest tests/",
+  "exit_code": 0,
+  "output": "===== test session starts =====\ncollected 15 items\n\ntests/test_auth.py ........\ntests/test_api.py .......\n\n===== 15 passed in 2.34s ====="
+}
+```
+
+```json
+{
+  "command": "npm test",
+  "exit_code": 1,
+  "output": "FAIL src/components/Button.test.js\n  ✓ renders correctly (5ms)\n  ✗ handles click events (12ms)\n\n1 test failed, 1 test passed"
+}
+```
 ``````
 ------ src/alfred/templates/prompts/verified.md ------
 ``````
@@ -6335,7 +6418,8 @@ class ImplementTaskHandler(BaseToolHandler):
                     status="error", message=f"CRITICAL: Cannot start implementation. Execution plan from 'plan_task' not found for task '{task.task_id}'. Please run 'plan_task' first."
                 )
 
-            tool_instance.context_store["execution_plan"] = execution_plan
+            # Store as artifact_content so the prompter can convert it to artifact_json for templates
+            tool_instance.context_store["artifact_content"] = execution_plan
 
             tool_instance.dispatch()
 
@@ -6757,7 +6841,7 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
             return ToolResponse(status="error", message=f"Task '{task.task_id}' has status '{task.task_status.value}'. Progress can only be marked for tasks in 'in_development' status.")
 
         # Validate subtask_id against the plan
-        execution_plan = tool_instance.context_store.get("execution_plan_artifact", {}).get("subtasks", [])
+        execution_plan = tool_instance.context_store.get("artifact_content", {}).get("subtasks", [])
         valid_subtask_ids = {st["subtask_id"] for st in execution_plan}
         if subtask_id not in valid_subtask_ids:
             return ToolResponse(status="error", message=f"Invalid subtask_id '{subtask_id}'. It does not exist in the execution plan.")
@@ -6849,6 +6933,10 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         active_tool.trigger(Triggers.REQUEST_REVISION)
         message = "Revision requested. Returning to previous step."
     else:
+        # Clear any previous feedback when approving
+        if "feedback_notes" in active_tool.context_store:
+            del active_tool.context_store["feedback_notes"]
+        
         if current_state.endswith("_awaiting_ai_review"):
             active_tool.trigger(Triggers.AI_APPROVE)
             message = "AI review approved. Awaiting human review."
@@ -6886,12 +6974,14 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         return ToolResponse(status="success", message=f"'{tool_name}' completed. Awaiting final approval.", next_prompt=handoff)
 
     if not is_approved and feedback_notes:
-        # Build feedback context
-        ctx = active_tool.context_store.copy()
-        ctx["feedback_notes"] = feedback_notes
-    else:
-        # Use standard context from tool
-        ctx = active_tool.context_store.copy()
+        # Store feedback in the tool's context for persistence
+        active_tool.context_store["feedback_notes"] = feedback_notes
+        # Persist the updated tool state with feedback
+        with state_manager.transaction() as uow:
+            uow.update_tool_state(task_id, active_tool)
+    
+    # Always use the tool's context (which now includes feedback if present)
+    ctx = active_tool.context_store.copy()
 
     prompt = generate_prompt(
         task_id=task.task_id,

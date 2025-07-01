@@ -37,7 +37,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         # Clear any previous feedback when approving
         if "feedback_notes" in active_tool.context_store:
             del active_tool.context_store["feedback_notes"]
-        
+
         if current_state.endswith("_awaiting_ai_review"):
             active_tool.trigger(Triggers.AI_APPROVE)
             message = "AI review approved. Awaiting human review."
@@ -80,7 +80,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         # Persist the updated tool state with feedback
         with state_manager.transaction() as uow:
             uow.update_tool_state(task_id, active_tool)
-    
+
     # Always use the tool's context (which now includes feedback if present)
     ctx = active_tool.context_store.copy()
 
