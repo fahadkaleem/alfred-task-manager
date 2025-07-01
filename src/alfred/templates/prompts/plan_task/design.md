@@ -1,68 +1,47 @@
-# TOOL: `alfred.plan_task`
-# TASK: {{ task.task_id }}
-# STATE: design
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-The technical strategy has been approved. Now, you must translate this strategy into a detailed, file-level implementation design.
+# OBJECTIVE
+Translate the approved technical strategy into a detailed, file-level implementation design.
 
-**Approved Strategy:**
-```json
-{{ additional_context.strategy_artifact | tojson(indent=2) }}
-```
+# BACKGROUND
+The technical strategy has been approved and provides the high-level approach. You must now create a comprehensive design that:
+- Breaks down the strategy into specific file changes
+- Provides clear implementation guidance for each component
+- Ensures all acceptance criteria can be met
+- Maintains consistency with the existing codebase
 
-{% if additional_context.feedback_notes %}
----
-### **Iterating on Your Design**
+**Task Requirements:**
+- Goal: ${task_context}
+- Implementation Overview: ${implementation_details}
+- Acceptance Criteria:
+${acceptance_criteria}
 
-Your DesignArtifact has been carefully reviewed, and there are some valuable suggestions to make it even stronger. Here's your current design:
+${feedback_section}
 
-```json
-{{ additional_context.design_artifact | tojson(indent=2) if additional_context.design_artifact else "No artifact data available" }}
-```
+# INSTRUCTIONS
+1. Review the approved strategy and task requirements
+2. For each component in the strategy, determine the specific files that need to be created or modified
+3. For each file, provide a clear summary of the required changes
+4. Ensure the design covers all acceptance criteria
+5. Consider the order of implementation and any dependencies between changes
+6. Create a comprehensive design document
 
-The review highlighted these areas for enhancement:
+# CONSTRAINTS
+- Be specific about file paths and change details
+- Ensure consistency with existing code patterns
+- Consider backward compatibility where applicable
+- Design should be implementable without ambiguity
 
-> {{ additional_context.feedback_notes }}
+# OUTPUT
+Create a DesignArtifact with:
+- `design_summary`: Overview of the implementation approach
+- `file_breakdown`: Array of file changes, each containing:
+  - `file_path`: Full path to the file
+  - `change_summary`: Description of changes needed
+  - `operation`: Either "create" or "modify"
 
-Please refine your DesignArtifact by incorporating these insights. Think about how these suggestions can improve the clarity, completeness, and implementability of your design while preserving the strong elements you've already developed.
-
-{% endif %}
----
-### **Directive: Create Detailed Design**
-
-Based on the approved strategy, create a comprehensive, file-by-file breakdown of all necessary changes. For each file that needs to be created or modified, provide a clear summary of the required changes.
-
-{% if ai_directives %}
----
-### **AI Agent Instructions**
-
-**Analysis Style:** {{ ai_directives.style }}
-
-**Required Analysis Steps:**
-{% for pattern in ai_directives.analysis_patterns %}
-- {{ pattern }}
-{% endfor %}
-
-**Self-Validation Checklist:**
-{% for criterion in ai_directives.validation_criteria %}
-- {{ criterion }}
-{% endfor %}
-{% endif %}
-
----
-### **Required Action**
-
-You MUST now call `alfred.submit_work` with a `DesignArtifact`.
-
-**Required Artifact Structure:**
-```json
-{
-  "design_summary": "string",
-  "file_breakdown": [
-    {
-      "file_path": "string",
-      "change_summary": "string",
-      "operation": "create | modify"
-    }
-  ]
-}
-```
+**Required Action:** Call `alfred.submit_work` with a `DesignArtifact`

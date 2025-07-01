@@ -1,16 +1,44 @@
-# Finalization Phase
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-You are now finalizing task {{ task.task_id }}.
+# OBJECTIVE
+Create a git commit and pull request for the completed implementation.
 
-## Finalization Steps
+# BACKGROUND
+The implementation has been completed and tested. Now create the final commit and pull request to complete the task workflow.
 
-Create a commit and pull request for the completed work.
+# INSTRUCTIONS
+1. Create a descriptive git commit with all changes
+2. Push the changes to a new branch or existing feature branch
+3. Create a pull request with proper description
+4. Capture the actual commit hash and PR URL
 
-## Required Information
+# CONSTRAINTS
+- Use descriptive commit messages following project standards
+- Include the task ID in commit message and PR title
+- Ensure all changes are committed before creating PR
 
-Create a `FinalizeArtifact` with:
-- **commit_message**: Clear, descriptive commit message
-- **pr_title**: Pull request title
-- **pr_description**: Detailed pull request description
+# OUTPUT
+Create a FinalizeArtifact with these exact fields:
+- **commit_hash**: The actual git SHA hash of the created commit
+- **pr_url**: The actual URL of the created pull request
 
-Call `submit_work` with your finalization details.
+**Required Action:** Call `alfred.submit_work` with a `FinalizeArtifact`
+
+# EXAMPLES
+```json
+{
+  "commit_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0",
+  "pr_url": "https://github.com/user/repo/pull/123"
+}
+```
+
+```json
+{
+  "commit_hash": "f9e8d7c6b5a4958372615048392817465029384756",
+  "pr_url": "https://github.com/myorg/myproject/pull/456"
+}
+```

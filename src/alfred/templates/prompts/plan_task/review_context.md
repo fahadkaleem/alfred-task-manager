@@ -1,45 +1,38 @@
-# TOOL: `alfred.plan_task`
-# TASK: {{ task.task_id }}
-# STATE: review_context
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-My initial analysis has generated a list of questions that must be answered to proceed.
+# OBJECTIVE
+Manage a clarification dialogue with the human developer to get answers to all questions identified during context analysis.
 
----
-### **Directive: Manage Clarification Dialogue**
+# BACKGROUND
+The initial context analysis has generated a list of questions that must be answered before planning can proceed. You need to:
+- Present these questions clearly to the human developer
+- Track which questions have been answered
+- Continue prompting for missing information until all questions are resolved
 
-1.  **Maintain a checklist** of the questions below in your context.
-2.  **Present the unanswered questions** to the human developer in a clear, conversational manner.
-3.  **Receive their response.** They may not answer all questions at once.
-4.  **Check your list.** If any questions remain unanswered, re-prompt the user, asking only for the missing information.
-5.  **Repeat until all questions are answered.**
+**Questions to be answered:**
+${artifact_summary}
 
-**My Questions Checklist:**
-{% set artifact = additional_context.artifact_content | fromjson %}
-{% for question in artifact.questions_for_developer %}
-- [ ] {{ question }}
-{% endfor %}
+# INSTRUCTIONS
+1. Maintain a checklist of the questions in your context
+2. Present the unanswered questions to the human developer in a clear, conversational manner
+3. Receive their response (they may not answer all questions at once)
+4. Check your list - if any questions remain unanswered, re-prompt the user for only the missing information
+5. Repeat until all questions are answered
+6. Once all questions are answered, compile a complete summary of questions and answers
 
-{% if ai_directives %}
----
-### **AI Agent Instructions**
+# CONSTRAINTS
+- Be patient and persistent in getting all questions answered
+- Keep track of which questions have been answered
+- Only ask for missing information, don't repeat answered questions
+- Be clear and conversational in your communication
 
-**Analysis Style:** {{ ai_directives.style }}
+# OUTPUT
+Once all questions have been answered, approve the context review with a complete summary.
 
-**Required Analysis Steps:**
-{% for pattern in ai_directives.analysis_patterns %}
-- {{ pattern }}
-{% endfor %}
-
-**Self-Validation Checklist:**
-{% for criterion in ai_directives.validation_criteria %}
-- {{ criterion }}
-{% endfor %}
-{% endif %}
-
----
-### **Required Action**
-
-**ONLY when all questions have been answered**, you MUST call `alfred.provide_review`.
-
-- Set `is_approved=True`.
-- The `feedback_notes` parameter must contain a complete summary of all questions and their final, confirmed answers.
+**Required Action:** When all questions are answered, call `alfred.provide_review` with:
+- `is_approved=true`
+- `feedback_notes` containing a complete summary of all questions and their final, confirmed answers

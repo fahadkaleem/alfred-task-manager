@@ -2,11 +2,11 @@
 
 You previously created an engineering specification. Please review it carefully and consider if any improvements are needed.
 
-## Task ID: {{ task.task_id }}
+## Task ID: ${task_id}
 
 ## Your Engineering Specification
 
-{{ additional_context.artifact_content }}
+${task_artifact_content}
 
 ## Review Checklist
 
