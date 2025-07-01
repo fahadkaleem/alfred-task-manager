@@ -3,7 +3,7 @@
 The start_task tool, re-architected as a stateful workflow tool.
 """
 
-from src.alfred.core.prompter import prompter
+from src.alfred.core.prompter import generate_prompt
 from src.alfred.core.workflow import StartTaskTool
 from src.alfred.lib.logger import get_logger, setup_task_logging
 from src.alfred.lib.task_utils import load_task
@@ -43,7 +43,7 @@ def start_task_impl(task_id: str) -> ToolResponse:
             state_manager.update_tool_state(task_id, tool_instance)
             logger.info(f"Created new start_task tool for task {task_id}")
 
-    prompt = prompter.generate_prompt(
+    prompt = generate_prompt(
         task=task,
         tool_name=tool_instance.tool_name,
         state=tool_instance.state,

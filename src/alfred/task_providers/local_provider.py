@@ -45,7 +45,7 @@ class LocalTaskProvider(BaseTaskProvider):
         try:
             # Read and validate the markdown file
             content = task_md_path.read_text()
-            
+
             # Validate format first
             is_valid, error_msg = self.parser.validate_format(content)
             if not is_valid:
@@ -53,16 +53,16 @@ class LocalTaskProvider(BaseTaskProvider):
                 logger.error(f"Please refer to .alfred/tasks/README.md for the correct task file format.")
                 logger.error(f"See .alfred/tasks/SAMPLE-FORMAT.md for a working example.")
                 return None
-            
+
             # Parse the markdown file
             task_data = self.parser.parse(content)
-            
+
             # Validate required fields and provide helpful error if missing
-            if not task_data.get('task_id'):
+            if not task_data.get("task_id"):
                 logger.error(f"Task file {task_md_path} is missing task_id. Expected format: '# TASK: {task_id}'")
                 logger.error(f"Current format in file: {content.split('\\n')[0] if content else 'Empty file'}")
                 return None
-                
+
             task_model = Task(**task_data)
 
             # Load and merge the dynamic state

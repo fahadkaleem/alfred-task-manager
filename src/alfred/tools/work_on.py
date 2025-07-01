@@ -22,13 +22,13 @@ def work_on_impl(task_id: str) -> ToolResponse:
 
             if not task:
                 return ToolResponse(
-                    status="error", 
+                    status="error",
                     message=f"Task '{task_id}' could not be found. Please check:\n"
-                            f"1. Task ID is correct (case-sensitive)\n"
-                            f"2. For local tasks: File exists at .alfred/tasks/{task_id}.md\n"
-                            f"3. For remote tasks: Task exists in your configured provider (Jira/Linear)\n"
-                            f"4. Task file format is valid (see .alfred/tasks/README.md)\n"
-                            f"5. Run 'alfred.get_next_task()' to see available tasks"
+                    f"1. Task ID is correct (case-sensitive)\n"
+                    f"2. For local tasks: File exists at .alfred/tasks/{task_id}.md\n"
+                    f"3. For remote tasks: Task exists in your configured provider (Jira/Linear)\n"
+                    f"4. Task file format is valid (see .alfred/tasks/README.md)\n"
+                    f"5. Run 'alfred.get_next_task()' to see available tasks",
                 )
 
             # Step 2: Cache the fetched task locally

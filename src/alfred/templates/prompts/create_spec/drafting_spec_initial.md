@@ -2,12 +2,12 @@
 
 You are about to transform a Product Requirements Document (PRD) into a comprehensive Engineering Specification.
 
-## Task ID: {{ additional_context.task_id }}
+## Task ID: ${task_id}
 
 ## Product Requirements Document
 
 ```
-{{ additional_context.prd_content }}
+${task_prd_content}
 ```
 
 ## Your Objective

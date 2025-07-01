@@ -23,6 +23,7 @@ class ToolName:
     FINALIZE_TASK: Final[str] = "finalize_task"
     WORK_ON: Final[str] = "work_on"
     APPROVE_AND_ADVANCE: Final[str] = "approve_and_advance"
+    MARK_SUBTASK_COMPLETE: Final[str] = "mark_subtask_complete"
 
 
 # Directory and File Names

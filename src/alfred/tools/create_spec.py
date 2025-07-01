@@ -45,7 +45,7 @@ async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
     state_manager.update_tool_state(task_id, tool)
 
     # Load the drafting prompt
-    from src.alfred.core.prompter import prompter
+    from src.alfred.core.prompter import generate_prompt
     from src.alfred.lib.task_utils import load_task
 
     task = load_task(task_id)
@@ -61,7 +61,7 @@ async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
             task_status=TaskStatus.CREATING_SPEC,
         )
 
-    prompt = prompter.generate_prompt(
+    prompt = generate_prompt(
         task=task,
         tool_name=tool.tool_name,
         state=tool.state,

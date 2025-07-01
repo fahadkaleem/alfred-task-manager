@@ -1,46 +1,42 @@
-# TOOL: `alfred.start_task`
-# TASK: {{ task.task_id }}
-# STATE: branch_created
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-Excellent. The human operator has approved the action.
+# OBJECTIVE
+Create and switch to a new feature branch for the task implementation.
 
----
-### **Directive: Create and Verify Branch**
+# BACKGROUND
+The human operator has approved the branch creation. You must now:
+- Create a new feature branch named `feature/${task_id}`
+- Switch to this branch
+- Verify the operation was successful
 
-Please execute the proposed git command to create and switch to the new feature branch:
-`git checkout -b feature/{{ task.task_id }}`
+This ensures all work for this task is isolated in its own branch.
 
-If the branch already exists, use `git checkout feature/{{ task.task_id }}` instead.
+# INSTRUCTIONS
+1. Execute the git command to create and switch to the new branch:
+   ```bash
+   git checkout -b feature/${task_id}
+   ```
+2. If the branch already exists, use:
+   ```bash
+   git checkout feature/${task_id}
+   ```
+3. Capture the command output
+4. Verify you are now on the correct branch
+5. Report the outcome in a structured artifact
 
-After executing the command, please report the outcome.
+# CONSTRAINTS
+- Use the exact branch naming convention: `feature/${task_id}`
+- Handle both cases: branch creation and switching to existing branch
+- Accurately report success or failure
 
-{% if ai_directives %}
----
-### **AI Agent Instructions**
+# OUTPUT
+Create a BranchCreationArtifact with:
+- `branch_name`: String - The name of the branch (should be `feature/${task_id}`)
+- `success`: Boolean - True if the command executed without errors
+- `details`: String - The output from the git command
 
-**Analysis Style:** {{ ai_directives.style }}
-
-**Required Analysis Steps:**
-{% for pattern in ai_directives.analysis_patterns %}
-- {{ pattern }}
-{% endfor %}
-
-**Self-Validation Checklist:**
-{% for criterion in ai_directives.validation_criteria %}
-- {{ criterion }}
-{% endfor %}
-{% endif %}
-
----
-### **Required Action**
-
-You MUST now call `alfred.submit_work` with a `BranchCreationArtifact`.
-
-**Required Artifact Structure:**
-```json
-{
-  "branch_name": "string - The name of the new branch, 'feature/{{ task.task_id }}'.",
-  "success": "boolean - True if the command executed without errors.",
-  "details": "string - The output from the git command."
-}
-```
+**Required Action:** Call `alfred.submit_work` with a `BranchCreationArtifact`

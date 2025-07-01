@@ -1,64 +1,25 @@
-# Task Breakdown from Engineering Specification
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-You are about to break down an Engineering Specification into individual, actionable tasks.
+# OBJECTIVE
+Break down an Engineering Specification into individual, actionable tasks that cover the entire implementation.
 
-## Task ID: {{ additional_context.task_id }}
+# BACKGROUND
+You have an approved Engineering Specification that needs to be decomposed into manageable tasks. Each task should be:
+- **Atomic**: A single, focused piece of work
+- **Actionable**: Clear about what needs to be done
+- **Measurable**: Has clear completion criteria
+- **Ordered**: Consider dependencies between tasks
 
-## Engineering Specification Summary
+**Engineering Specification Available:**
+${artifact_json}
 
-**Project**: {{ additional_context.technical_spec.project_name }}
-
-**Overview**: {{ additional_context.technical_spec.overview }}
-
-### Functional Requirements
-{% for req in additional_context.technical_spec.functional_requirements %}
-- {{ req.story }}
-{% endfor %}
-
-### API Changes
-{% for api in additional_context.technical_spec.api_changes %}
-- {{ api.name_and_method }}: {{ api.description }}
-{% endfor %}
-
-### Data Storage Requirements
-{% for field in additional_context.technical_spec.data_storage %}
-- {{ field.field_name }} ({{ field.data_type }}{% if field.is_required %}, required{% endif %}): {{ field.description }}
-{% endfor %}
-
-### Major Design Considerations
-{{ additional_context.technical_spec.major_design_considerations }}
-
-### Dependencies
-{% for dep in additional_context.technical_spec.dependencies %}
-- {{ dep }}
-{% endfor %}
-
-## Your Objective
-
-Analyze the technical specification above and create a comprehensive list of Task objects that cover the entire implementation. Each task should be:
-
-1. **Atomic**: A single, focused piece of work
-2. **Actionable**: Clear about what needs to be done
-3. **Measurable**: Has clear completion criteria
-4. **Ordered**: Consider dependencies between tasks
-
-## Task Structure
-
-Each Task object should have:
-- **id**: A unique identifier (e.g., "TASK-001", "TASK-002")
-- **title**: Clear, concise title describing the work
-- **description**: Detailed description of what needs to be done
-- **acceptance_criteria**: List of criteria that must be met for completion
-- **dependencies**: List of task IDs this task depends on (if any)
-- **estimated_effort**: Rough estimate (e.g., "Small", "Medium", "Large")
-- **technical_notes**: Any technical details or considerations
-
-## Guidelines for Task Creation
-
-1. **Coverage**: Ensure all aspects of the technical spec are covered
-2. **Granularity**: Tasks should be completable in 1-3 days of work
-3. **Dependencies**: Order tasks logically based on dependencies
-4. **Categories**: Consider grouping by:
+# INSTRUCTIONS
+1. Analyze the technical specification thoroughly
+2. Identify all work that needs to be done across:
    - Data model/schema changes
    - API endpoints
    - Business logic
@@ -66,18 +27,38 @@ Each Task object should have:
    - Testing
    - Documentation
    - DevOps/Infrastructure
+3. Create tasks with appropriate granularity (1-3 days of work each)
+4. Establish logical dependencies between tasks
+5. Ensure complete coverage of the specification
 
-5. **Don't Forget**:
-   - Database migrations
-   - API documentation
-   - Unit and integration tests
-   - Error handling
-   - Logging and monitoring
-   - Security implementation
-   - Performance optimizations
+Don't forget to include tasks for:
+- Database migrations
+- API documentation
+- Unit and integration tests
+- Error handling
+- Logging and monitoring
+- Security implementation
+- Performance optimizations
 
-## Example Task
+# CONSTRAINTS
+- Every aspect of the spec must be covered by at least one task
+- Tasks should be independent when possible
+- Dependencies should be clearly stated
+- Estimates should be realistic
 
+# OUTPUT
+Create a TaskCreationArtifact containing an array of Task objects. Each task should have:
+- `id`: Unique identifier (e.g., "TASK-001", "TASK-002")
+- `title`: Clear, concise title
+- `description`: Detailed description of work
+- `acceptance_criteria`: List of completion criteria
+- `dependencies`: List of task IDs this depends on
+- `estimated_effort`: "Small", "Medium", or "Large"
+- `technical_notes`: Any technical considerations
+
+**Required Action:** Call `alfred.submit_work` with a `TaskCreationArtifact`
+
+# EXAMPLES
 ```json
 {
   "id": "TASK-001",
@@ -94,5 +75,3 @@ Each Task object should have:
   "technical_notes": "Use bcrypt for password hashing, consider UUID for session tokens"
 }
 ```
-
-Call `submit_work` with a TaskCreationArtifact containing your list of Task objects.

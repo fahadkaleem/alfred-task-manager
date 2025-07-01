@@ -1,68 +1,47 @@
-# TOOL: `alfred.plan_task`
-# TASK: {{ task.task_id }}
-# STATE: contextualize
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-I am beginning the planning process for '{{ task.title }}'.
+# OBJECTIVE
+Analyze the existing codebase and identify any ambiguities or questions that need clarification before planning can begin.
 
-**Task Context:**
-- **Goal:** {{ task.context }}
-- **Implementation Overview:** {{ task.implementation_details }}
-- **Acceptance Criteria:**
-{% for criterion in task.acceptance_criteria %}
-  - {{ criterion }}
-{% endfor %}
+# BACKGROUND
+You are beginning the planning process for a new task. Before creating a technical strategy, you must understand:
+- The current codebase structure and relevant components
+- Any existing patterns or conventions to follow
+- Potential areas of ambiguity that need clarification
 
-{% if additional_context.feedback_notes %}
----
-### **Building on Your Previous Analysis**
+**Task Requirements:**
+- Goal: ${task_context}
+- Implementation Overview: ${implementation_details}
+- Acceptance Criteria:
+${acceptance_criteria}
 
-Your earlier ContextAnalysisArtifact has been reviewed and needs some refinements. Here's what you submitted:
+${feedback_section}
 
-```json
-{{ additional_context.context_artifact | tojson(indent=2) if additional_context.context_artifact else "No artifact data available" }}
-```
+# INSTRUCTIONS
+1. Analyze the codebase starting from the project root
+2. Identify all files and components relevant to this task
+3. Note any existing patterns or conventions that should be followed
+4. Create a list of specific questions about any ambiguities or unclear requirements
+5. Prepare a comprehensive context analysis
 
-The reviewer provided this feedback to help strengthen your analysis:
+# CONSTRAINTS
+- Focus only on understanding, not designing solutions yet
+- Questions should be specific and actionable
+- Identify actual ambiguities, not hypothetical issues
+- Consider both technical and business context
 
-> {{ additional_context.feedback_notes }}
+# OUTPUT
+Create a ContextAnalysisArtifact with:
+- `context_summary`: Your understanding of the existing code and how the new feature will integrate
+- `affected_files`: List of files that will likely need modification
+- `questions_for_developer`: Specific questions that need answers before proceeding
 
-Please refine your ContextAnalysisArtifact by incorporating these suggestions. Focus on addressing the specific areas highlighted while maintaining the quality of your existing work.
+**Required Action:** Call `alfred.submit_work` with a `ContextAnalysisArtifact`
 
-{% endif %}
----
-### **Directive: Codebase Analysis & Ambiguity Detection**
-
-Your mission is to become the expert on this task. You must:
-1.  **Analyze the existing codebase.** Start from the project root. Identify all files and code blocks relevant to the provided Task Context.
-2.  **Identify Ambiguities.** Compare the task goal with your code analysis. Create a list of precise questions for the human developer to resolve any uncertainties or missing requirements.
-
-{% if ai_directives %}
----
-### **AI Agent Instructions**
-
-**Analysis Style:** {{ ai_directives.style }}
-
-**Required Analysis Steps:**
-{% for pattern in ai_directives.analysis_patterns %}
-- {{ pattern }}
-{% endfor %}
-
-**Self-Validation Checklist:**
-{% for criterion in ai_directives.validation_criteria %}
-- {{ criterion }}
-{% endfor %}
-{% endif %}
-
----
-### **Required Action**
-
-You MUST now call `alfred.submit_work` with a `ContextAnalysisArtifact`.
-
-**Required Artifact Structure:**
-```json
-{
-  "context_summary": "string - A summary of your understanding of the existing code and how the new feature will integrate.",
-  "affected_files": ["string - A list of files you have identified as relevant."],
-  "questions_for_developer": ["string - Your list of precise questions for the human developer."]
-}
-```
+# EXAMPLES
+Good question: "Should the new authentication system integrate with the existing UserService or create a separate AuthService?"
+Bad question: "How should I implement this?" (too vague)

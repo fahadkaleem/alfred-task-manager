@@ -34,6 +34,7 @@ class TaskStatus(str, Enum):
     READY_FOR_TESTING = "ready_for_testing"
     IN_TESTING = "in_testing"
     READY_FOR_FINALIZATION = "ready_for_finalization"
+    IN_FINALIZATION = "in_finalization"
     DONE = "done"
 
 

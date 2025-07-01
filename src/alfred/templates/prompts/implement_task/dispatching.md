@@ -1,4 +1,4 @@
-# TASK: {{ task.task_id }}
+# TASK: ${task_id}
 # STATE: dispatching
 
 The Execution Plan is ready. Please execute all subtasks from the plan.
