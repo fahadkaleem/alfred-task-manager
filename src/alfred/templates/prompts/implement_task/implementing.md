@@ -1,22 +1,46 @@
-# Implementation Phase
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-You are now in the implementation phase for task {{ task.task_id }}.
+# OBJECTIVE
+Execute the implementation phase by completing all subtasks from the approved execution plan.
 
-## Your Execution Plan
+# BACKGROUND
+You are now in the implementation phase. An execution plan with detailed subtasks has been created and approved. Your role is to:
+- Work through each subtask systematically
+- Track progress as you complete each one
+- Ensure all acceptance criteria are met
+- Create a comprehensive implementation manifest when done
 
-{% if additional_context.execution_plan %}
-{{ additional_context.execution_plan | tojson(indent=2) }}
-{% else %}
-No execution plan found. Please check the planning phase outputs.
-{% endif %}
+**Task Requirements:**
+- Goal: ${task_context}
+- Implementation Overview: ${implementation_details}
+- Acceptance Criteria:
+${acceptance_criteria}
 
-## Your Mission
+**Execution Plan:**
+${artifact_json}
 
-Implement the subtasks from the execution plan. As you complete each subtask, call `mark_subtask_complete` to track progress.
+# INSTRUCTIONS
+1. Review the execution plan and subtasks
+2. Implement each subtask in order, following the LOST specifications
+3. After completing each subtask, call `alfred.mark_subtask_complete` with the task_id and subtask_id
+4. Test your implementation as you go
+5. Once all subtasks are complete, create an implementation manifest
+6. Submit the final manifest for review
 
-When all subtasks are complete, submit an `ImplementationManifestArtifact` with:
-- **summary**: Brief summary of what was implemented
-- **completed_subtasks**: List of completed subtask IDs
-- **testing_notes**: Any notes about testing or validation
+# CONSTRAINTS
+- Follow the execution plan precisely
+- Each subtask must be fully completed before moving to the next
+- Maintain code quality and follow project conventions
+- Ensure all tests pass before marking subtasks complete
 
-Call `submit_work` with your final implementation manifest.
+# OUTPUT
+When all subtasks are complete, create an ImplementationManifestArtifact with:
+- `summary`: Brief summary of what was implemented
+- `completed_subtasks`: List of completed subtask IDs
+- `testing_notes`: Any notes about testing or validation
+
+**Required Action:** Call `alfred.submit_work` with your `ImplementationManifestArtifact`

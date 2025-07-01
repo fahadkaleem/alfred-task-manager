@@ -1,119 +1,289 @@
-# src/alfred/core/prompter.py
-from jinja2 import Environment, FileSystemLoader
-from pathlib import Path
-from enum import Enum
-from typing import Dict, Any, Optional
+# src/alfred/core/prompter_new.py
 import json
-from pydantic import BaseModel
+from pathlib import Path
+from string import Template
+from typing import Dict, Any, Optional, Set
+from dataclasses import dataclass
+from enum import Enum
 
 from src.alfred.config.settings import settings
-from src.alfred.models.schemas import Task
-from src.alfred.constants import TemplatePaths
 from src.alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class Prompter:
-    """Generates state-aware prompts for the AI agent."""
+class PromptTemplate:
+    """A simple template wrapper that provides clear error messages."""
 
-    def __init__(self):
-        # Reuse existing settings to find the templates directory
-        search_paths = []
+    def __init__(self, content: str, source_file: Path):
+        self.content = content
+        self.source_file = source_file
+        self.template = Template(content)
+        self._required_vars = self._extract_variables()
 
-        # Check for user-initialized templates first
-        user_templates_path = settings.alfred_dir / "templates"
-        if user_templates_path.exists():
-            search_paths.append(str(user_templates_path))
+    def _extract_variables(self) -> Set[str]:
+        """Extract all ${var} placeholders from template."""
+        import re
 
-        # Always include packaged templates as fallback
-        search_paths.append(str(settings.packaged_templates_dir))
+        # Match ${var} but not $${var} (escaped)
+        return set(re.findall(r"(?<!\$)\$\{(\w+)\}", self.content))
 
-        self.template_loader = FileSystemLoader(searchpath=search_paths)
-        self.jinja_env = Environment(loader=self.template_loader, trim_blocks=True, lstrip_blocks=True)
+    def render(self, context: Dict[str, Any]) -> str:
+        """Render the template with context."""
+        # Check for missing required variables
+        provided_vars = set(context.keys())
+        missing_vars = self._required_vars - provided_vars
 
-        # Add custom filters
-        self.jinja_env.filters["fromjson"] = json.loads
-        self.jinja_env.filters["tojson"] = self._pydantic_safe_tojson
-
-    def _pydantic_safe_tojson(self, obj, indent=2):
-        """Custom JSON filter that handles Pydantic models"""
-        if isinstance(obj, BaseModel):
-            return json.dumps(obj.model_dump(), indent=indent)
-        return json.dumps(obj, indent=indent)
-
-    def generate_prompt(
-        self,
-        task: Task,
-        tool_name: str,
-        state,  # Can be Enum or str
-        additional_context: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """
-        Generates a prompt by rendering a template with the given context.
-
-        Args:
-            task: The full structured Task object.
-            tool_name: The name of the active tool (e.g., 'plan_task').
-            state: The current state from the tool's SM (Enum or str).
-            additional_context: Ad-hoc data like review feedback.
-
-        Returns:
-            The rendered prompt string.
-        """
-        # Handle both Enum and string state values
-        state_value = state.value if hasattr(state, "value") else state
-
-        # Map dynamic review states to generic templates
-        template_state = state_value
-        if state_value.endswith("_awaiting_ai_review"):
-            template_state = "awaiting_ai_review"
-        elif state_value.endswith("_awaiting_human_review"):
-            template_state = "awaiting_human_review"
-
-        template_path = TemplatePaths.PROMPT_PATTERN.format(tool_name=tool_name, state=template_state)
-
-        logger.info(f"[PROMPTER] Generating prompt for tool='{tool_name}', state='{state_value}'")
-        logger.info(f"[PROMPTER] Additional context keys: {list(additional_context.keys()) if additional_context else 'None'}")
+        if missing_vars:
+            raise ValueError(f"Missing required variables for {self.source_file.name}: {', '.join(sorted(missing_vars))}\nProvided: {', '.join(sorted(provided_vars))}")
 
         try:
-            template = self.jinja_env.get_template(template_path)
+            # safe_substitute won't fail on extra vars
+            return self.template.safe_substitute(**context)
         except Exception as e:
-            # Proper error handling is crucial
-            error_message = f"CRITICAL ERROR: Prompt template not found at '{template_path}'. Details: {e}"
-            logger.error(error_message)
-            return error_message
+            raise RuntimeError(f"Failed to render template {self.source_file.name}: {e}")
 
-        # Build the comprehensive context for the template
-        render_context = {
-            "task": task,
+
+class PromptLibrary:
+    """Manages file-based prompt templates."""
+
+    def __init__(self, prompts_dir: Optional[Path] = None):
+        """Initialize the prompt library.
+
+        Args:
+            prompts_dir: Directory containing prompts. Defaults to checking
+                        user customization first, then packaged prompts.
+        """
+        if prompts_dir is None:
+            # Check for user customization first
+            user_prompts = settings.alfred_dir / "templates" / "prompts"
+            if user_prompts.exists():
+                prompts_dir = user_prompts
+                logger.info(f"Using user prompt templates from {user_prompts}")
+            else:
+                # Fall back to packaged prompts
+                prompts_dir = Path(__file__).parent.parent / "templates" / "prompts"
+                logger.info(f"Using default prompt templates from {prompts_dir}")
+
+        self.prompts_dir = prompts_dir
+        self._cache: Dict[str, PromptTemplate] = {}
+        self._load_all_prompts()
+
+    def _load_all_prompts(self) -> None:
+        """Pre-load all prompts for validation."""
+        count = 0
+        for prompt_file in self.prompts_dir.rglob("*.md"):
+            if prompt_file.name.startswith("_"):
+                continue  # Skip special files
+
+            try:
+                content = prompt_file.read_text(encoding="utf-8")
+                # Build key from relative path
+                key = self._path_to_key(prompt_file)
+                self._cache[key] = PromptTemplate(content, prompt_file)
+                count += 1
+            except Exception as e:
+                logger.error(f"Failed to load prompt {prompt_file}: {e}")
+
+        logger.info(f"Loaded {count} prompt templates")
+
+    def _path_to_key(self, path: Path) -> str:
+        """Convert file path to prompt key."""
+        # Remove .md extension and convert path to dot notation
+        relative = path.relative_to(self.prompts_dir)
+        parts = list(relative.parts[:-1]) + [relative.stem]
+        return ".".join(parts)
+
+    def get(self, prompt_key: str) -> PromptTemplate:
+        """Get a prompt template by key.
+
+        Args:
+            prompt_key: Dot-separated path (e.g., "plan_task.contextualize")
+
+        Returns:
+            PromptTemplate instance
+
+        Raises:
+            KeyError: If prompt not found
+        """
+        if prompt_key not in self._cache:
+            available = ", ".join(sorted(self._cache.keys()))
+            raise KeyError(f"Prompt '{prompt_key}' not found.\nAvailable prompts: {available}")
+
+        return self._cache[prompt_key]
+
+    def get_prompt_key(self, tool_name: str, state: str) -> str:
+        """Map tool and state to the correct prompt key."""
+        # Handle dynamic review states
+        if state.endswith("_awaiting_ai_review"):
+            return "review.ai_review"
+        elif state.endswith("_awaiting_human_review"):
+            return "review.human_review"
+
+        # Direct mapping
+        direct_key = f"{tool_name}.{state}"
+
+        # Check if it exists
+        if direct_key in self._cache:
+            return direct_key
+
+        # Try without tool name for shared prompts
+        if state in self._cache:
+            return state
+
+        # Default fallback
+        return "errors.not_found"
+
+    def render(self, prompt_key: str, context: Dict[str, Any], strict: bool = True) -> str:
+        """Render a prompt with context.
+
+        Args:
+            prompt_key: The prompt to render
+            context: Variables to substitute
+            strict: If True, fail on missing variables
+
+        Returns:
+            Rendered prompt string
+        """
+        template = self.get(prompt_key)
+
+        if not strict:
+            # Add empty strings for missing vars
+            for var in template._required_vars:
+                if var not in context:
+                    context[var] = ""
+
+        return template.render(context)
+
+    def list_prompts(self) -> Dict[str, Dict[str, Any]]:
+        """List all available prompts with metadata."""
+        result = {}
+        for key, template in self._cache.items():
+            result[key] = {"file": str(template.source_file.relative_to(self.prompts_dir)), "required_vars": sorted(template._required_vars), "size": len(template.content)}
+        return result
+
+    def reload(self) -> None:
+        """Reload all prompts (useful for development)."""
+        logger.info("Reloading prompt templates...")
+        self._cache.clear()
+        self._load_all_prompts()
+
+
+# Global instance
+prompt_library = PromptLibrary()
+
+
+class PromptBuilder:
+    """Helper class to build consistent prompt contexts."""
+
+    def __init__(self, task_id: str, tool_name: str, state: str):
+        self.context = {
+            "task_id": task_id,
             "tool_name": tool_name,
-            "state": state_value,
-            "additional_context": additional_context or {},
+            "current_state": state,
+            "feedback_section": "",
         }
 
-        # Log important context details for debugging
-        if additional_context and "feedback_notes" in additional_context:
-            logger.info(f"[PROMPTER DEBUG] Feedback notes present (first 100 chars): {additional_context['feedback_notes'][:100]}")
-        if additional_context:
-            artifact_keys = [k for k in additional_context.keys() if k.endswith("_artifact")]
-            if artifact_keys:
-                logger.info(f"[PROMPTER DEBUG] Artifact keys in context: {artifact_keys}")
+    def with_task(self, task) -> "PromptBuilder":
+        """Add task information to context."""
+        self.context.update(
+            {
+                "task_title": task.title,
+                "task_context": task.context,
+                "implementation_details": task.implementation_details,
+                "acceptance_criteria": self._format_list(task.acceptance_criteria),
+                "task_status": task.task_status.value if hasattr(task.task_status, "value") else str(task.task_status),
+            }
+        )
+        return self
 
-        # Log what's being passed to template
-        logger.info(f"[PROMPTER DEBUG] Rendering template with additional_context keys: {list(additional_context.keys()) if additional_context else 'None'}")
-
-        rendered = template.render(render_context)
-
-        # Check if feedback section was rendered
-        if additional_context and "feedback_notes" in additional_context:
-            if "Building on Your Previous Analysis" in rendered:
-                logger.info("[PROMPTER DEBUG] Feedback section successfully rendered in template")
+    def with_artifact(self, artifact: Any, as_json: bool = True) -> "PromptBuilder":
+        """Add artifact to context."""
+        if as_json:
+            if hasattr(artifact, "model_dump"):
+                artifact_data = artifact.model_dump()
             else:
-                logger.warning("[PROMPTER DEBUG] Feedback section NOT rendered despite feedback_notes present!")
+                artifact_data = artifact
 
-        return rendered
+            self.context["artifact_json"] = json.dumps(artifact_data, indent=2, default=str)
+            self.context["artifact_summary"] = self._summarize_artifact(artifact_data)
+        else:
+            self.context["artifact"] = artifact
+        return self
+
+    def with_feedback(self, feedback: str) -> "PromptBuilder":
+        """Add feedback to context."""
+        if feedback:
+            # Format feedback as a complete markdown section
+            feedback_section = f"\n## REVISION FEEDBACK\nThe previous submission was reviewed and requires changes:\n\n{feedback}\n\nPlease address this feedback and resubmit.\n"
+            self.context["feedback_section"] = feedback_section
+        else:
+            self.context["feedback_section"] = ""
+
+        # Keep raw feedback for compatibility
+        self.context["feedback"] = feedback
+        self.context["has_feedback"] = bool(feedback)
+        return self
+
+    def with_custom(self, **kwargs) -> "PromptBuilder":
+        """Add custom context variables."""
+        self.context.update(kwargs)
+        return self
+
+    def build(self) -> Dict[str, Any]:
+        """Return the built context."""
+        return self.context.copy()
+
+    @staticmethod
+    def _format_list(items: list) -> str:
+        """Format a list for prompt display."""
+        if not items:
+            return "- None specified"
+        return "\n".join(f"- {item}" for item in items)
+
+    @staticmethod
+    def _summarize_artifact(artifact: Any) -> str:
+        """Create a summary of an artifact for human review."""
+        if isinstance(artifact, dict):
+            # Try to extract key information
+            if "summary" in artifact:
+                return artifact["summary"]
+            elif "title" in artifact:
+                return artifact["title"]
+            else:
+                # Show first few keys
+                keys = list(artifact.keys())[:5]
+                return f"Artifact with fields: {', '.join(keys)}"
+        return str(artifact)[:200]
 
 
-# Singleton instance to be used across the application
-prompter = Prompter()
+def generate_prompt(task_id: str, tool_name: str, state: str, task: Any, additional_context: Optional[Dict[str, Any]] = None) -> str:
+    """Main function to generate prompts - backward compatible wrapper."""
+
+    # Handle both Enum and string state values
+    state_value = state.value if hasattr(state, "value") else state
+
+    # Get the correct prompt key
+    prompt_key = prompt_library.get_prompt_key(tool_name, state_value)
+
+    # Build context using the builder
+    builder = PromptBuilder(task_id, tool_name, state_value).with_task(task)
+
+    # Add additional context
+    if additional_context:
+        if "artifact_content" in additional_context:
+            builder.with_artifact(additional_context["artifact_content"])
+        if "feedback_notes" in additional_context:
+            builder.with_feedback(additional_context["feedback_notes"])
+
+        # Add everything else
+        remaining = {k: v for k, v in additional_context.items() if k not in ["artifact_content", "feedback_notes"]}
+        builder.with_custom(**remaining)
+
+    # Render the prompt
+    try:
+        return prompt_library.render(prompt_key, builder.build())
+    except KeyError:
+        # Fallback for missing prompts
+        logger.warning(f"Prompt not found for {prompt_key}, using fallback")
+        return f"# {tool_name} - {state_value}\n\nNo prompt configured for this state.\nTask: {task_id}"

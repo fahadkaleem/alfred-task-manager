@@ -1,4 +1,4 @@
-# TASK: {{ task.task_id }}
+# TASK: ${task_id}
 # STATE: dispatching
 
 Please run the test suite to verify the implementation.

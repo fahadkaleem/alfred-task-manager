@@ -1,65 +1,46 @@
-# TOOL: `alfred.plan_task`
-# TASK: {{ task.task_id }}
-# STATE: strategize
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-Context is verified. The human developer has provided all necessary clarifications. We will now create the high-level technical strategy for '{{ task.title }}'. This strategy will serve as the guiding principle for the detailed design.
+# OBJECTIVE
+Create a high-level technical strategy that will guide the detailed design and implementation of the task.
 
----
-### **Refining Your Technical Strategy**
-{% if additional_context.feedback_notes %}
-Your previous StrategyArtifact has been reviewed and the team has provided valuable insights to strengthen your approach. Here's your earlier strategy:
+# BACKGROUND
+Context has been verified and any necessary clarifications have been provided. You must now develop a technical strategy that:
+- Defines the overall approach to solving the problem
+- Identifies key components that need to be created or modified
+- Considers dependencies and potential risks
+- Serves as the foundation for detailed design
 
-```json
-{{ additional_context.strategy_artifact | tojson(indent=2) if additional_context.strategy_artifact else "No artifact data available" }}
-```
+**Task Requirements:**
+- Goal: ${task_context}
+- Implementation Overview: ${implementation_details}
+- Acceptance Criteria:
+${acceptance_criteria}
 
-The reviewer shared these insights to help you refine the strategy:
+${feedback_section}
 
-> {{ additional_context.feedback_notes }}
+# INSTRUCTIONS
+1. Review the verified context and requirements
+2. Define the overall technical approach (e.g., "Create a new microservice," "Refactor the existing UserService," "Add a new middleware layer")
+3. List the major components, classes, or modules that will be created or modified
+4. Identify any new third-party libraries or dependencies required
+5. Analyze potential risks or important architectural trade-offs
+6. Create a concise technical strategy document
 
-Please enhance your StrategyArtifact by incorporating this feedback. Consider how these suggestions can improve the overall technical approach while building on the solid foundation you've already established.
-{% else %}
-No specific clarifications were provided. Proceed based on the original task context and approved requirements.
-{% endif %}
+# CONSTRAINTS
+- Focus on high-level approach, not implementation details
+- Ensure the strategy aligns with existing architecture patterns
+- Consider scalability, maintainability, and performance
+- Be realistic about risks and trade-offs
 
----
-### **Directive: Develop Technical Strategy**
+# OUTPUT
+Create a StrategyArtifact with:
+- `high_level_strategy`: Overall technical approach description
+- `key_components`: List of major new or modified components
+- `new_dependencies`: Optional list of new third-party libraries
+- `risk_analysis`: Optional analysis of potential risks or trade-offs
 
-Based on the full task context, develop a concise technical strategy.
-
-- **Strategy:** Define the overall technical approach (e.g., "Create a new microservice," "Refactor the existing `UserService`," "Add a new middleware layer").
-- **Components:** List the major new or modified components, classes, or modules.
-- **Dependencies (Optional):** List any new third-party libraries that will be required.
-- **Risks (Optional):** Note any potential risks or important architectural trade-offs.
-
-{% if ai_directives %}
----
-### **AI Agent Instructions**
-
-**Analysis Style:** {{ ai_directives.style }}
-
-**Required Analysis Steps:**
-{% for pattern in ai_directives.analysis_patterns %}
-- {{ pattern }}
-{% endfor %}
-
-**Self-Validation Checklist:**
-{% for criterion in ai_directives.validation_criteria %}
-- {{ criterion }}
-{% endfor %}
-{% endif %}
-
----
-### **Required Action**
-
-You MUST now call `alfred.submit_work` with a `StrategyArtifact`.
-
-**Required Artifact Structure:**
-```json
-{
-  "high_level_strategy": "string",
-  "key_components": ["string"],
-  "new_dependencies": ["string", "Optional"],
-  "risk_analysis": "string", "Optional"
-}
-```
+**Required Action:** Call `alfred.submit_work` with a `StrategyArtifact`

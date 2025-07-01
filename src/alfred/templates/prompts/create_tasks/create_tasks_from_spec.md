@@ -6,7 +6,7 @@ Your sole mission is to deconstruct the provided Engineering Specification into 
 ---
 ### **ENGINEERING SPECIFICATION (Source of Truth)**
 ```json
-{{ spec_content }}
+${spec_content}
 ```
 ---
 ### **THINKING METHODOLOGY: Chain-of-Thought Deconstruction**
