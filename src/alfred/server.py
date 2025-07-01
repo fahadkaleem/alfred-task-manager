@@ -7,29 +7,51 @@ the clean V2 Alfred architecture.
 
 import functools
 import inspect
-from typing import Callable
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Callable
 
 from fastmcp import FastMCP
 
 from src.alfred.config.settings import settings
+from src.alfred.core.prompter import prompt_library  # Import the prompt library
+from src.alfred.lib.logger import get_logger
 from src.alfred.lib.transaction_logger import transaction_logger
-from src.alfred.models.schemas import ToolResponse
+from src.alfred.models.schemas import TaskStatus, ToolResponse
 from src.alfred.tools.approve_and_advance import approve_and_advance_impl
+from src.alfred.constants import ToolName
+from src.alfred.tools.registry import tool_registry
 from src.alfred.tools.create_spec import create_spec_impl
 from src.alfred.tools.create_tasks import create_tasks_impl
-from src.alfred.tools.finalize_task import finalize_task_impl
+from src.alfred.tools.finalize_task import finalize_task_impl, FinalizeTaskHandler, finalize_task_handler
 from src.alfred.tools.get_next_task import get_next_task_impl
-from src.alfred.tools.implement_task import implement_task_impl
+from src.alfred.tools.implement_task import implement_task_impl, ImplementTaskHandler, implement_task_handler
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
-from src.alfred.tools.plan_task import plan_task_impl
-from src.alfred.tools.progress import mark_subtask_complete_impl
-from src.alfred.tools.provide_review import provide_review_impl
-from src.alfred.tools.review_task import review_task_impl
-from src.alfred.tools.submit_work import submit_work_impl
-from src.alfred.tools.test_task import test_task_impl
+from src.alfred.tools.plan_task import plan_task_impl, PlanTaskHandler
+from src.alfred.core.workflow import PlanTaskTool, ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
+from src.alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
+from src.alfred.tools.approve_review import approve_review_impl
+from src.alfred.tools.request_revision import request_revision_impl
+from src.alfred.tools.review_task import ReviewTaskHandler, review_task_handler
+from src.alfred.tools.submit_work import submit_work_handler
+from src.alfred.tools.test_task import TestTaskHandler, test_task_handler
 from src.alfred.tools.work_on import work_on_impl
 
-app = FastMCP(settings.server_name)
+logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(server: FastMCP) -> AsyncIterator[None]:
+    """Lifespan context manager for FastMCP server."""
+    # Startup
+    logger.info(f"Starting Alfred server with {len(prompt_library._cache)} prompts loaded")
+
+    yield
+
+    # Shutdown (if needed in the future)
+    logger.info("Server shutting down")
+
+
+app = FastMCP(settings.server_name, lifespan=lifespan)
 
 
 def log_tool_transaction(impl_func: Callable) -> Callable:
@@ -217,8 +239,11 @@ async def create_tasks(task_id: str) -> ToolResponse:
     pass  # Implementation handled by decorator
 
 
+# THIS IS THE FIX for Blocker #2
 @app.tool()
-@log_tool_transaction(plan_task_impl)
+@tool_registry.register(
+    name=ToolName.PLAN_TASK, handler_class=PlanTaskHandler, tool_class=PlanTaskTool, entry_status_map={TaskStatus.NEW: TaskStatus.PLANNING, TaskStatus.PLANNING: TaskStatus.PLANNING}
+)
 async def plan_task(task_id: str) -> ToolResponse:
     """
     Initiates the detailed technical planning for a specific task.
@@ -251,52 +276,172 @@ async def plan_task(task_id: str) -> ToolResponse:
         - Planning tool instance registered and active
         - First planning prompt returned for contextualization phase
     """
-    pass  # Implementation handled by decorator
+    handler = PlanTaskHandler()
+    return await handler.execute(task_id)
 
 
 @app.tool()
-@log_tool_transaction(submit_work_impl)
+@log_tool_transaction(submit_work_handler.execute)
 async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     """
     Submits a structured work artifact for the current step of a workflow tool.
 
-    This is the generic state-advancing tool that handles work submission for any active workflow tool.
-    It automatically determines the correct state transition based on the current state and advances
-    the tool's state machine accordingly.
+    - Generic state-advancing tool for any active workflow (plan, implement, review, test)
+    - Automatically determines correct state transition based on current state
+    - Validates artifact structure against expected schema for current state
+    - Advances the tool's state machine to next step or review phase
+    - Works with all workflow tools: plan_task, implement_task, review_task, test_task
 
-    Args:
-        task_id (str): The unique identifier for the task
-        artifact (dict): A dictionary containing the structured work data
+    The artifact structure varies by tool and state:
+    - **Planning states**: context_analysis, strategy, design, subtasks
+    - **Implementation**: progress updates, completion status
+    - **Review**: findings, issues, recommendations
+    - **Testing**: test results, coverage, validation status
+
+    Parameters:
+        task_id (str): The unique identifier for the task (e.g., "AL-01", "TS-123")
+        artifact (dict): Structured data matching the current state's expected schema
 
     Returns:
-        ToolResponse: Contains success/error status and the next prompt
+        ToolResponse: Contains:
+            - success: Whether submission was accepted
+            - data.next_action: The next tool/action to take
+            - data.state: New state after transition
+            - data.prompt: Next prompt for user interaction
+
+    Examples:
+        # Planning context submission
+        submit_work("AL-01", {
+            "understanding": "Task requires refactoring auth module...",
+            "constraints": ["Must maintain backward compatibility"],
+            "risks": ["Potential breaking changes to API"]
+        })
+
+        # Implementation progress
+        submit_work("AL-02", {
+            "progress": "Completed authentication refactor",
+            "subtasks_completed": ["subtask-1", "subtask-2"]
+        })
+
+    Next Actions:
+        - If in review state: Use approve_review or request_revision
+        - If advancing to new phase: Tool will indicate next tool to use
+        - If complete: No further action needed
+    """
+    return await submit_work_handler.execute(task_id, artifact=artifact)
+
+
+@app.tool()
+@log_tool_transaction(approve_review_impl)
+async def approve_review(task_id: str) -> ToolResponse:
+    """
+    Approves the artifact in the current review step and advances the workflow.
+
+    - Approves work in any review state (AI self-review or human review)
+    - Advances workflow to next phase or completion
+    - Works with all review states across all workflow tools
+    - Automatically determines next state based on current workflow phase
+
+    Applicable States:
+    - **Planning**: review_context, review_strategy, review_design, review_plan
+    - **Implementation**: awaiting_human_review after completion
+    - **Review**: awaiting_ai_review, awaiting_human_review
+    - **Testing**: awaiting_ai_review, awaiting_human_review
+
+    Parameters:
+        task_id (str): The unique identifier for the task
+
+    Returns:
+        ToolResponse: Contains:
+            - success: Whether approval was successful
+            - data.next_action: Next tool to use (if any)
+            - data.new_state: State after approval
+            - data.message: Guidance for next steps
+
+    Examples:
+        # Approve planning context analysis
+        approve_review("AL-01")  # Advances to strategy phase
+
+        # Approve final implementation
+        approve_review("AL-02")  # Advances to review phase
+
+    Next Actions:
+        - Planning phases: Continues to next planning step via submit_work
+        - Phase transitions: Use the indicated next tool (review_task, test_task, etc.)
+        - Final approval: Task moves to completed state
+
+    Preconditions:
+        - Must be in a review state (awaiting_ai_review or awaiting_human_review)
+        - Artifact must have been submitted for current state
     """
     pass  # Implementation handled by decorator
 
 
 @app.tool()
-@log_tool_transaction(provide_review_impl)
-async def provide_review(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
+@log_tool_transaction(request_revision_impl)
+async def request_revision(task_id: str, feedback_notes: str) -> ToolResponse:
     """
-    Provides feedback on a work artifact during a review step.
+    Rejects the artifact in the current review step and sends it back for revision.
 
-    This is the generic state-advancing tool that handles review feedback for any active workflow tool.
-    It automatically determines the correct state transition based on the approval status and advances
-    the tool's state machine accordingly.
+    - Requests revision for work in any review state
+    - Sends workflow back to previous working state for improvements
+    - Requires detailed, actionable feedback for the implementer
+    - Preserves revision history for audit trail
 
-    Args:
+    Feedback Guidelines:
+    - Be specific about what needs improvement
+    - Provide concrete examples when possible
+    - Suggest specific solutions or approaches
+    - Focus on actionable items, not vague concerns
+    - Prioritize critical issues over minor improvements
+
+    Parameters:
         task_id (str): The unique identifier for the task
-        is_approved (bool): True to approve, False to request revisions
-        feedback_notes (str): Specific feedback for revision (required if is_approved=False)
+        feedback_notes (str): Detailed, actionable feedback explaining required changes
 
     Returns:
-        ToolResponse: Contains success/error status and the next prompt
+        ToolResponse: Contains:
+            - success: Whether revision request was processed
+            - data.state: State returned to for revision
+            - data.prompt: Updated prompt including feedback
+            - data.feedback: The feedback provided for reference
+
+    Examples:
+        # Request planning revision
+        request_revision("AL-01",
+            "The context analysis is missing critical dependency information. "
+            "Please add: 1) List of dependent services, 2) API contracts that "
+            "might be affected, 3) Database schema dependencies"
+        )
+
+        # Request implementation fixes
+        request_revision("AL-02",
+            "The error handling is incomplete. Specifically: "
+            "1) No timeout handling in API calls (add 30s timeout), "
+            "2) Missing rollback logic for failed transactions, "
+            "3) No retry mechanism for transient failures"
+        )
+
+    Next Actions:
+        - Implementer should address feedback using submit_work
+        - After revision, work returns to review state
+        - Process repeats until approved
+
+    Good Feedback Examples:
+        - "Add input validation for email field using regex pattern"
+        - "Refactor calculateTotal() to handle null values in items array"
+        - "Add unit tests for error cases in auth middleware"
+
+    Poor Feedback Examples:
+        - "Code needs improvement" (too vague)
+        - "Don't like the approach" (not actionable)
+        - "Try again" (no guidance)
     """
     pass  # Implementation handled by decorator
 
 
 @app.tool()
-@log_tool_transaction(mark_subtask_complete_impl)
+@log_tool_transaction(mark_subtask_complete_handler.execute)
 async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
     """
     Marks a specific subtask as complete during the implementation phase.
@@ -328,7 +473,16 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
 
 
 @app.tool()
-@log_tool_transaction(implement_task_impl)
+@tool_registry.register(
+    name=ToolName.IMPLEMENT_TASK,
+    handler_class=ImplementTaskHandler,
+    tool_class=ImplementTaskTool,
+    # THIS IS FIX #6: Add self-map for IN_DEVELOPMENT
+    entry_status_map={
+        TaskStatus.READY_FOR_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
+        TaskStatus.IN_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
+    },
+)
 async def implement_task(task_id: str) -> ToolResponse:
     """
     Executes the implementation phase for a task that has completed planning.
@@ -355,61 +509,223 @@ async def implement_task(task_id: str) -> ToolResponse:
     Example:
         implement_task("TS-01") -> Starts implementation of planned task
     """
-    pass  # Implementation handled by decorator
+    return await implement_task_handler.execute(task_id)
 
 
 @app.tool()
-@log_tool_transaction(review_task_impl)
+@tool_registry.register(
+    name=ToolName.REVIEW_TASK,
+    handler_class=ReviewTaskHandler,
+    tool_class=ReviewTaskTool,
+    entry_status_map={
+        TaskStatus.READY_FOR_REVIEW: TaskStatus.IN_REVIEW,
+        TaskStatus.IN_REVIEW: TaskStatus.IN_REVIEW,
+    },
+)
 async def review_task(task_id: str) -> ToolResponse:
     """
     Initiates the code review phase for a task that has completed implementation.
 
-    This tool manages the review process where the implementation is checked
-    against requirements, best practices, and quality standards.
+    - Comprehensive code review against requirements and best practices
+    - Checks implementation completeness, quality, and correctness
+    - Validates against original task requirements and acceptance criteria
+    - Reviews code style, patterns, error handling, and edge cases
+    - Ensures tests are present and passing
 
-    Args:
+    Review Criteria:
+    - **Functionality**: Does the code fulfill all requirements?
+    - **Completeness**: Are all subtasks from the plan implemented?
+    - **Code Quality**: Follows project patterns and best practices?
+    - **Error Handling**: Proper error handling and edge cases?
+    - **Testing**: Adequate test coverage for new functionality?
+    - **Performance**: No obvious performance issues?
+    - **Security**: No security vulnerabilities introduced?
+
+    Parameters:
         task_id (str): The unique identifier for the task
 
     Returns:
-        ToolResponse: Contains success/error status and review guidance
+        ToolResponse: Contains:
+            - success: Whether review was initiated
+            - data.prompt: Review checklist and guidance
+            - data.state: Current review state
+            - data.requirements: Original requirements for reference
+
+    Examples:
+        review_task("AL-01")  # Starts comprehensive code review
+
+    Review Process:
+    1. Tool loads implementation details and original requirements
+    2. Presents comprehensive review checklist
+    3. Reviewer performs thorough code review
+    4. Reviewer submits findings via submit_work
+    5. AI reviews the human review for completeness
+    6. Final approval/revision via approve_review or request_revision
+
+    Next Actions:
+        - Use submit_work to provide review findings
+        - After review submission, use approve_review or request_revision
+        - If approved, advances to test_task
+
+    Preconditions:
+        - Task must be in READY_FOR_REVIEW status
+        - Implementation must be complete
+        - All subtasks should be marked complete
     """
-    pass  # Implementation handled by decorator
+    return await review_task_handler.execute(task_id)
 
 
 @app.tool()
-@log_tool_transaction(test_task_impl)
+@tool_registry.register(
+    name=ToolName.TEST_TASK,
+    handler_class=TestTaskHandler,
+    tool_class=TestTaskTool,
+    entry_status_map={
+        TaskStatus.READY_FOR_TESTING: TaskStatus.IN_TESTING,
+        TaskStatus.IN_TESTING: TaskStatus.IN_TESTING,
+    },
+)
 async def test_task(task_id: str) -> ToolResponse:
     """
     Initiates the testing phase for a task that has passed code review.
 
-    This tool manages the test execution process including unit tests,
-    integration tests, and verification of the implementation.
+    - Executes comprehensive test suite for the implementation
+    - Runs unit tests, integration tests, and validation checks
+    - Verifies implementation against acceptance criteria
+    - Checks for regressions in existing functionality
+    - Validates edge cases and error scenarios
 
-    Args:
+    Testing Scope:
+    - **Unit Tests**: Test individual functions/methods
+    - **Integration Tests**: Test component interactions
+    - **Regression Tests**: Ensure no existing functionality broken
+    - **Edge Cases**: Validate boundary conditions
+    - **Error Scenarios**: Test error handling paths
+    - **Performance**: Basic performance validation
+    - **Manual Testing**: UI/UX validation if applicable
+
+    Parameters:
         task_id (str): The unique identifier for the task
 
     Returns:
-        ToolResponse: Contains success/error status and test results
+        ToolResponse: Contains:
+            - success: Whether testing was initiated
+            - data.prompt: Testing checklist and guidance
+            - data.test_requirements: What needs to be tested
+            - data.acceptance_criteria: Original criteria to validate
+
+    Examples:
+        test_task("AL-01")  # Starts comprehensive testing phase
+
+    Testing Process:
+    1. Tool provides testing checklist and requirements
+    2. Tester runs automated test suites
+    3. Tester performs manual validation if needed
+    4. Tester documents results via submit_work
+    5. Results are reviewed for completeness
+    6. Approval/revision via approve_review or request_revision
+
+    Test Result Structure (for submit_work):
+        {
+            "test_summary": "All tests passing with 95% coverage",
+            "unit_tests": {"passed": 45, "failed": 0},
+            "integration_tests": {"passed": 12, "failed": 0},
+            "manual_tests": ["UI responsive on mobile", "Forms validate correctly"],
+            "issues_found": [],
+            "coverage": "95%"
+        }
+
+    Next Actions:
+        - Use submit_work to provide test results
+        - After submission, use approve_review or request_revision
+        - If approved, advances to finalize_task
+
+    Preconditions:
+        - Task must be in READY_FOR_TESTING status
+        - Code review must be complete and approved
+        - Implementation should be stable
     """
-    pass  # Implementation handled by decorator
+    return await test_task_handler.execute(task_id)
 
 
 @app.tool()
+@tool_registry.register(
+    name=ToolName.FINALIZE_TASK,
+    handler_class=FinalizeTaskHandler,
+    tool_class=FinalizeTaskTool,
+    entry_status_map={
+        TaskStatus.READY_FOR_FINALIZATION: TaskStatus.IN_FINALIZATION,
+        TaskStatus.IN_FINALIZATION: TaskStatus.IN_FINALIZATION,
+    },
+)
 @log_tool_transaction(finalize_task_impl)
 async def finalize_task(task_id: str) -> ToolResponse:
     """
     Completes the task by creating a commit and pull request.
 
-    This tool manages the finalization process including:
-    - Creating a git commit with changes
-    - Creating a pull request
-    - Updating task status to completed
+    - Creates comprehensive git commit with all changes
+    - Generates pull request with detailed description
+    - Links PR to original task/issue
+    - Updates task status to completed
+    - Archives all task artifacts and history
 
-    Args:
+    Finalization Process:
+    1. **Commit Creation**:
+       - Stages all modified files
+       - Creates descriptive commit message
+       - Includes task ID and summary
+
+    2. **Pull Request**:
+       - Auto-generates PR description from task history
+       - Includes implementation summary
+       - Lists all changes made
+       - References original requirements
+       - Adds testing notes
+
+    3. **Task Completion**:
+       - Updates task status to COMPLETED
+       - Archives all workflow artifacts
+       - Preserves audit trail
+
+    Parameters:
         task_id (str): The unique identifier for the task
 
     Returns:
-        ToolResponse: Contains success/error status with PR details
+        ToolResponse: Contains:
+            - success: Whether finalization succeeded
+            - data.commit_sha: Git commit hash
+            - data.pr_url: Pull request URL
+            - data.pr_number: PR number for reference
+            - data.summary: Summary of completed work
+
+    Examples:
+        finalize_task("AL-01")
+        # Creates commit and PR with:
+        # - Title: "AL-01: Implement user authentication refactor"
+        # - Description: Auto-generated from task history
+        # - Links: References to original issue/task
+
+    PR Description Includes:
+        - Task summary and objectives
+        - List of changes made
+        - Testing performed
+        - Any breaking changes
+        - Deployment notes
+
+    Next Actions:
+        - Review pull request in version control system
+        - Merge PR when approved by reviewers
+        - Deploy changes according to process
+        - Close related issues/tickets
+
+    Preconditions:
+        - Task must be in READY_FOR_FINALIZATION status
+        - All tests must be passing
+        - All reviews must be approved
+        - No uncommitted changes in working directory
+
+    Note: This tool does NOT push to remote or merge the PR.
+    Manual review and merge is required per team process.
     """
     pass  # Implementation handled by decorator
 
@@ -420,14 +736,66 @@ async def approve_and_advance(task_id: str) -> ToolResponse:
     """
     Approves the current phase and advances to the next phase in the workflow.
 
-    This is a convenience tool that automatically approves the current review
-    step and advances the workflow to the next phase.
+    - Convenience tool combining approve_review + automatic phase transition
+    - Skips intermediate approval states for faster workflow
+    - Ideal for when you're confident in the current work
+    - Automatically determines and initiates next phase
 
-    Args:
+    Phase Transitions:
+    - **Planning** → Implementation (via implement_task)
+    - **Implementation** → Review (via review_task)
+    - **Review** → Testing (via test_task)
+    - **Testing** → Finalization (via finalize_task)
+    - **Finalization** → Completed (task done)
+
+    This tool handles:
+    1. Approves current review state
+    2. Determines next logical phase
+    3. Automatically initiates next phase
+    4. Returns guidance for next steps
+
+    Parameters:
         task_id (str): The unique identifier for the task
 
     Returns:
-        ToolResponse: Contains success/error status and next phase guidance
+        ToolResponse: Contains:
+            - success: Whether advancement succeeded
+            - data.from_phase: Phase completed
+            - data.to_phase: New phase started
+            - data.next_tool: Tool to use for new phase
+            - data.prompt: Guidance for next phase
+
+    Examples:
+        # After planning completion
+        approve_and_advance("AL-01")
+        # Approves plan and starts implement_task
+
+        # After implementation
+        approve_and_advance("AL-02")
+        # Approves implementation and starts review_task
+
+    When to Use:
+        - You've reviewed the work and it's ready to proceed
+        - You want to skip manual approval steps
+        - You're confident no revisions are needed
+
+    When NOT to Use:
+        - You need to review the work carefully first
+        - You might need revisions
+        - You want to pause between phases
+
+    Next Actions:
+        - Follow the guidance for the next phase
+        - Use the indicated tool for the new phase
+        - Continue workflow until task completion
+
+    Preconditions:
+        - Must be in a review state
+        - Current phase work must be submitted
+        - Cannot skip required phases
+
+    Note: This tool enforces the standard workflow order.
+    You cannot skip phases or move backward.
     """
     pass  # Implementation handled by decorator
 

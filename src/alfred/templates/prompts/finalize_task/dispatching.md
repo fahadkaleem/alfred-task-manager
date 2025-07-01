@@ -1,4 +1,4 @@
-# TASK: {{ task.task_id }}
+# TASK: ${task_id}
 # STATE: dispatching
 
 All phases are complete. Please finalize the task.

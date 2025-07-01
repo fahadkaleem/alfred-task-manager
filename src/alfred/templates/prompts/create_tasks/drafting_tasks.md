@@ -2,11 +2,11 @@
 
 You previously created a task breakdown from the technical specification. Please review it carefully.
 
-## Task ID: {{ task.task_id }}
+## Task ID: ${task_id}
 
 ## Your Task List
 
-{{ additional_context.artifact_content }}
+${task_artifact_content}
 
 ## Review Checklist
 

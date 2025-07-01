@@ -1,48 +1,38 @@
-# TOOL: `alfred.start_task`
-# TASK: {{ task.task_id }}
-# STATE: awaiting_git_status
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
 
-Welcome. Let's begin setting up the workspace for this task.
+# OBJECTIVE
+Assess the current git repository state to ensure a clean working environment before starting the task.
 
----
-### **System Checkpoint: Environment Assessment**
+# BACKGROUND
+Before beginning work on a new task, we must establish that:
+- The working directory is clean (no uncommitted changes)
+- We know the current branch
+- Any existing changes are properly handled
 
-Before we begin work on task **{{ task.task_id }}**, we must establish a clean working environment.
+This prevents accidental mixing of changes between different tasks.
 
-Please execute:
-```bash
-git status
-```
+# INSTRUCTIONS
+1. Execute `git status` to check the repository state
+2. Analyze the output to determine:
+   - Whether the working directory is clean
+   - The name of the current branch
+   - List of any uncommitted files
+3. Report the findings in a structured artifact
+4. The workflow will determine next steps based on the repository state
 
-Report the current repository state for validation.
+# CONSTRAINTS
+- Accurately report the git status
+- Do not make any changes to the repository at this stage
+- List all uncommitted files if any exist
 
-{% if ai_directives %}
----
-### **AI Agent Instructions**
+# OUTPUT
+Create a GitStatusArtifact with:
+- `is_clean`: Boolean - True if working directory has no uncommitted changes
+- `current_branch`: String - The name of the current git branch
+- `uncommitted_changes`: List[String] - List of files with uncommitted changes, if any
 
-**Analysis Style:** {{ ai_directives.style }}
-
-**Required Analysis Steps:**
-{% for pattern in ai_directives.analysis_patterns %}
-- {{ pattern }}
-{% endfor %}
-
-**Self-Validation Checklist:**
-{% for criterion in ai_directives.validation_criteria %}
-- {{ criterion }}
-{% endfor %}
-{% endif %}
-
----
-### **Required Action**
-
-You MUST now call `alfred.submit_work` with a `GitStatusArtifact`.
-
-**Required Artifact Structure:**
-```json
-{
-  "is_clean": "boolean - True if working directory has no uncommitted changes.",
-  "current_branch": "string - The name of the current git branch.",
-  "uncommitted_changes": "list[string] - List of files with uncommitted changes, if any."
-}
-```
+**Required Action:** Call `alfred.submit_work` with a `GitStatusArtifact`
