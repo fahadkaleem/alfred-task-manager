@@ -9,19 +9,29 @@ from src.alfred.state.manager import state_manager
 logger = get_logger(__name__)
 
 
-async def create_tasks_impl(task_id: str) -> ToolResponse:
+async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
     """
-    Initializes the workflow for creating tasks from a technical specification.
+    Creates a list of actionable tasks from a completed engineering specification.
 
     This is the second tool in the "idea-to-code" pipeline. It takes a completed
-    Technical Specification and breaks it down into actionable Task objects that
-    can be individually planned and implemented.
+    engineering specification and breaks it down into individual Task objects that
+    can be tracked, assigned, and implemented independently.
+
+    The tool guides through creating tasks that are:
+    - Atomic and focused
+    - Properly ordered with dependencies
+    - Sized appropriately (1-3 days of work)
+    - Complete with acceptance criteria
 
     Args:
-        task_id: The unique identifier for the epic/feature that has a completed spec
+        task_id: The unique identifier for the epic/feature with a completed engineering spec
 
     Returns:
-        ToolResponse containing the first prompt to guide task creation
+        ToolResponse containing the first prompt to guide task breakdown
+
+    Preconditions:
+        - Engineering specification must be completed (via create_spec)
+        - Task status must be "spec_completed"
     """
     # Load the task state
     task_state = state_manager.load_or_create_task_state(task_id)

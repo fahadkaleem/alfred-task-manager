@@ -21,7 +21,7 @@ from src.alfred.tools.approve_and_advance import approve_and_advance_impl
 from src.alfred.constants import ToolName
 from src.alfred.tools.registry import tool_registry
 from src.alfred.tools.create_spec import create_spec_impl
-from src.alfred.tools.create_tasks import create_tasks_impl
+from src.alfred.tools.create_tasks import create_tasks_from_spec_impl
 from src.alfred.tools.finalize_task import finalize_task_impl, finalize_task_handler
 from src.alfred.tools.get_next_task import get_next_task_impl
 from src.alfred.tools.implement_task import implement_task_impl, implement_task_handler
@@ -209,8 +209,8 @@ async def create_spec(task_id: str, prd_content: str) -> ToolResponse:
 
 
 @app.tool()
-@log_tool_transaction(create_tasks_impl)
-async def create_tasks(task_id: str) -> ToolResponse:
+@log_tool_transaction(create_tasks_from_spec_impl)
+async def create_tasks_from_spec(task_id: str) -> ToolResponse:
     """
     Creates a list of actionable tasks from a Technical Specification.
 
