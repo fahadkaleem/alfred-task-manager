@@ -21,7 +21,7 @@ from src.alfred.tools.approve_and_advance import approve_and_advance_impl
 from src.alfred.constants import ToolName
 from src.alfred.tools.registry import tool_registry
 from src.alfred.tools.create_spec import create_spec_impl
-from src.alfred.tools.create_tasks import create_tasks_from_spec_impl
+from alfred.tools.create_tasks_from_spec import create_tasks_from_spec_impl
 from src.alfred.tools.finalize_task import finalize_task_impl, finalize_task_handler
 from src.alfred.tools.get_next_task import get_next_task_impl
 from src.alfred.tools.implement_task import implement_task_impl, implement_task_handler
@@ -212,10 +212,10 @@ async def create_spec(task_id: str, prd_content: str) -> ToolResponse:
 @log_tool_transaction(create_tasks_from_spec_impl)
 async def create_tasks_from_spec(task_id: str) -> ToolResponse:
     """
-    Creates a list of actionable tasks from a Technical Specification.
+    Creates a list of actionable tasks from a completed engineering specification.
 
     This is the second tool in the "idea-to-code" pipeline. It takes a completed
-    Technical Specification and breaks it down into individual Task objects that
+    engineering specification and breaks it down into individual Task objects that
     can be tracked, assigned, and implemented independently.
 
     The tool guides through creating tasks that are:
@@ -225,17 +225,17 @@ async def create_tasks_from_spec(task_id: str) -> ToolResponse:
     - Complete with acceptance criteria
 
     Args:
-        task_id (str): The unique identifier for the epic/feature with a completed spec
+        task_id (str): The unique identifier for the epic/feature with a completed engineering spec
 
     Returns:
         ToolResponse: Contains the first prompt to guide task breakdown
 
     Preconditions:
-        - Technical specification must be completed (via create_spec)
+        - Engineering specification must be completed (via create_spec)
         - Task status must be "spec_completed"
 
     Example:
-        create_tasks("EPIC-01") -> Guides creation of task list from spec
+        create_tasks_from_spec("EPIC-01") -> Guides creation of task list from spec
     """
     pass  # Implementation handled by decorator
 

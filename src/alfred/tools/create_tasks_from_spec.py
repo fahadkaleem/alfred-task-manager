@@ -1,4 +1,4 @@
-# src/alfred/tools/create_tasks.py
+# src/alfred/tools/create_tasks_from_spec.py
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.constants import ToolName
 from src.alfred.core.workflow import CreateTasksTool
@@ -62,7 +62,7 @@ async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
     # Update status
     state_manager.update_task_status(task_id, TaskStatus.CREATING_TASKS)
 
-    # Initialize the create_tasks tool
+    # Initialize the create_tasks_from_spec tool
     tool = CreateTasksTool(task_id)
 
     # Store the technical spec in context

@@ -53,8 +53,8 @@ def work_on_impl(task_id: str) -> ToolResponse:
     handoff_tool_map = {
         TaskStatus.NEW: ToolName.PLAN_TASK,  # Start with creating spec for new epics
         TaskStatus.CREATING_SPEC: ToolName.CREATE_SPEC,
-        TaskStatus.SPEC_COMPLETED: ToolName.CREATE_TASKS,
-        TaskStatus.CREATING_TASKS: ToolName.CREATE_TASKS,
+        TaskStatus.SPEC_COMPLETED: ToolName.CREATE_TASKS_FROM_SPEC,
+        TaskStatus.CREATING_TASKS: ToolName.CREATE_TASKS_FROM_SPEC,
         TaskStatus.TASKS_CREATED: ToolName.PLAN_TASK,  # After tasks are created, plan the first one
         TaskStatus.PLANNING: ToolName.PLAN_TASK,
         TaskStatus.READY_FOR_DEVELOPMENT: ToolName.IMPLEMENT_TASK,

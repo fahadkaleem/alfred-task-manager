@@ -8,9 +8,9 @@ tools:
     enabled: true
     description: "Create technical specification from PRD"
   
-  create_tasks:
+  create_tasks_from_spec:
     enabled: true
-    description: "Break down spec into actionable tasks"
+    description: "Break down engineering spec into actionable tasks"
   
   plan_task:
     enabled: true

@@ -469,7 +469,7 @@ class CreateSpecTool(BaseWorkflowTool):
 
 class CreateTasksTool(BaseWorkflowTool):
     def __init__(self, task_id: str):
-        super().__init__(task_id, tool_name=ToolName.CREATE_TASKS)
+        super().__init__(task_id, tool_name=ToolName.CREATE_TASKS_FROM_SPEC)
         self.artifact_map = {
             CreateTasksState.DRAFTING_TASKS: TaskCreationArtifact,
         }

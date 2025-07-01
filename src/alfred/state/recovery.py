@@ -29,7 +29,7 @@ class ToolRecovery:
 
     TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {
         ToolName.CREATE_SPEC: CreateSpecTool,
-        ToolName.CREATE_TASKS: CreateTasksTool,
+        ToolName.CREATE_TASKS_FROM_SPEC: CreateTasksTool,
         ToolName.START_TASK: StartTaskTool,
         ToolName.PLAN_TASK: PlanTaskTool,
         ToolName.IMPLEMENT_TASK: ImplementTaskTool,
