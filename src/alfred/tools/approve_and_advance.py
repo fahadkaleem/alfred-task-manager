@@ -13,7 +13,7 @@ STATUS_TRANSITION_MAP = {
     TaskStatus.IN_DEVELOPMENT: TaskStatus.READY_FOR_REVIEW,
     TaskStatus.IN_REVIEW: TaskStatus.READY_FOR_TESTING,
     TaskStatus.IN_TESTING: TaskStatus.READY_FOR_FINALIZATION,
-    TaskStatus.READY_FOR_FINALIZATION: TaskStatus.DONE,
+    TaskStatus.IN_FINALIZATION: TaskStatus.DONE,
 }
 
 ARTIFACT_PRODUCER_MAP = {
@@ -23,7 +23,7 @@ ARTIFACT_PRODUCER_MAP = {
     TaskStatus.IN_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
     TaskStatus.IN_REVIEW: ToolName.REVIEW_TASK,
     TaskStatus.IN_TESTING: ToolName.TEST_TASK,
-    TaskStatus.READY_FOR_FINALIZATION: ToolName.FINALIZE_TASK,
+    TaskStatus.IN_FINALIZATION: ToolName.FINALIZE_TASK,
 }
 
 
@@ -44,7 +44,7 @@ def approve_and_advance_impl(task_id: str) -> ToolResponse:
             TaskStatus.IN_DEVELOPMENT: 4,
             TaskStatus.IN_REVIEW: 5,
             TaskStatus.IN_TESTING: 6,
-            TaskStatus.READY_FOR_FINALIZATION: 7,
+            TaskStatus.IN_FINALIZATION: 7,
         }
         workflow_step = workflow_step_map.get(current_status, 0)
 
