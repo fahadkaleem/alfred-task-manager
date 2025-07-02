@@ -38,6 +38,7 @@ class WorkflowStateMachineBuilder:
         3. ai_review -> work_state (via request_revision trigger)
         4. human_review -> next_state (via human_approve trigger)
         5. human_review -> work_state (via request_revision trigger)
+        6. work_state -> work_state (via request_revision trigger)
         """
         if revision_destination_state is None:
             revision_destination_state = source_state
@@ -75,6 +76,12 @@ class WorkflowStateMachineBuilder:
             {
                 "trigger": Triggers.REQUEST_REVISION,
                 "source": human_review_state,
+                "dest": revision_destination_state,
+            },
+            # Working state requests revision (iterative refinement)
+            {
+                "trigger": Triggers.REQUEST_REVISION,
+                "source": source_state,
                 "dest": revision_destination_state,
             },
         ]
