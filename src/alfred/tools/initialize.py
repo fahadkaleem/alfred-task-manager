@@ -54,7 +54,7 @@ def initialize_project(provider: str | None = None, test_dir: Path | None = None
 
 def _is_already_initialized(alfred_dir: Path) -> bool:
     """Check if project is already initialized."""
-    return alfred_dir.exists() and (alfred_dir / "workflow.yml").exists()
+    return alfred_dir.exists() and (alfred_dir / "config.yml").exists()
 
 
 def _create_already_initialized_response(alfred_dir: Path) -> ToolResponse:
@@ -108,11 +108,8 @@ def _perform_initialization(provider_choice: str, alfred_dir: Path) -> ToolRespo
     # Create directories
     _create_project_directories(alfred_dir)
 
-    # Copy default workflow file
-    _copy_workflow_file(alfred_dir)
-
-    # Copy default templates to user workspace
-    _copy_default_templates(alfred_dir)
+    # Copy default config file
+    _copy_config_file(alfred_dir)
 
     # Setup provider-specific configuration
     result = _setup_provider_configuration(provider_choice, alfred_dir)
@@ -134,21 +131,11 @@ def _create_project_directories(alfred_dir: Path) -> None:
     logger.info(f"Created project directories at {alfred_dir}")
 
 
-def _copy_workflow_file(alfred_dir: Path) -> None:
-    """Copy the default workflow file."""
-    workflow_file = alfred_dir / settings.workflow_filename
-    shutil.copyfile(settings.packaged_workflow_file, workflow_file)
-    logger.info(f"Copied workflow file to {workflow_file}")
-
-
-def _copy_default_templates(alfred_dir: Path) -> None:
-    """Copy default templates to user workspace for customization."""
-    try:
-        shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates", dirs_exist_ok=True)
-        logger.info(f"Copied templates to {alfred_dir / 'templates'}")
-    except (OSError, shutil.Error) as e:
-        msg = f"Failed to copy templates: {e}"
-        raise OSError(msg) from e
+def _copy_config_file(alfred_dir: Path) -> None:
+    """Copy the default config file."""
+    config_file = alfred_dir / settings.config_filename
+    shutil.copyfile(settings.packaged_config_file, config_file)
+    logger.info(f"Copied config file to {config_file}")
 
 
 def _setup_provider_configuration(provider_choice: str, alfred_dir: Path) -> dict:
@@ -169,7 +156,7 @@ def _setup_jira_provider(config_manager: ConfigManager, alfred_dir: Path) -> dic
     """Setup Jira provider with MCP connectivity check."""
     if _validate_mcp_connectivity("jira"):
         config = config_manager.create_default()
-        config.providers.task_provider = TaskProvider.JIRA
+        config.provider.type = TaskProvider.JIRA
         config_manager.save(config)
         _setup_provider_resources("jira", alfred_dir)
         logger.info("Configured Jira provider")
@@ -184,7 +171,7 @@ def _setup_linear_provider(config_manager: ConfigManager, alfred_dir: Path) -> d
     """Setup Linear provider with MCP connectivity check."""
     if _validate_mcp_connectivity("linear"):
         config = config_manager.create_default()
-        config.providers.task_provider = TaskProvider.LINEAR
+        config.provider.type = TaskProvider.LINEAR
         config_manager.save(config)
         _setup_provider_resources("linear", alfred_dir)
         logger.info("Configured Linear provider")
@@ -199,7 +186,7 @@ def _setup_local_provider(config_manager: ConfigManager, alfred_dir: Path) -> di
     """Setup local provider with tasks inbox and README."""
     # Create configuration
     config = config_manager.create_default()
-    config.providers.task_provider = TaskProvider.LOCAL
+    config.provider.type = TaskProvider.LOCAL
     config_manager.save(config)
 
     # Setup provider resources

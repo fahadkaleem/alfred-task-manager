@@ -52,19 +52,12 @@ class PromptLibrary:
         """Initialize the prompt library.
 
         Args:
-            prompts_dir: Directory containing prompts. Defaults to checking
-                        user customization first, then packaged prompts.
+            prompts_dir: Directory containing prompts. Defaults to packaged prompts.
         """
         if prompts_dir is None:
-            # Check for user customization first
-            user_prompts = settings.alfred_dir / "templates" / "prompts"
-            if user_prompts.exists():
-                prompts_dir = user_prompts
-                logger.info(f"Using user prompt templates from {user_prompts}")
-            else:
-                # Fall back to packaged prompts
-                prompts_dir = Path(__file__).parent.parent / "templates" / "prompts"
-                logger.info(f"Using default prompt templates from {prompts_dir}")
+            # Always use packaged prompts
+            prompts_dir = Path(__file__).parent.parent / "templates" / "prompts"
+            logger.info(f"Using packaged prompt templates from {prompts_dir}")
 
         self.prompts_dir = prompts_dir
         self._cache: Dict[str, PromptTemplate] = {}

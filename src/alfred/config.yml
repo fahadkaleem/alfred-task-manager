@@ -1,9 +1,13 @@
-# Default Alfred Workflow Configuration
-# This file can be customized per project by editing .alfred/workflow.yml
+version: "2.0.0"
 
-# Tool enable/disable settings
+provider:
+  type: "local"
+
+features:
+  scaffolding_mode: false
+  autonomous_mode: false
+
 tools:
-  # Core workflow tools
   create_spec:
     enabled: true
     description: "Create technical specification from PRD"
@@ -32,42 +36,24 @@ tools:
     enabled: true
     description: "Create commit and pull request"
 
-# Workflow configuration
 workflow:
-  # Whether to require human approval at review gates
   require_human_approval: true
-  
-  # Whether to enable AI self-review steps
   enable_ai_review: true
-  
-  # Maximum thinking time for AI in seconds
   max_thinking_time: 300
-  
-  # Whether to create branches automatically
   auto_create_branches: true
 
-# Provider-specific settings (overridden by .alfred/config.json)
 providers:
   jira:
-    # Jira-specific workflow settings
     transition_on_start: true
     transition_on_complete: true
     
   linear:
-    # Linear-specific workflow settings
     update_status: true
     
   local:
-    # Local provider settings
     task_file_pattern: "*.md"
 
-# Debug settings
 debug:
-  # Whether to save detailed debug logs
   save_debug_logs: true
-  
-  # Whether to save state snapshots
   save_state_snapshots: true
-  
-  # Log level (DEBUG, INFO, WARNING, ERROR)
   log_level: INFO

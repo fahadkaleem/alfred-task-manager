@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # Directory configuration
     alfred_dir_name: str = Paths.ALFRED_DIR
-    workflow_filename: str = Paths.WORKFLOW_FILE
+    config_filename: str = Paths.CONFIG_FILE
 
     # Base paths
     project_root: Path = Path.cwd()
@@ -33,14 +33,14 @@ class Settings(BaseSettings):
         return self.project_root / self.alfred_dir_name
 
     @property
-    def workflow_file(self) -> Path:
-        """Get the project's workflow.yml file path."""
-        return self.alfred_dir / self.workflow_filename
+    def config_file(self) -> Path:
+        """Get the project's config.yml file path."""
+        return self.alfred_dir / self.config_filename
 
     @property
-    def packaged_workflow_file(self) -> Path:
-        """Get the path to the default workflow file inside the package."""
-        return Path(__file__).parent.parent / Paths.WORKFLOW_FILE
+    def packaged_config_file(self) -> Path:
+        """Get the path to the default config file inside the package."""
+        return Path(__file__).parent.parent / Paths.CONFIG_FILE
 
     @property
     def packaged_templates_dir(self) -> Path:

@@ -1,7 +1,7 @@
 """Configuration manager for Alfred."""
 
-import json
 import logging
+import yaml
 from pathlib import Path
 
 from src.alfred.models.alfred_config import AlfredConfig
@@ -12,7 +12,7 @@ logger = logging.getLogger("alfred.config.manager")
 class ConfigManager:
     """Manages Alfred configuration."""
 
-    CONFIG_FILENAME = "config.json"
+    CONFIG_FILENAME = "config.yml"
 
     def __init__(self, config_dir: Path):
         """Initialize the config manager.
@@ -38,7 +38,7 @@ class ConfigManager:
 
         try:
             with open(self.config_path) as f:
-                data = json.load(f)
+                data = yaml.safe_load(f)
 
             self._config = AlfredConfig(**data)
             logger.info(f"Loaded configuration from {self.config_path}")
@@ -57,7 +57,7 @@ class ConfigManager:
             self.config_dir.mkdir(parents=True, exist_ok=True)
 
             with open(self.config_path, "w") as f:
-                json.dump(config.model_dump(), f, indent=2)
+                yaml.dump(config.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False)
 
             self._config = config
             logger.info(f"Saved configuration to {self.config_path}")

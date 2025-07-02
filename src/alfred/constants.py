@@ -44,7 +44,7 @@ class Paths:
     SCRATCHPAD_FILE: Final[str] = "scratchpad.md"
     EXECUTION_PLAN_FILE: Final[str] = "execution_plan.json"
     TOOL_STATE_FILE: Final[str] = "tool_state.json"
-    WORKFLOW_FILE: Final[str] = "workflow.yml"
+    CONFIG_FILE: Final[str] = "config.yml"
     STATE_FILE: Final[str] = "state.json"
     TASK_FILE: Final[str] = "task.json"
 

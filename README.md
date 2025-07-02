@@ -166,9 +166,8 @@ alfred-task-manager/
 │   ├── scratchpad.md            # Working notes
 │   └── archive/                  # Completed artifacts
 ├── debug/{task_id}/              # Debug logs and traces
-│   ├── alfred.log               # Tool execution logs
-│   └── transactions.jsonl       # Transaction history
-└── templates/                    # Copied templates for customization
+    ├── alfred.log               # Tool execution logs
+    └── transactions.jsonl       # Transaction history
 ```
 
 ## LOST Framework
