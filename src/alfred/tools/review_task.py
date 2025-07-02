@@ -1,13 +1,11 @@
-# src/alfred/tools/review_task.py
-"""Review task using generic handler."""
+"""Review task implementation."""
 
 from src.alfred.models.schemas import ToolResponse
-from src.alfred.tools.generic_handler import GenericWorkflowHandler
-from src.alfred.tools.workflow_config import WORKFLOW_TOOL_CONFIGS
+from src.alfred.tools.tool_factory import get_tool_handler
 from src.alfred.constants import ToolName
 
-# Create the handler instance
-review_task_handler = GenericWorkflowHandler(WORKFLOW_TOOL_CONFIGS[ToolName.REVIEW_TASK])
+# Get the handler from factory
+review_task_handler = get_tool_handler(ToolName.REVIEW_TASK)
 
 
 async def review_task_impl(task_id: str) -> ToolResponse:

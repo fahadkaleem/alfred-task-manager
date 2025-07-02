@@ -98,7 +98,7 @@ class LocalTaskProvider(BaseTaskProvider):
                 template_content = template_path.read_text()
                 # Replace the sample task ID with the requested one
                 template_content = template_content.replace("SAMPLE-001", task_id)
-            
+
             error_msg = f"Task '{task_id}' doesn't exist.\n\n"
             error_msg += f"To create it, save this content as:\n{task_md_path}\n\n"
             error_msg += f"--- TEMPLATE ---\n{template_content}\n--- END TEMPLATE ---"
@@ -118,7 +118,7 @@ class LocalTaskProvider(BaseTaskProvider):
                     template_content = template_path.read_text()
                     # Replace the sample task ID with the requested one
                     template_content = template_content.replace("SAMPLE-001", task_id)
-                
+
                 detailed_error = f"Task file has invalid format: {error_msg}\n\n"
                 detailed_error += f"File location: {task_md_path}\n\n"
                 detailed_error += f"Expected format:\n"

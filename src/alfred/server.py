@@ -23,22 +23,36 @@ from src.alfred.tools.registry import tool_registry
 from src.alfred.tools.create_spec import create_spec_impl
 from alfred.tools.create_tasks_from_spec import create_tasks_from_spec_impl
 from src.alfred.tools.create_task import create_task_impl
-from src.alfred.tools.finalize_task import finalize_task_impl, finalize_task_handler
+from src.alfred.tools.finalize_task import finalize_task_impl
 from src.alfred.tools.get_next_task import get_next_task_impl
-from src.alfred.tools.implement_task import implement_task_impl, implement_task_handler
+from src.alfred.tools.implement_task import implement_task_impl
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
-from src.alfred.tools.plan_task import plan_task_impl, plan_task_handler
+from src.alfred.tools.plan_task import plan_task_impl
+from src.alfred.tools.review_task import review_task_impl
+from src.alfred.tools.test_task import test_task_impl
 from src.alfred.core.workflow import PlanTaskTool, ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
 from src.alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
 from src.alfred.tools.approve_review import approve_review_impl
 from src.alfred.tools.request_revision import request_revision_impl
-from src.alfred.tools.review_task import review_task_handler
 from src.alfred.tools.submit_work import submit_work_handler
-from src.alfred.tools.test_task import test_task_handler
 from src.alfred.tools.work_on import work_on_impl
-from src.alfred.tools.workflow_config import WORKFLOW_TOOL_CONFIGS
+from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS, get_tool_definition
+from src.alfred.tools.tool_factory import get_tool_handler
 
 logger = get_logger(__name__)
+
+
+# Create a helper function to register tools
+def register_tool_from_definition(app: FastMCP, tool_name: str):
+    """Register a tool using its definition."""
+    definition = get_tool_definition(tool_name)
+    handler = get_tool_handler(tool_name)
+
+    @tool_registry.register(name=tool_name, handler_class=lambda: handler, tool_class=definition.tool_class, entry_status_map=definition.get_entry_status_map())
+    def tool_impl(**kwargs):
+        return handler.execute(**kwargs)
+
+    return tool_impl
 
 
 @asynccontextmanager
@@ -252,7 +266,7 @@ async def create_task(task_content: str) -> ToolResponse:
     against the required template format and saves it to the .alfred/tasks directory.
 
     The tool validates and requires:
-    - **First line format**: Must be '# TASK: <task_id>' 
+    - **First line format**: Must be '# TASK: <task_id>'
     - **Required sections**: Title, Context, Implementation Details, Acceptance Criteria
     - **Section headers**: All sections must use '##' markdown headers
     - **Non-empty content**: Task content cannot be empty
@@ -337,9 +351,7 @@ async def create_task(task_content: str) -> ToolResponse:
     pass  # Implementation handled by decorator
 
 
-# THIS IS THE FIX for Blocker #2
 @app.tool()
-@tool_registry.register(name=ToolName.PLAN_TASK, handler_class=lambda: plan_task_handler, tool_class=PlanTaskTool, entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.PLAN_TASK].entry_status_map)
 async def plan_task(task_id: str) -> ToolResponse:
     """
     Initiates the detailed technical planning for a specific task.
@@ -372,7 +384,12 @@ async def plan_task(task_id: str) -> ToolResponse:
         - Planning tool instance registered and active
         - First planning prompt returned for contextualization phase
     """
-    return await plan_task_impl(task_id)
+    handler = get_tool_handler(ToolName.PLAN_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.PLAN_TASK)
 
 
 @app.tool()
@@ -568,12 +585,6 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
 
 
 @app.tool()
-@tool_registry.register(
-    name=ToolName.IMPLEMENT_TASK,
-    handler_class=lambda: implement_task_handler,
-    tool_class=ImplementTaskTool,
-    entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.IMPLEMENT_TASK].entry_status_map,
-)
 async def implement_task(task_id: str) -> ToolResponse:
     """
     Executes the implementation phase for a task that has completed planning.
@@ -600,16 +611,15 @@ async def implement_task(task_id: str) -> ToolResponse:
     Example:
         implement_task("TS-01") -> Starts implementation of planned task
     """
-    return await implement_task_handler.execute(task_id)
+    handler = get_tool_handler(ToolName.IMPLEMENT_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.IMPLEMENT_TASK)
 
 
 @app.tool()
-@tool_registry.register(
-    name=ToolName.REVIEW_TASK,
-    handler_class=lambda: review_task_handler,
-    tool_class=ReviewTaskTool,
-    entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.REVIEW_TASK].entry_status_map,
-)
 async def review_task(task_id: str) -> ToolResponse:
     """
     Initiates the code review phase for a task that has completed implementation.
@@ -660,16 +670,15 @@ async def review_task(task_id: str) -> ToolResponse:
         - Implementation must be complete
         - All subtasks should be marked complete
     """
-    return await review_task_handler.execute(task_id)
+    handler = get_tool_handler(ToolName.REVIEW_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.REVIEW_TASK)
 
 
 @app.tool()
-@tool_registry.register(
-    name=ToolName.TEST_TASK,
-    handler_class=lambda: test_task_handler,
-    tool_class=TestTaskTool,
-    entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.TEST_TASK].entry_status_map,
-)
 async def test_task(task_id: str) -> ToolResponse:
     """
     Initiates the testing phase for a task that has passed code review.
@@ -730,17 +739,15 @@ async def test_task(task_id: str) -> ToolResponse:
         - Code review must be complete and approved
         - Implementation should be stable
     """
-    return await test_task_handler.execute(task_id)
+    handler = get_tool_handler(ToolName.TEST_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.TEST_TASK)
 
 
 @app.tool()
-@tool_registry.register(
-    name=ToolName.FINALIZE_TASK,
-    handler_class=lambda: finalize_task_handler,
-    tool_class=FinalizeTaskTool,
-    entry_status_map=WORKFLOW_TOOL_CONFIGS[ToolName.FINALIZE_TASK].entry_status_map,
-)
-@log_tool_transaction(finalize_task_impl)
 async def finalize_task(task_id: str) -> ToolResponse:
     """
     Completes the task by creating a commit and pull request.
@@ -809,7 +816,12 @@ async def finalize_task(task_id: str) -> ToolResponse:
     Note: This tool does NOT push to remote or merge the PR.
     Manual review and merge is required per team process.
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.FINALIZE_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.FINALIZE_TASK)
 
 
 @app.tool()

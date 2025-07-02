@@ -89,7 +89,6 @@ class BaseWorkflowTool:
     def is_terminal(self) -> bool:
         return self.state == "verified"
 
-
     def get_review_states_for_state(self, state: str) -> List[str]:
         """Get the review states for a given work state."""
         # Delegate to builder
@@ -116,23 +115,12 @@ class PlanTaskTool(BaseWorkflowTool):
 
         # Use the builder to create the state machine configuration
         machine_config = workflow_builder.build_workflow_with_reviews(
-            work_states=[
-                PlanTaskState.CONTEXTUALIZE,
-                PlanTaskState.STRATEGIZE,
-                PlanTaskState.DESIGN,
-                PlanTaskState.GENERATE_SUBTASKS
-            ],
+            work_states=[PlanTaskState.CONTEXTUALIZE, PlanTaskState.STRATEGIZE, PlanTaskState.DESIGN, PlanTaskState.GENERATE_SUBTASKS],
             terminal_state=PlanTaskState.VERIFIED,
-            initial_state=PlanTaskState.CONTEXTUALIZE
+            initial_state=PlanTaskState.CONTEXTUALIZE,
         )
 
-        self.machine = Machine(
-            model=self,
-            states=machine_config["states"],
-            transitions=machine_config["transitions"],
-            initial=machine_config["initial"],
-            auto_transitions=False
-        )
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return PlanTaskState.GENERATE_SUBTASKS.value
@@ -150,21 +138,10 @@ class StartTaskTool(BaseWorkflowTool):
 
         # Use builder for the two-step workflow
         machine_config = workflow_builder.build_workflow_with_reviews(
-            work_states=[
-                StartTaskState.AWAITING_GIT_STATUS,
-                StartTaskState.AWAITING_BRANCH_CREATION
-            ],
-            terminal_state=StartTaskState.VERIFIED,
-            initial_state=StartTaskState.AWAITING_GIT_STATUS
+            work_states=[StartTaskState.AWAITING_GIT_STATUS, StartTaskState.AWAITING_BRANCH_CREATION], terminal_state=StartTaskState.VERIFIED, initial_state=StartTaskState.AWAITING_GIT_STATUS
         )
 
-        self.machine = Machine(
-            model=self,
-            states=machine_config["states"],
-            transitions=machine_config["transitions"],
-            initial=machine_config["initial"],
-            auto_transitions=False
-        )
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return StartTaskState.AWAITING_BRANCH_CREATION.value
@@ -178,19 +155,9 @@ class ImplementTaskTool(BaseWorkflowTool):
         }
 
         # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(
-            dispatch_state=ImplementTaskState.DISPATCHING,
-            work_state=ImplementTaskState.IMPLEMENTING,
-            terminal_state=ImplementTaskState.VERIFIED
-        )
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=ImplementTaskState.DISPATCHING, work_state=ImplementTaskState.IMPLEMENTING, terminal_state=ImplementTaskState.VERIFIED)
 
-        self.machine = Machine(
-            model=self,
-            states=machine_config["states"],
-            transitions=machine_config["transitions"],
-            initial=machine_config["initial"],
-            auto_transitions=False
-        )
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return ImplementTaskState.IMPLEMENTING.value
@@ -204,19 +171,9 @@ class ReviewTaskTool(BaseWorkflowTool):
         }
 
         # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(
-            dispatch_state=ReviewTaskState.DISPATCHING,
-            work_state=ReviewTaskState.REVIEWING,
-            terminal_state=ReviewTaskState.VERIFIED
-        )
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=ReviewTaskState.DISPATCHING, work_state=ReviewTaskState.REVIEWING, terminal_state=ReviewTaskState.VERIFIED)
 
-        self.machine = Machine(
-            model=self,
-            states=machine_config["states"],
-            transitions=machine_config["transitions"],
-            initial=machine_config["initial"],
-            auto_transitions=False
-        )
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return ReviewTaskState.REVIEWING.value
@@ -230,19 +187,9 @@ class TestTaskTool(BaseWorkflowTool):
         }
 
         # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(
-            dispatch_state=TestTaskState.DISPATCHING,
-            work_state=TestTaskState.TESTING,
-            terminal_state=TestTaskState.VERIFIED
-        )
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=TestTaskState.DISPATCHING, work_state=TestTaskState.TESTING, terminal_state=TestTaskState.VERIFIED)
 
-        self.machine = Machine(
-            model=self,
-            states=machine_config["states"],
-            transitions=machine_config["transitions"],
-            initial=machine_config["initial"],
-            auto_transitions=False
-        )
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return TestTaskState.TESTING.value
@@ -256,19 +203,9 @@ class FinalizeTaskTool(BaseWorkflowTool):
         }
 
         # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(
-            dispatch_state=FinalizeTaskState.DISPATCHING,
-            work_state=FinalizeTaskState.FINALIZING,
-            terminal_state=FinalizeTaskState.VERIFIED
-        )
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=FinalizeTaskState.DISPATCHING, work_state=FinalizeTaskState.FINALIZING, terminal_state=FinalizeTaskState.VERIFIED)
 
-        self.machine = Machine(
-            model=self,
-            states=machine_config["states"],
-            transitions=machine_config["transitions"],
-            initial=machine_config["initial"],
-            auto_transitions=False
-        )
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return FinalizeTaskState.FINALIZING.value
@@ -282,19 +219,9 @@ class CreateSpecTool(BaseWorkflowTool):
         }
 
         # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(
-            dispatch_state=CreateSpecState.DISPATCHING,
-            work_state=CreateSpecState.DRAFTING_SPEC,
-            terminal_state=CreateSpecState.VERIFIED
-        )
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=CreateSpecState.DISPATCHING, work_state=CreateSpecState.DRAFTING_SPEC, terminal_state=CreateSpecState.VERIFIED)
 
-        self.machine = Machine(
-            model=self,
-            states=machine_config["states"],
-            transitions=machine_config["transitions"],
-            initial=machine_config["initial"],
-            auto_transitions=False
-        )
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return CreateSpecState.DRAFTING_SPEC.value
@@ -308,19 +235,9 @@ class CreateTasksTool(BaseWorkflowTool):
         }
 
         # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(
-            dispatch_state=CreateTasksState.DISPATCHING,
-            work_state=CreateTasksState.DRAFTING_TASKS,
-            terminal_state=CreateTasksState.VERIFIED
-        )
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=CreateTasksState.DISPATCHING, work_state=CreateTasksState.DRAFTING_TASKS, terminal_state=CreateTasksState.VERIFIED)
 
-        self.machine = Machine(
-            model=self,
-            states=machine_config["states"],
-            transitions=machine_config["transitions"],
-            initial=machine_config["initial"],
-            auto_transitions=False
-        )
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return CreateTasksState.DRAFTING_TASKS.value

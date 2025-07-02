@@ -226,7 +226,8 @@ class ToolName:
     """Tool name constants."""
 
     CREATE_SPEC: Final[str] = "create_spec"
-    CREATE_TASKS: Final[str] = "create_tasks"
+    CREATE_TASKS_FROM_SPEC: Final[str] = "create_tasks_from_spec"
+    CREATE_TASKS: Final[str] = "create_tasks_from_spec"  # Alias for backward compatibility
     START_TASK: Final[str] = "start_task"
     PLAN_TASK: Final[str] = "plan_task"
     IMPLEMENT_TASK: Final[str] = "implement_task"
@@ -236,6 +237,7 @@ class ToolName:
     WORK_ON: Final[str] = "work_on"
     APPROVE_AND_ADVANCE: Final[str] = "approve_and_advance"
     MARK_SUBTASK_COMPLETE: Final[str] = "mark_subtask_complete"
+    CREATE_TASK: Final[str] = "create_task"
 
 
 # Directory and File Names
@@ -423,18 +425,172 @@ from .prompter import prompt_library, generate_prompt
 __all__ = ["BaseWorkflowTool", "PlanTaskTool", "PlanTaskState", "prompt_library", "generate_prompt"]
 
 ``````
+------ src/alfred/core/prompt_templates.py ------
+``````
+"""
+Concrete prompt template implementations.
+
+Each template is a data structure - no logic, just content definition.
+"""
+
+from typing import List
+from src.alfred.core.template_base import WorkflowPromptTemplate, WorkflowWithTaskDetailsTemplate, SubmitWorkPromptTemplate, ReviewPromptTemplate
+
+
+# Plan Task Templates
+
+
+class PlanTaskContextualizeTemplate(SubmitWorkPromptTemplate):
+    """Template for plan_task.contextualize state."""
+
+    def _get_objective_content(self) -> str:
+        return "Analyze the existing codebase and identify any ambiguities or questions that need clarification before planning can begin."
+
+    def _get_instructions_content(self) -> str:
+        return """1. Analyze the codebase starting from the project root
+2. Identify all files and components relevant to this task
+3. Note any existing patterns or conventions that should be followed
+4. Create a list of specific questions about any ambiguities or unclear requirements
+5. Prepare a comprehensive context analysis"""
+
+    def _get_constraints_content(self) -> str:
+        return """- Focus only on understanding, not designing solutions yet
+- Questions should be specific and actionable
+- Identify actual ambiguities, not hypothetical issues
+- Consider both technical and business context"""
+
+    def _get_examples_content(self) -> str:
+        return """Good question: "Should the new authentication system integrate with the existing UserService or create a separate AuthService?"
+Bad question: "How should I implement this?" (too vague)"""
+
+    def get_required_variables(self) -> List[str]:
+        base_vars = super().get_required_variables()
+        # Remove generic artifact vars, add specific ones
+        filtered_vars = [v for v in base_vars if v not in ["artifact_type", "artifact_fields"]]
+        return filtered_vars
+
+
+class PlanTaskStrategizeTemplate(SubmitWorkPromptTemplate):
+    """Template for plan_task.strategize state."""
+
+    def _get_objective_content(self) -> str:
+        return "Create a high-level technical strategy that will guide the detailed design and implementation of the task."
+
+    def _get_background_content(self) -> str:
+        base = super()._get_background_content()
+        return f"""Context has been verified and any necessary clarifications have been provided. You must now develop a technical strategy that:
+- Defines the overall approach to solving the problem
+- Identifies key components that need to be created or modified
+- Considers dependencies and potential risks
+- Serves as the foundation for detailed design
+
+{base}"""
+
+    def _get_instructions_content(self) -> str:
+        return """1. Review the verified context and requirements
+2. Define the overall technical approach (e.g., "Create a new microservice," "Refactor the existing UserService," "Add a new middleware layer")
+3. List the major components, classes, or modules that will be created or modified
+4. Identify any new third-party libraries or dependencies required
+5. Analyze potential risks or important architectural trade-offs
+6. Create a concise technical strategy document"""
+
+    def _get_constraints_content(self) -> str:
+        return """- Focus on high-level approach, not implementation details
+- Ensure the strategy aligns with existing architecture patterns
+- Consider scalability, maintainability, and performance
+- Be realistic about risks and trade-offs"""
+
+
+# Review Templates
+
+
+class AIReviewTemplate(ReviewPromptTemplate):
+    """Template for AI review states."""
+
+    def _get_instructions_content(self) -> str:
+        return """1. Review the submitted artifact below
+2. Check against the original requirements for this step
+3. Evaluate completeness, clarity, and correctness
+4. Determine if any critical issues need to be addressed
+5. Provide your review decision
+
+**Submitted Artifact:**
+```json
+${artifact_json}
+```"""
+
+    def get_required_variables(self) -> List[str]:
+        base_vars = super().get_required_variables()
+        return base_vars + ["artifact_json"]
+
+
+class HumanReviewTemplate(ReviewPromptTemplate):
+    """Template for human review states."""
+
+    def _get_background_content(self) -> str:
+        return """The artifact has passed AI self-review and is now ready for human validation. The human will provide a simple approval decision or request specific changes.
+
+**Artifact Summary:** ${artifact_summary}"""
+
+    def _get_instructions_content(self) -> str:
+        return """1. Present the complete artifact below to the human developer
+2. Wait for their review decision
+3. If they approve, proceed with approval
+4. If they request changes, capture their exact feedback
+5. Submit the review decision
+
+**Artifact for Review:**
+```json
+${artifact_json}
+```"""
+
+    def _get_constraints_content(self) -> str:
+        return """- Present the artifact clearly and completely
+- Capture human feedback verbatim if changes are requested
+- Do not modify or interpret the human's feedback"""
+
+    def get_required_variables(self) -> List[str]:
+        base_vars = super().get_required_variables()
+        return base_vars + ["artifact_json", "artifact_summary"]
+
+
+# Dispatching Templates
+
+
+class SimpleDispatchingTemplate(WorkflowPromptTemplate):
+    """Template for simple dispatching states."""
+
+    def _get_objective_content(self) -> str:
+        return "${dispatch_objective}"
+
+    def _get_background_content(self) -> str:
+        return "${dispatch_context}"
+
+    def _get_instructions_content(self) -> str:
+        return "${dispatch_instructions}"
+
+    def _get_output_content(self) -> str:
+        return """Once ${dispatch_action}, call `alfred.submit_work` with ${artifact_type} containing:
+${artifact_requirements}"""
+
+    def get_required_variables(self) -> List[str]:
+        base_vars = super().get_required_variables()
+        return base_vars + ["dispatch_objective", "dispatch_context", "dispatch_instructions", "dispatch_action", "artifact_type", "artifact_requirements"]
+
+``````
 ------ src/alfred/core/prompter.py ------
 ``````
 # src/alfred/core/prompter_new.py
 import json
 from pathlib import Path
 from string import Template
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, Union
 from dataclasses import dataclass
 from enum import Enum
 
 from src.alfred.config.settings import settings
 from src.alfred.lib.logger import get_logger
+from src.alfred.core.template_registry import template_registry
 
 logger = get_logger(__name__)
 
@@ -521,23 +677,28 @@ class PromptLibrary:
         parts = list(relative.parts[:-1]) + [relative.stem]
         return ".".join(parts)
 
-    def get(self, prompt_key: str) -> PromptTemplate:
-        """Get a prompt template by key.
-
-        Args:
-            prompt_key: Dot-separated path (e.g., "plan_task.contextualize")
-
-        Returns:
-            PromptTemplate instance
-
-        Raises:
-            KeyError: If prompt not found
+    def get(self, prompt_key: str, context: Dict[str, Any] = None) -> Union[PromptTemplate, str]:
         """
-        if prompt_key not in self._cache:
-            available = ", ".join(sorted(self._cache.keys()))
-            raise KeyError(f"Prompt '{prompt_key}' not found.\nAvailable prompts: {available}")
+        Get a prompt template by key.
 
-        return self._cache[prompt_key]
+        First checks for file-based template, then falls back to template class.
+        """
+        # Check file-based cache first
+        if prompt_key in self._cache:
+            return self._cache[prompt_key]
+
+        # Check if we have a template class
+        if context and "." in prompt_key:
+            tool_name, state = prompt_key.rsplit(".", 1)
+            template_class = template_registry.get_template(tool_name, state)
+            if template_class:
+                # Render directly from template class
+                template_instance = template_class()
+                return template_instance.render(context)
+
+        # Fallback to not found
+        available = ", ".join(sorted(self._cache.keys()))
+        raise KeyError(f"Prompt '{prompt_key}' not found in files or template registry.\nAvailable file prompts: {available}")
 
     def get_prompt_key(self, tool_name: str, state: str) -> str:
         """Map tool and state to the correct prompt key."""
@@ -562,18 +723,14 @@ class PromptLibrary:
         return "errors.not_found"
 
     def render(self, prompt_key: str, context: Dict[str, Any], strict: bool = True) -> str:
-        """Render a prompt with context.
+        """Render a prompt with context."""
+        template = self.get(prompt_key, context)
 
-        Args:
-            prompt_key: The prompt to render
-            context: Variables to substitute
-            strict: If True, fail on missing variables
+        # If we got a string back, it's already rendered
+        if isinstance(template, str):
+            return template
 
-        Returns:
-            Rendered prompt string
-        """
-        template = self.get(prompt_key)
-
+        # Otherwise it's a file-based PromptTemplate
         if not strict:
             # Add empty strings for missing vars
             for var in template._required_vars:
@@ -716,6 +873,400 @@ def generate_prompt(task_id: str, tool_name: str, state: str, task: Any, additio
         return f"# {tool_name} - {state_value}\n\nNo prompt configured for this state.\nTask: {task_id}"
 
 ``````
+------ src/alfred/core/state_machine_builder.py ------
+``````
+"""
+Centralized state machine builder for workflow tools.
+Eliminates duplication of state machine creation logic.
+"""
+
+from enum import Enum
+from typing import List, Dict, Any, Type, Optional, Union
+from transitions import Machine
+
+from src.alfred.constants import Triggers
+from src.alfred.lib.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class WorkflowStateMachineBuilder:
+    """
+    Builder for creating workflow state machines with standardized review cycles.
+
+    This builder encapsulates the common pattern used across all workflow tools:
+    1. Work states that require review
+    2. AI review state
+    3. Human review state
+    4. Transitions between states
+    """
+
+    def __init__(self):
+        self.states: List[str] = []
+        self.transitions: List[Dict[str, Any]] = []
+
+    def create_review_transitions(self, source_state: str, success_destination_state: str, revision_destination_state: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Creates a standard review cycle for a work state.
+
+        This generates:
+        1. work_state -> work_state_awaiting_ai_review (via submit trigger)
+        2. ai_review -> human_review (via ai_approve trigger)
+        3. ai_review -> work_state (via request_revision trigger)
+        4. human_review -> next_state (via human_approve trigger)
+        5. human_review -> work_state (via request_revision trigger)
+        """
+        if revision_destination_state is None:
+            revision_destination_state = source_state
+
+        # Generate state names
+        ai_review_state = f"{source_state}_awaiting_ai_review"
+        human_review_state = f"{source_state}_awaiting_human_review"
+
+        return [
+            # Submit work to enter review cycle
+            {
+                "trigger": Triggers.submit_trigger(source_state),
+                "source": source_state,
+                "dest": ai_review_state,
+            },
+            # AI approves
+            {
+                "trigger": Triggers.AI_APPROVE,
+                "source": ai_review_state,
+                "dest": human_review_state,
+            },
+            # AI requests revision
+            {
+                "trigger": Triggers.REQUEST_REVISION,
+                "source": ai_review_state,
+                "dest": revision_destination_state,
+            },
+            # Human approves
+            {
+                "trigger": Triggers.HUMAN_APPROVE,
+                "source": human_review_state,
+                "dest": success_destination_state,
+            },
+            # Human requests revision
+            {
+                "trigger": Triggers.REQUEST_REVISION,
+                "source": human_review_state,
+                "dest": revision_destination_state,
+            },
+        ]
+
+    def get_review_states_for_state(self, state: str) -> List[str]:
+        """Get the review states for a given work state."""
+        return [f"{state}_awaiting_ai_review", f"{state}_awaiting_human_review"]
+
+    def build_workflow_with_reviews(self, work_states: List[Union[str, Enum]], terminal_state: Union[str, Enum], initial_state: Union[str, Enum]) -> Dict[str, Any]:
+        """
+        Build a complete workflow with review cycles for each work state.
+
+        Args:
+            work_states: List of states that require review cycles
+            terminal_state: Final state of the workflow
+            initial_state: Starting state of the workflow
+
+        Returns:
+            Dictionary with 'states' and 'transitions' for Machine initialization
+        """
+        all_states = []
+        all_transitions = []
+
+        # Convert enums to strings if needed
+        work_state_values = [s.value if hasattr(s, "value") else s for s in work_states]
+        terminal_value = terminal_state.value if hasattr(terminal_state, "value") else terminal_state
+        initial_value = initial_state.value if hasattr(initial_state, "value") else initial_state
+
+        # Add all work states and their review states
+        for i, state in enumerate(work_state_values):
+            # Add the work state
+            all_states.append(state)
+
+            # Add review states
+            review_states = self.get_review_states_for_state(state)
+            all_states.extend(review_states)
+
+            # Determine next state
+            if i + 1 < len(work_state_values):
+                next_state = work_state_values[i + 1]
+            else:
+                next_state = terminal_value
+
+            # Create transitions for this state
+            transitions = self.create_review_transitions(source_state=state, success_destination_state=next_state)
+            all_transitions.extend(transitions)
+
+        # Add terminal state
+        all_states.append(terminal_value)
+
+        return {"states": all_states, "transitions": all_transitions, "initial": initial_value}
+
+    def build_simple_workflow(self, dispatch_state: Union[str, Enum], work_state: Union[str, Enum], terminal_state: Union[str, Enum], dispatch_trigger: str = "dispatch") -> Dict[str, Any]:
+        """
+        Build a simple workflow: dispatch -> work (with review) -> terminal.
+
+        This is the pattern used by implement, review, test, and finalize tools.
+        """
+        dispatch_value = dispatch_state.value if hasattr(dispatch_state, "value") else dispatch_state
+        work_value = work_state.value if hasattr(work_state, "value") else work_state
+        terminal_value = terminal_state.value if hasattr(terminal_state, "value") else terminal_state
+
+        states = [dispatch_value, work_value, f"{work_value}_awaiting_ai_review", f"{work_value}_awaiting_human_review", terminal_value]
+
+        transitions = [{"trigger": dispatch_trigger, "source": dispatch_value, "dest": work_value}]
+
+        # Add review transitions
+        transitions.extend(self.create_review_transitions(source_state=work_value, success_destination_state=terminal_value))
+
+        return {"states": states, "transitions": transitions, "initial": dispatch_value}
+
+
+# Singleton instance for convenience
+workflow_builder = WorkflowStateMachineBuilder()
+
+``````
+------ src/alfred/core/template_base.py ------
+``````
+"""
+Base template system for reducing prompt duplication.
+
+This system respects the template principles:
+- Templates are data, not code
+- Simple variable substitution only
+- No conditional logic in templates
+"""
+
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Dict, Any, Optional, List
+import re
+
+from src.alfred.lib.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class TemplateSection:
+    """Represents a single section of a template."""
+
+    def __init__(self, name: str, content: str = ""):
+        self.name = name
+        self.content = content
+
+    def render(self, context: Dict[str, Any]) -> str:
+        """Render this section with variable substitution."""
+        if not self.content:
+            return ""
+
+        # Simple variable substitution using regex
+        def replace_var(match):
+            var_name = match.group(1)
+            if var_name in context:
+                value = context[var_name]
+                return str(value) if value is not None else ""
+            return match.group(0)  # Return unchanged if var not found
+
+        rendered = re.sub(r"\$\{(\w+)\}", replace_var, self.content)
+        return f"# {self.name}\n{rendered}"
+
+
+class BasePromptTemplate(ABC):
+    """
+    Base class for all prompt templates.
+
+    This provides the standard structure while allowing customization
+    of individual sections. No logic in templates - only data.
+    """
+
+    # Standard sections in order
+    SECTION_NAMES = ["CONTEXT", "OBJECTIVE", "BACKGROUND", "INSTRUCTIONS", "CONSTRAINTS", "OUTPUT", "EXAMPLES"]
+
+    def __init__(self):
+        self.sections: Dict[str, TemplateSection] = {}
+        self._initialize_sections()
+
+    def _initialize_sections(self):
+        """Initialize all sections, subclasses override to provide content."""
+        for section_name in self.SECTION_NAMES:
+            method_name = f"_get_{section_name.lower()}_content"
+            if hasattr(self, method_name):
+                content = getattr(self, method_name)()
+            else:
+                content = ""
+            self.sections[section_name] = TemplateSection(section_name, content)
+
+    @abstractmethod
+    def get_required_variables(self) -> List[str]:
+        """Return list of required variables for this template."""
+        pass
+
+    def render(self, context: Dict[str, Any]) -> str:
+        """Render the complete template with the given context."""
+        # Validate required variables
+        required = set(self.get_required_variables())
+        provided = set(context.keys())
+        missing = required - provided
+
+        if missing:
+            raise ValueError(f"Missing required variables: {', '.join(sorted(missing))}\nRequired: {', '.join(sorted(required))}\nProvided: {', '.join(sorted(provided))}")
+
+        # Render each section
+        rendered_sections = []
+        for section_name in self.SECTION_NAMES:
+            if section_name in self.sections:
+                rendered = self.sections[section_name].render(context)
+                if rendered:  # Only include non-empty sections
+                    rendered_sections.append(rendered)
+
+        return "\n\n".join(rendered_sections)
+
+
+class WorkflowPromptTemplate(BasePromptTemplate):
+    """Base template for all workflow state prompts."""
+
+    def _get_context_content(self) -> str:
+        """Standard context section for workflow prompts."""
+        return """Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}"""
+
+    def get_required_variables(self) -> List[str]:
+        """Base required variables for workflow prompts."""
+        return ["task_id", "tool_name", "current_state", "task_title"]
+
+
+class WorkflowWithTaskDetailsTemplate(WorkflowPromptTemplate):
+    """Base template for workflow prompts that need task details."""
+
+    def _get_background_content(self) -> str:
+        """Standard background with task details."""
+        return """**Task Requirements:**
+- Goal: ${task_context}
+- Implementation Overview: ${implementation_details}
+- Acceptance Criteria:
+${acceptance_criteria}
+
+${feedback_section}"""
+
+    def get_required_variables(self) -> List[str]:
+        """Extended required variables including task details."""
+        base_vars = super().get_required_variables()
+        return base_vars + ["task_context", "implementation_details", "acceptance_criteria", "feedback_section"]
+
+
+class SubmitWorkPromptTemplate(WorkflowWithTaskDetailsTemplate):
+    """Base template for prompts that end with submit_work."""
+
+    def _get_output_content(self) -> str:
+        """Standard output section for submit_work prompts."""
+        return """Create a ${artifact_type} with:
+${artifact_fields}
+
+**Required Action:** Call `alfred.submit_work` with a `${artifact_type}`"""
+
+    def get_required_variables(self) -> List[str]:
+        """Add artifact-related variables."""
+        base_vars = super().get_required_variables()
+        return base_vars + ["artifact_type", "artifact_fields"]
+
+
+class ReviewPromptTemplate(BasePromptTemplate):
+    """Base template for review state prompts."""
+
+    def _get_context_content(self) -> str:
+        """Standard context for review prompts."""
+        return """Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}"""
+
+    def _get_objective_content(self) -> str:
+        """Standard objective for review prompts."""
+        return """${review_objective}"""
+
+    def _get_background_content(self) -> str:
+        """Standard background for review prompts."""
+        return """${review_background}"""
+
+    def _get_constraints_content(self) -> str:
+        """Standard constraints for review prompts."""
+        return """- ${review_constraints}"""
+
+    def _get_output_content(self) -> str:
+        """Standard output for review prompts."""
+        return """${review_action}
+
+**Required Action:** Call `alfred.provide_review` with your decision
+- For approval: `is_approved=true`
+- For revision: `is_approved=false` with detailed `feedback_notes`"""
+
+    def get_required_variables(self) -> List[str]:
+        return ["task_id", "tool_name", "current_state", "review_objective", "review_background", "review_constraints", "review_action"]
+
+``````
+------ src/alfred/core/template_registry.py ------
+``````
+"""
+Registry for mapping states to template classes.
+
+This maintains the explicit path principle - each state maps to one template.
+"""
+
+from typing import Dict, Type, Optional
+
+from src.alfred.core.template_base import BasePromptTemplate
+from src.alfred.core.prompt_templates import PlanTaskContextualizeTemplate, PlanTaskStrategizeTemplate, AIReviewTemplate, HumanReviewTemplate, SimpleDispatchingTemplate
+
+
+class TemplateRegistry:
+    """Maps tool.state combinations to template classes."""
+
+    def __init__(self):
+        self._templates: Dict[str, Type[BasePromptTemplate]] = {}
+        self._register_default_templates()
+
+    def _register_default_templates(self):
+        """Register all default templates."""
+        # Plan task templates
+        self.register("plan_task.contextualize", PlanTaskContextualizeTemplate)
+        self.register("plan_task.strategize", PlanTaskStrategizeTemplate)
+
+        # Generic review templates
+        self.register("review.ai_review", AIReviewTemplate)
+        self.register("review.human_review", HumanReviewTemplate)
+
+        # Add more registrations as we migrate templates
+
+    def register(self, key: str, template_class: Type[BasePromptTemplate]):
+        """Register a template class for a tool.state combination."""
+        self._templates[key] = template_class
+
+    def get_template(self, tool_name: str, state: str) -> Optional[Type[BasePromptTemplate]]:
+        """Get template class for the given tool and state."""
+        # Try exact match first
+        key = f"{tool_name}.{state}"
+        if key in self._templates:
+            return self._templates[key]
+
+        # Handle review states
+        if state.endswith("_awaiting_ai_review"):
+            return self._templates.get("review.ai_review")
+        elif state.endswith("_awaiting_human_review"):
+            return self._templates.get("review.human_review")
+
+        return None
+
+    def has_template_class(self, tool_name: str, state: str) -> bool:
+        """Check if a template class exists for this state."""
+        return self.get_template(tool_name, state) is not None
+
+
+template_registry = TemplateRegistry()
+
+``````
 ------ src/alfred/core/workflow.py ------
 ``````
 # src/alfred/core/workflow.py
@@ -726,6 +1277,7 @@ from pydantic import BaseModel
 from transitions.core import Machine
 
 from src.alfred.constants import ToolName, Triggers
+from src.alfred.core.state_machine_builder import workflow_builder
 from src.alfred.models.planning_artifacts import (
     BranchCreationArtifact,
     ContextAnalysisArtifact,
@@ -808,54 +1360,10 @@ class BaseWorkflowTool:
     def is_terminal(self) -> bool:
         return self.state == "verified"
 
-    def _create_review_transitions(self, source_state: str, success_destination_state: str, revision_destination_state: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Generates a unique, state-specific review cycle.
-        Example: For source_state 'strategize', it creates 'strategize_awaiting_ai_review'.
-        """
-        if revision_destination_state is None:
-            revision_destination_state = source_state
-
-        # Dynamic state name generation
-        ai_review_state = f"{source_state}_awaiting_ai_review"
-        human_review_state = f"{source_state}_awaiting_human_review"
-
-        return [
-            # Trigger to enter the review cycle for this specific state
-            {
-                "trigger": Triggers.submit_trigger(source_state),
-                "source": source_state,
-                "dest": ai_review_state,
-            },
-            # AI approves its own work
-            {
-                "trigger": Triggers.AI_APPROVE,
-                "source": ai_review_state,
-                "dest": human_review_state,
-            },
-            # AI requests revision (goes back to the start of this state's work)
-            {
-                "trigger": Triggers.REQUEST_REVISION,
-                "source": ai_review_state,
-                "dest": revision_destination_state,
-            },
-            # Human approves the work, advancing to the next major state
-            {
-                "trigger": Triggers.HUMAN_APPROVE,
-                "source": human_review_state,
-                "dest": success_destination_state,
-            },
-            # Human requests revision
-            {
-                "trigger": Triggers.REQUEST_REVISION,
-                "source": human_review_state,
-                "dest": revision_destination_state,
-            },
-        ]
-
     def get_review_states_for_state(self, state: str) -> List[str]:
         """Get the review states for a given work state."""
-        return [f"{state}_awaiting_ai_review", f"{state}_awaiting_human_review"]
+        # Delegate to builder
+        return workflow_builder.get_review_states_for_state(state)
 
     def get_final_work_state(self) -> str:
         """Get the final work state that produces the main artifact.
@@ -876,25 +1384,14 @@ class PlanTaskTool(BaseWorkflowTool):
             PlanTaskState.GENERATE_SUBTASKS: ExecutionPlanArtifact,
         }
 
-        # Define the base states
-        base_states = [state.value for state in PlanTaskState]
+        # Use the builder to create the state machine configuration
+        machine_config = workflow_builder.build_workflow_with_reviews(
+            work_states=[PlanTaskState.CONTEXTUALIZE, PlanTaskState.STRATEGIZE, PlanTaskState.DESIGN, PlanTaskState.GENERATE_SUBTASKS],
+            terminal_state=PlanTaskState.VERIFIED,
+            initial_state=PlanTaskState.CONTEXTUALIZE,
+        )
 
-        # Dynamically generate the unique review states for each step
-        review_states = []
-        for state in [PlanTaskState.CONTEXTUALIZE, PlanTaskState.STRATEGIZE, PlanTaskState.DESIGN, PlanTaskState.GENERATE_SUBTASKS]:
-            review_states.extend(self.get_review_states_for_state(state.value))
-
-        all_states = base_states + review_states
-
-        # Define the transitions using the new helper
-        transitions = [
-            *self._create_review_transitions(source_state=PlanTaskState.CONTEXTUALIZE.value, success_destination_state=PlanTaskState.STRATEGIZE.value),
-            *self._create_review_transitions(source_state=PlanTaskState.STRATEGIZE.value, success_destination_state=PlanTaskState.DESIGN.value),
-            *self._create_review_transitions(source_state=PlanTaskState.DESIGN.value, success_destination_state=PlanTaskState.GENERATE_SUBTASKS.value),
-            *self._create_review_transitions(source_state=PlanTaskState.GENERATE_SUBTASKS.value, success_destination_state=PlanTaskState.VERIFIED.value),
-        ]
-
-        self.machine = Machine(model=self, states=all_states, transitions=transitions, initial=PlanTaskState.CONTEXTUALIZE.value, auto_transitions=False)
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return PlanTaskState.GENERATE_SUBTASKS.value
@@ -910,23 +1407,12 @@ class StartTaskTool(BaseWorkflowTool):
             StartTaskState.AWAITING_BRANCH_CREATION: BranchCreationArtifact,
         }
 
-        # Define base states
-        base_states = [state.value for state in StartTaskState]
+        # Use builder for the two-step workflow
+        machine_config = workflow_builder.build_workflow_with_reviews(
+            work_states=[StartTaskState.AWAITING_GIT_STATUS, StartTaskState.AWAITING_BRANCH_CREATION], terminal_state=StartTaskState.VERIFIED, initial_state=StartTaskState.AWAITING_GIT_STATUS
+        )
 
-        # Generate review states
-        review_states = []
-        review_states.extend(self.get_review_states_for_state(StartTaskState.AWAITING_GIT_STATUS.value))
-        review_states.extend(self.get_review_states_for_state(StartTaskState.AWAITING_BRANCH_CREATION.value))
-
-        all_states = base_states + review_states
-
-        transitions = [
-            # 1. User submits Git Status. After review, success moves to AWAITING_BRANCH_CREATION.
-            *self._create_review_transitions(StartTaskState.AWAITING_GIT_STATUS.value, StartTaskState.AWAITING_BRANCH_CREATION.value),
-            # 2. User submits Branch Creation result. After review, success moves to VERIFIED (terminal).
-            *self._create_review_transitions(StartTaskState.AWAITING_BRANCH_CREATION.value, StartTaskState.VERIFIED.value),
-        ]
-        self.machine = Machine(model=self, states=all_states, transitions=transitions, initial=StartTaskState.AWAITING_GIT_STATUS.value, auto_transitions=False)
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return StartTaskState.AWAITING_BRANCH_CREATION.value
@@ -936,26 +1422,13 @@ class ImplementTaskTool(BaseWorkflowTool):
     def __init__(self, task_id: str):
         super().__init__(task_id, tool_name=ToolName.IMPLEMENT_TASK)
         self.artifact_map = {
-            # The ONLY artifact submitted is from the IMPLEMENTING state.
             ImplementTaskState.IMPLEMENTING: ImplementationManifestArtifact,
         }
 
-        source_state = ImplementTaskState.IMPLEMENTING.value
+        # Use builder for simple workflow
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=ImplementTaskState.DISPATCHING, work_state=ImplementTaskState.IMPLEMENTING, terminal_state=ImplementTaskState.VERIFIED)
 
-        # Dynamically generate the state names
-        states = [
-            ImplementTaskState.DISPATCHING.value,
-            source_state,
-            f"{source_state}_awaiting_ai_review",
-            f"{source_state}_awaiting_human_review",
-            ImplementTaskState.VERIFIED.value,
-        ]
-
-        transitions = [
-            {"trigger": "dispatch", "source": ImplementTaskState.DISPATCHING.value, "dest": source_state},
-            *self._create_review_transitions(source_state=source_state, success_destination_state=ImplementTaskState.VERIFIED.value),
-        ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=ImplementTaskState.DISPATCHING.value, auto_transitions=False)
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return ImplementTaskState.IMPLEMENTING.value
@@ -965,25 +1438,13 @@ class ReviewTaskTool(BaseWorkflowTool):
     def __init__(self, task_id: str):
         super().__init__(task_id, tool_name=ToolName.REVIEW_TASK)
         self.artifact_map = {
-            # Only the reviewing state produces an artifact
             ReviewTaskState.REVIEWING: ReviewArtifact,
         }
 
-        source_state = ReviewTaskState.REVIEWING.value
+        # Use builder for simple workflow
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=ReviewTaskState.DISPATCHING, work_state=ReviewTaskState.REVIEWING, terminal_state=ReviewTaskState.VERIFIED)
 
-        states = [
-            ReviewTaskState.DISPATCHING.value,
-            source_state,
-            f"{source_state}_awaiting_ai_review",
-            f"{source_state}_awaiting_human_review",
-            ReviewTaskState.VERIFIED.value,
-        ]
-
-        transitions = [
-            {"trigger": "dispatch", "source": ReviewTaskState.DISPATCHING.value, "dest": source_state},
-            *self._create_review_transitions(source_state=source_state, success_destination_state=ReviewTaskState.VERIFIED.value),
-        ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=ReviewTaskState.DISPATCHING.value, auto_transitions=False)
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return ReviewTaskState.REVIEWING.value
@@ -993,25 +1454,13 @@ class TestTaskTool(BaseWorkflowTool):
     def __init__(self, task_id: str):
         super().__init__(task_id, tool_name=ToolName.TEST_TASK)
         self.artifact_map = {
-            # Only the testing state produces an artifact
             TestTaskState.TESTING: TestResultArtifact,
         }
 
-        source_state = TestTaskState.TESTING.value
+        # Use builder for simple workflow
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=TestTaskState.DISPATCHING, work_state=TestTaskState.TESTING, terminal_state=TestTaskState.VERIFIED)
 
-        states = [
-            TestTaskState.DISPATCHING.value,
-            source_state,
-            f"{source_state}_awaiting_ai_review",
-            f"{source_state}_awaiting_human_review",
-            TestTaskState.VERIFIED.value,
-        ]
-
-        transitions = [
-            {"trigger": "dispatch", "source": TestTaskState.DISPATCHING.value, "dest": source_state},
-            *self._create_review_transitions(source_state=source_state, success_destination_state=TestTaskState.VERIFIED.value),
-        ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=TestTaskState.DISPATCHING.value, auto_transitions=False)
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return TestTaskState.TESTING.value
@@ -1021,25 +1470,13 @@ class FinalizeTaskTool(BaseWorkflowTool):
     def __init__(self, task_id: str):
         super().__init__(task_id, tool_name=ToolName.FINALIZE_TASK)
         self.artifact_map = {
-            # Only the finalizing state produces an artifact
             FinalizeTaskState.FINALIZING: FinalizeArtifact,
         }
 
-        source_state = FinalizeTaskState.FINALIZING.value
+        # Use builder for simple workflow
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=FinalizeTaskState.DISPATCHING, work_state=FinalizeTaskState.FINALIZING, terminal_state=FinalizeTaskState.VERIFIED)
 
-        states = [
-            FinalizeTaskState.DISPATCHING.value,
-            source_state,
-            f"{source_state}_awaiting_ai_review",
-            f"{source_state}_awaiting_human_review",
-            FinalizeTaskState.VERIFIED.value,
-        ]
-
-        transitions = [
-            {"trigger": "dispatch", "source": FinalizeTaskState.DISPATCHING.value, "dest": source_state},
-            *self._create_review_transitions(source_state=source_state, success_destination_state=FinalizeTaskState.VERIFIED.value),
-        ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=FinalizeTaskState.DISPATCHING.value, auto_transitions=False)
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return FinalizeTaskState.FINALIZING.value
@@ -1049,24 +1486,13 @@ class CreateSpecTool(BaseWorkflowTool):
     def __init__(self, task_id: str):
         super().__init__(task_id, tool_name=ToolName.CREATE_SPEC)
         self.artifact_map = {
-            CreateSpecState.DRAFTING_SPEC: EngineeringSpec,  # Only one artifact
+            CreateSpecState.DRAFTING_SPEC: EngineeringSpec,
         }
 
-        source_state = CreateSpecState.DRAFTING_SPEC.value
+        # Use builder for simple workflow
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=CreateSpecState.DISPATCHING, work_state=CreateSpecState.DRAFTING_SPEC, terminal_state=CreateSpecState.VERIFIED)
 
-        states = [
-            CreateSpecState.DISPATCHING.value,
-            source_state,
-            f"{source_state}_awaiting_ai_review",
-            f"{source_state}_awaiting_human_review",
-            CreateSpecState.VERIFIED.value,
-        ]
-
-        transitions = [
-            {"trigger": "dispatch", "source": CreateSpecState.DISPATCHING.value, "dest": source_state},
-            *self._create_review_transitions(source_state=source_state, success_destination_state=CreateSpecState.VERIFIED.value),
-        ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=CreateSpecState.DISPATCHING.value, auto_transitions=False)
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return CreateSpecState.DRAFTING_SPEC.value
@@ -1074,29 +1500,295 @@ class CreateSpecTool(BaseWorkflowTool):
 
 class CreateTasksTool(BaseWorkflowTool):
     def __init__(self, task_id: str):
-        super().__init__(task_id, tool_name=ToolName.CREATE_TASKS)
+        super().__init__(task_id, tool_name=ToolName.CREATE_TASKS_FROM_SPEC)
         self.artifact_map = {
-            CreateTasksState.DRAFTING_TASKS: TaskCreationArtifact,  # Only one artifact
+            CreateTasksState.DRAFTING_TASKS: TaskCreationArtifact,
         }
 
-        source_state = CreateTasksState.DRAFTING_TASKS.value
+        # Use builder for simple workflow
+        machine_config = workflow_builder.build_simple_workflow(dispatch_state=CreateTasksState.DISPATCHING, work_state=CreateTasksState.DRAFTING_TASKS, terminal_state=CreateTasksState.VERIFIED)
 
-        states = [
-            CreateTasksState.DISPATCHING.value,
-            source_state,
-            f"{source_state}_awaiting_ai_review",
-            f"{source_state}_awaiting_human_review",
-            CreateTasksState.VERIFIED.value,
-        ]
-
-        transitions = [
-            {"trigger": "dispatch", "source": CreateTasksState.DISPATCHING.value, "dest": source_state},
-            *self._create_review_transitions(source_state=source_state, success_destination_state=CreateTasksState.VERIFIED.value),
-        ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial=CreateTasksState.DISPATCHING.value, auto_transitions=False)
+        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return CreateTasksState.DRAFTING_TASKS.value
+
+``````
+------ src/alfred/core/workflow_config.py ------
+``````
+"""
+Centralized workflow configuration system.
+
+This module defines the complete workflow lifecycle and all transitions
+in a single place, eliminating duplication across the codebase.
+"""
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, List, Optional, Tuple
+
+from src.alfred.models.schemas import TaskStatus
+from src.alfred.constants import ToolName
+
+
+@dataclass(frozen=True)
+class WorkflowPhase:
+    """
+    Represents a single phase in the task workflow.
+
+    A phase is a combination of status and the tool used to process it.
+    """
+
+    status: TaskStatus
+    tool_name: str
+    next_status: Optional[TaskStatus] = None
+    produces_artifact: bool = True
+    terminal: bool = False
+    description: str = ""
+
+    @property
+    def is_entry_point(self) -> bool:
+        """Check if this phase can be an entry point for its tool."""
+        return self.status in TOOL_ENTRY_POINTS.get(self.tool_name, [])
+
+
+@dataclass(frozen=True)
+class WorkflowTransition:
+    """Represents a transition between workflow phases."""
+
+    from_status: TaskStatus
+    to_status: TaskStatus
+    trigger: str = "approve"  # Default trigger
+    condition: Optional[str] = None  # Optional condition for transition
+
+
+class WorkflowConfiguration:
+    """
+    Central configuration for the entire Alfred workflow.
+
+    This class defines:
+    - All workflow phases and their relationships
+    - Valid status transitions
+    - Tool entry points
+    - Phase metadata
+    """
+
+    # Define all workflow phases in order
+    PHASES: List[WorkflowPhase] = [
+        # Initial phase
+        WorkflowPhase(status=TaskStatus.NEW, tool_name=ToolName.PLAN_TASK, next_status=TaskStatus.PLANNING, description="New task ready for planning"),
+        # Planning phase
+        WorkflowPhase(status=TaskStatus.PLANNING, tool_name=ToolName.PLAN_TASK, next_status=TaskStatus.READY_FOR_DEVELOPMENT, description="Task being planned"),
+        # Spec creation phases (for epics)
+        WorkflowPhase(
+            status=TaskStatus.NEW,  # Alternate path for epics
+            tool_name=ToolName.CREATE_SPEC,
+            next_status=TaskStatus.CREATING_SPEC,
+            description="New epic ready for spec creation",
+        ),
+        WorkflowPhase(status=TaskStatus.CREATING_SPEC, tool_name=ToolName.CREATE_SPEC, next_status=TaskStatus.SPEC_COMPLETED, description="Creating technical specification"),
+        WorkflowPhase(
+            status=TaskStatus.SPEC_COMPLETED,
+            tool_name=ToolName.CREATE_TASKS_FROM_SPEC,
+            next_status=TaskStatus.CREATING_TASKS,
+            produces_artifact=False,  # This is a transition phase
+            description="Spec completed, ready to create tasks",
+        ),
+        WorkflowPhase(status=TaskStatus.CREATING_TASKS, tool_name=ToolName.CREATE_TASKS_FROM_SPEC, next_status=TaskStatus.TASKS_CREATED, description="Breaking down spec into tasks"),
+        WorkflowPhase(
+            status=TaskStatus.TASKS_CREATED,
+            tool_name=ToolName.PLAN_TASK,
+            next_status=TaskStatus.PLANNING,
+            produces_artifact=False,  # Transition to planning first task
+            description="Tasks created, ready to plan first one",
+        ),
+        # Development phase
+        WorkflowPhase(
+            status=TaskStatus.READY_FOR_DEVELOPMENT,
+            tool_name=ToolName.IMPLEMENT_TASK,
+            next_status=TaskStatus.IN_DEVELOPMENT,
+            produces_artifact=False,  # This is entry to development
+            description="Ready to start implementation",
+        ),
+        WorkflowPhase(status=TaskStatus.IN_DEVELOPMENT, tool_name=ToolName.IMPLEMENT_TASK, next_status=TaskStatus.READY_FOR_REVIEW, description="Implementation in progress"),
+        # Review phase
+        WorkflowPhase(status=TaskStatus.READY_FOR_REVIEW, tool_name=ToolName.REVIEW_TASK, next_status=TaskStatus.IN_REVIEW, produces_artifact=False, description="Ready for code review"),
+        WorkflowPhase(status=TaskStatus.IN_REVIEW, tool_name=ToolName.REVIEW_TASK, next_status=TaskStatus.READY_FOR_TESTING, description="Code review in progress"),
+        # Testing phase
+        WorkflowPhase(status=TaskStatus.READY_FOR_TESTING, tool_name=ToolName.TEST_TASK, next_status=TaskStatus.IN_TESTING, produces_artifact=False, description="Ready for testing"),
+        WorkflowPhase(status=TaskStatus.IN_TESTING, tool_name=ToolName.TEST_TASK, next_status=TaskStatus.READY_FOR_FINALIZATION, description="Testing in progress"),
+        # Finalization phase
+        WorkflowPhase(status=TaskStatus.READY_FOR_FINALIZATION, tool_name=ToolName.FINALIZE_TASK, next_status=TaskStatus.IN_FINALIZATION, produces_artifact=False, description="Ready to finalize"),
+        WorkflowPhase(status=TaskStatus.IN_FINALIZATION, tool_name=ToolName.FINALIZE_TASK, next_status=TaskStatus.DONE, description="Creating commit and PR"),
+        # Revision handling phase
+        WorkflowPhase(
+            status=TaskStatus.REVISIONS_REQUESTED,
+            tool_name="",  # No specific tool, depends on context
+            next_status=None,  # Depends on which phase requested revisions
+            produces_artifact=False,
+            description="Revisions requested, awaiting fixes",
+        ),
+        # Terminal phase
+        WorkflowPhase(
+            status=TaskStatus.DONE,
+            tool_name="",  # No tool for done status
+            next_status=None,
+            terminal=True,
+            produces_artifact=False,
+            description="Task completed",
+        ),
+    ]
+
+    # Build lookup maps
+    _BY_STATUS: Dict[TaskStatus, List[WorkflowPhase]] = {}
+    _BY_TOOL_AND_STATUS: Dict[Tuple[str, TaskStatus], WorkflowPhase] = {}
+
+    @classmethod
+    def _build_lookups(cls):
+        """Build lookup maps from phases."""
+        if not cls._BY_STATUS:  # Only build once
+            for phase in cls.PHASES:
+                if phase.status not in cls._BY_STATUS:
+                    cls._BY_STATUS[phase.status] = []
+                cls._BY_STATUS[phase.status].append(phase)
+
+                if phase.tool_name:
+                    cls._BY_TOOL_AND_STATUS[(phase.tool_name, phase.status)] = phase
+
+    @classmethod
+    def get_phase(cls, status: TaskStatus, tool_name: Optional[str] = None) -> Optional[WorkflowPhase]:
+        """Get the workflow phase for a given status, optionally filtered by tool."""
+        cls._build_lookups()
+
+        phases = cls._BY_STATUS.get(status, [])
+        if not phases:
+            return None
+
+        if tool_name:
+            # Filter by tool if specified
+            for phase in phases:
+                if phase.tool_name == tool_name:
+                    return phase
+            return None
+
+        # Return the first phase for this status
+        return phases[0]
+
+    @classmethod
+    def get_phase_by_tool(cls, tool_name: str, status: TaskStatus) -> Optional[WorkflowPhase]:
+        """Get the workflow phase for a specific tool and status."""
+        cls._build_lookups()
+        return cls._BY_TOOL_AND_STATUS.get((tool_name, status))
+
+    @classmethod
+    def get_next_phase(cls, current_status: TaskStatus, tool_name: Optional[str] = None) -> Optional[WorkflowPhase]:
+        """Get the next phase in the workflow."""
+        current_phase = cls.get_phase(current_status, tool_name)
+        if current_phase and current_phase.next_status:
+            return cls.get_phase(current_phase.next_status)
+        return None
+
+    @classmethod
+    def get_tool_for_status(cls, status: TaskStatus) -> Optional[str]:
+        """Get the tool that handles a given status."""
+        phase = cls.get_phase(status)
+        return phase.tool_name if phase and phase.tool_name else None
+
+    @classmethod
+    def get_artifact_producer(cls, status: TaskStatus) -> Optional[str]:
+        """Get the tool that produces artifacts for a given status."""
+        phase = cls.get_phase(status)
+        if phase and phase.produces_artifact and phase.tool_name:
+            return phase.tool_name
+        return None
+
+    @classmethod
+    def get_phases_for_tool(cls, tool_name: str) -> List[WorkflowPhase]:
+        """Get all phases handled by a specific tool."""
+        return [p for p in cls.PHASES if p.tool_name == tool_name]
+
+    @classmethod
+    def is_terminal_status(cls, status: TaskStatus) -> bool:
+        """Check if a status is terminal."""
+        phase = cls.get_phase(status)
+        return phase.terminal if phase else False
+
+    @classmethod
+    def get_workflow_step_number(cls, status: TaskStatus) -> int:
+        """Get the step number in the workflow (for archiving)."""
+        # Define the main workflow sequence
+        main_sequence = [
+            TaskStatus.NEW,
+            TaskStatus.CREATING_SPEC,
+            TaskStatus.CREATING_TASKS,
+            TaskStatus.PLANNING,
+            TaskStatus.IN_DEVELOPMENT,
+            TaskStatus.IN_REVIEW,
+            TaskStatus.IN_TESTING,
+            TaskStatus.IN_FINALIZATION,
+            TaskStatus.DONE,
+        ]
+
+        try:
+            # Find closest matching status in sequence
+            if status in main_sequence:
+                return main_sequence.index(status) + 1
+
+            # Handle intermediate statuses
+            if status == TaskStatus.SPEC_COMPLETED:
+                return main_sequence.index(TaskStatus.CREATING_SPEC) + 1
+            elif status == TaskStatus.TASKS_CREATED:
+                return main_sequence.index(TaskStatus.CREATING_TASKS) + 1
+            elif status == TaskStatus.READY_FOR_DEVELOPMENT:
+                return main_sequence.index(TaskStatus.PLANNING) + 1
+            elif status == TaskStatus.READY_FOR_REVIEW:
+                return main_sequence.index(TaskStatus.IN_DEVELOPMENT) + 1
+            elif status == TaskStatus.READY_FOR_TESTING:
+                return main_sequence.index(TaskStatus.IN_REVIEW) + 1
+            elif status == TaskStatus.READY_FOR_FINALIZATION:
+                return main_sequence.index(TaskStatus.IN_TESTING) + 1
+
+            return 0  # Unknown status
+        except ValueError:
+            return 0
+
+
+# Tool entry points - which statuses can start each tool
+TOOL_ENTRY_POINTS: Dict[str, List[TaskStatus]] = {
+    ToolName.CREATE_SPEC: [TaskStatus.NEW, TaskStatus.CREATING_SPEC],
+    ToolName.CREATE_TASKS_FROM_SPEC: [TaskStatus.SPEC_COMPLETED, TaskStatus.CREATING_TASKS],
+    ToolName.PLAN_TASK: [TaskStatus.NEW, TaskStatus.PLANNING, TaskStatus.TASKS_CREATED],
+    ToolName.IMPLEMENT_TASK: [TaskStatus.READY_FOR_DEVELOPMENT, TaskStatus.IN_DEVELOPMENT],
+    ToolName.REVIEW_TASK: [TaskStatus.READY_FOR_REVIEW, TaskStatus.IN_REVIEW],
+    ToolName.TEST_TASK: [TaskStatus.READY_FOR_TESTING, TaskStatus.IN_TESTING],
+    ToolName.FINALIZE_TASK: [TaskStatus.READY_FOR_FINALIZATION, TaskStatus.IN_FINALIZATION],
+}
+
+
+# Status transition validation
+VALID_TRANSITIONS: Dict[TaskStatus, List[TaskStatus]] = {
+    TaskStatus.NEW: [TaskStatus.CREATING_SPEC, TaskStatus.PLANNING],
+    TaskStatus.CREATING_SPEC: [TaskStatus.SPEC_COMPLETED],
+    TaskStatus.SPEC_COMPLETED: [TaskStatus.CREATING_TASKS],
+    TaskStatus.CREATING_TASKS: [TaskStatus.TASKS_CREATED],
+    TaskStatus.TASKS_CREATED: [TaskStatus.PLANNING],
+    TaskStatus.PLANNING: [TaskStatus.READY_FOR_DEVELOPMENT],
+    TaskStatus.READY_FOR_DEVELOPMENT: [TaskStatus.IN_DEVELOPMENT],
+    TaskStatus.IN_DEVELOPMENT: [TaskStatus.READY_FOR_REVIEW],
+    TaskStatus.READY_FOR_REVIEW: [TaskStatus.IN_REVIEW],
+    TaskStatus.IN_REVIEW: [TaskStatus.READY_FOR_TESTING, TaskStatus.IN_DEVELOPMENT],  # Can go back for revisions
+    TaskStatus.READY_FOR_TESTING: [TaskStatus.IN_TESTING],
+    TaskStatus.IN_TESTING: [TaskStatus.READY_FOR_FINALIZATION, TaskStatus.IN_DEVELOPMENT],  # Can go back
+    TaskStatus.READY_FOR_FINALIZATION: [TaskStatus.IN_FINALIZATION],
+    TaskStatus.IN_FINALIZATION: [TaskStatus.DONE],
+    TaskStatus.DONE: [],  # Terminal state
+}
+
+
+def validate_transition(from_status: TaskStatus, to_status: TaskStatus) -> bool:
+    """Validate if a status transition is allowed."""
+    valid_next = VALID_TRANSITIONS.get(from_status, [])
+    return to_status in valid_next
 
 ``````
 ------ src/alfred/lib/artifact_manager.py ------
@@ -1115,7 +1807,7 @@ from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel
 
 from src.alfred.config.settings import settings
-from src.alfred.lib.structured_logger import get_logger
+from src.alfred.lib.logger import get_logger
 from src.alfred.lib.task_utils import load_task
 from src.alfred.constants import Paths, StateDescriptions
 
@@ -1178,9 +1870,9 @@ class ArtifactManager:
         scratchpad_path = self._get_scratchpad_path(task_id)
         if not scratchpad_path.exists():
             scratchpad_path.touch()
-            logger.debug("Created empty scratchpad at %(scratchpad_path)s", scratchpad_path=scratchpad_path)
+            logger.debug(f"Created empty scratchpad at {scratchpad_path}")
             
-        logger.info("Created workspace for task %(task_id)s at %(task_dir)s", task_id=task_id, task_dir=task_dir)
+        logger.info(f"Created workspace for task {task_id} at {task_dir}")
 
     def append_to_scratchpad(self, task_id: str, state_name: str = None, artifact: BaseModel = None, content: str = None):
         """Renders a structured artifact and atomically appends it to the scratchpad."""
@@ -1248,9 +1940,9 @@ class ArtifactManager:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(full_new_content)
             os.replace(temp_path, scratchpad_path)
-            logger.info("Atomically updated scratchpad for task %(task_id)s", task_id=task_id)
+            logger.info(f"Atomically updated scratchpad for task {task_id}")
         except Exception as e:
-            logger.error("Failed to atomically update scratchpad for %(task_id)s: %(e)s", task_id=task_id, e=e)
+            logger.error(f"Failed to atomically update scratchpad for {task_id}: {e}")
             if temp_path.exists():
                 os.remove(temp_path)
             raise
@@ -1259,7 +1951,7 @@ class ArtifactManager:
         """Moves the current scratchpad to a versioned file in the archive and creates a new empty scratchpad."""
         scratchpad_path = self._get_scratchpad_path(task_id)
         if not scratchpad_path.exists():
-            logger.warning("No scratchpad found for task %(task_id)s to archive.", task_id=task_id)
+            logger.warning(f"No scratchpad found for task {task_id} to archive.")
             return
 
         archive_dir = self._get_archive_dir(task_id)
@@ -1277,7 +1969,7 @@ class ArtifactManager:
         json_path = archive_dir / filename
         with json_path.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        logger.info("Wrote JSON artifact to %(json_path)s", json_path=json_path)
+        logger.info(f"Wrote JSON artifact to {json_path}")
 
     def read_execution_plan(self, task_id: str) -> dict | None:
         """Reads the machine-readable execution plan from the archive."""
@@ -1922,7 +2614,7 @@ from pathlib import Path
 from typing import Optional
 
 from src.alfred.models.schemas import Task
-from src.alfred.lib.structured_logger import get_logger
+from src.alfred.lib.logger import get_logger
 from src.alfred.config.settings import settings
 
 logger = get_logger(__name__)
@@ -1962,8 +2654,41 @@ def load_task(task_id: str, root_dir: Optional[Path] = None) -> Task | None:
         return provider.get_task(task_id)
         
     except Exception as e:
-        logger.error("Failed to load task %(task_id)s: %(e)s", task_id=task_id, e=e)
+        logger.error(f"Failed to load task {task_id}: {e}")
         return None
+
+
+def load_task_with_error_details(task_id: str, root_dir: Optional[Path] = None) -> tuple[Task | None, str | None]:
+    """
+    Loads a Task using the configured task provider with detailed error information.
+
+    Args:
+        task_id: The ID of the task to load
+        root_dir: Optional root directory (preserved for backward compatibility)
+                 
+    Returns:
+        Tuple of (Task object if found or None, error message if failed or None)
+    """
+    try:
+        # Use the task provider factory to get the configured provider
+        from src.alfred.task_providers.factory import get_provider
+        
+        provider = get_provider()
+        
+        # Check if provider supports detailed error reporting
+        if hasattr(provider, 'get_task_with_error_details'):
+            return provider.get_task_with_error_details(task_id)
+        
+        # Fallback to standard method
+        task = provider.get_task(task_id)
+        if task is None:
+            return None, f"Task '{task_id}' not found."
+        return task, None
+        
+    except Exception as e:
+        error_msg = f"Failed to load task {task_id}: {e}"
+        logger.error(error_msg)
+        return None, error_msg
 
 
 def does_task_exist_locally(task_id: str) -> bool:
@@ -2023,7 +2748,7 @@ def write_task_to_markdown(task: Task) -> None:
     task_file = tasks_dir / f"{task.task_id}.md"
     task_file.write_text("\n".join(content_parts), encoding="utf-8")
     
-    logger.info("Wrote task %(task_task_id)s to %(task_file)s", task_task_id=task.task_id, task_file=task_file)
+    logger.info(f"Wrote task {task.task_id} to {task_file}")
 
 
 def get_local_task_path(task_id: str) -> Path:
@@ -2535,22 +3260,38 @@ from src.alfred.tools.approve_and_advance import approve_and_advance_impl
 from src.alfred.constants import ToolName
 from src.alfred.tools.registry import tool_registry
 from src.alfred.tools.create_spec import create_spec_impl
-from src.alfred.tools.create_tasks import create_tasks_impl
-from src.alfred.tools.finalize_task import finalize_task_impl, FinalizeTaskHandler, finalize_task_handler
+from alfred.tools.create_tasks_from_spec import create_tasks_from_spec_impl
+from src.alfred.tools.create_task import create_task_impl
+from src.alfred.tools.finalize_task import finalize_task_impl
 from src.alfred.tools.get_next_task import get_next_task_impl
-from src.alfred.tools.implement_task import implement_task_impl, ImplementTaskHandler, implement_task_handler
+from src.alfred.tools.implement_task import implement_task_impl
 from src.alfred.tools.initialize import initialize_project as initialize_project_impl
-from src.alfred.tools.plan_task import plan_task_impl, PlanTaskHandler
+from src.alfred.tools.plan_task import plan_task_impl
+from src.alfred.tools.review_task import review_task_impl
+from src.alfred.tools.test_task import test_task_impl
 from src.alfred.core.workflow import PlanTaskTool, ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
 from src.alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
 from src.alfred.tools.approve_review import approve_review_impl
 from src.alfred.tools.request_revision import request_revision_impl
-from src.alfred.tools.review_task import ReviewTaskHandler, review_task_handler
 from src.alfred.tools.submit_work import submit_work_handler
-from src.alfred.tools.test_task import TestTaskHandler, test_task_handler
 from src.alfred.tools.work_on import work_on_impl
+from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS, get_tool_definition
+from src.alfred.tools.tool_factory import get_tool_handler
 
 logger = get_logger(__name__)
+
+
+# Create a helper function to register tools
+def register_tool_from_definition(app: FastMCP, tool_name: str):
+    """Register a tool using its definition."""
+    definition = get_tool_definition(tool_name)
+    handler = get_tool_handler(tool_name)
+
+    @tool_registry.register(name=tool_name, handler_class=lambda: handler, tool_class=definition.tool_class, entry_status_map=definition.get_entry_status_map())
+    def tool_impl(**kwargs):
+        return handler.execute(**kwargs)
+
+    return tool_impl
 
 
 @asynccontextmanager
@@ -2722,13 +3463,13 @@ async def create_spec(task_id: str, prd_content: str) -> ToolResponse:
 
 
 @app.tool()
-@log_tool_transaction(create_tasks_impl)
-async def create_tasks(task_id: str) -> ToolResponse:
+@log_tool_transaction(create_tasks_from_spec_impl)
+async def create_tasks_from_spec(task_id: str) -> ToolResponse:
     """
-    Creates a list of actionable tasks from a Technical Specification.
+    Creates a list of actionable tasks from a completed engineering specification.
 
     This is the second tool in the "idea-to-code" pipeline. It takes a completed
-    Technical Specification and breaks it down into individual Task objects that
+    engineering specification and breaks it down into individual Task objects that
     can be tracked, assigned, and implemented independently.
 
     The tool guides through creating tasks that are:
@@ -2738,26 +3479,118 @@ async def create_tasks(task_id: str) -> ToolResponse:
     - Complete with acceptance criteria
 
     Args:
-        task_id (str): The unique identifier for the epic/feature with a completed spec
+        task_id (str): The unique identifier for the epic/feature with a completed engineering spec
 
     Returns:
         ToolResponse: Contains the first prompt to guide task breakdown
 
     Preconditions:
-        - Technical specification must be completed (via create_spec)
+        - Engineering specification must be completed (via create_spec)
         - Task status must be "spec_completed"
 
     Example:
-        create_tasks("EPIC-01") -> Guides creation of task list from spec
+        create_tasks_from_spec("EPIC-01") -> Guides creation of task list from spec
     """
     pass  # Implementation handled by decorator
 
 
-# THIS IS THE FIX for Blocker #2
 @app.tool()
-@tool_registry.register(
-    name=ToolName.PLAN_TASK, handler_class=PlanTaskHandler, tool_class=PlanTaskTool, entry_status_map={TaskStatus.NEW: TaskStatus.PLANNING, TaskStatus.PLANNING: TaskStatus.PLANNING}
-)
+@log_tool_transaction(create_task_impl)
+async def create_task(task_content: str) -> ToolResponse:
+    """
+    Creates a new task in the Alfred system using the standardized task template format.
+
+    This tool provides the standard way to create tasks within Alfred, ensuring proper
+    format validation and consistent task structure. It validates the task content
+    against the required template format and saves it to the .alfred/tasks directory.
+
+    The tool validates and requires:
+    - **First line format**: Must be '# TASK: <task_id>'
+    - **Required sections**: Title, Context, Implementation Details, Acceptance Criteria
+    - **Section headers**: All sections must use '##' markdown headers
+    - **Non-empty content**: Task content cannot be empty
+    - **Unique task_id**: Task ID must not already exist
+
+    Template Format (copy and modify this exact structure):
+    ```markdown
+    # TASK: YOUR-TASK-ID
+
+    ## Title
+    Brief descriptive title for the task
+
+    ## Context
+    Background information explaining why this task is needed, business context,
+    and any relevant background that helps understand the requirements.
+
+    ## Implementation Details
+    Detailed description of what needs to be implemented, technical approach,
+    and specific requirements for the implementation.
+
+    ## Acceptance Criteria
+    - Clear, testable criteria that define when the task is complete
+    - Each criterion should be specific and measurable
+    - Use bullet points for each criterion
+
+    ## AC Verification
+    - Optional section describing how to verify each acceptance criterion
+    - Testing steps or validation procedures
+
+    ## Dev Notes
+    - Optional section for additional development notes
+    - Architecture considerations, gotchas, or helpful context
+    ```
+
+    Args:
+        task_content (str): Raw markdown content following the exact template format above
+
+    Returns:
+        ToolResponse: Contains:
+            - success: Whether task was created successfully
+            - data.task_id: The extracted task ID
+            - data.file_path: Path where task was saved
+            - data.task_title: The task title
+            - data.template: Full template format (if validation fails)
+            - data.help: Specific guidance on format requirements
+
+    Examples:
+        # Valid task creation
+        create_task('''# TASK: AUTH-001
+
+        ## Title
+        Implement user authentication system
+
+        ## Context
+        Need to add secure user login functionality to support multiple user roles.
+
+        ## Implementation Details
+        Create JWT-based authentication with role-based access control.
+
+        ## Acceptance Criteria
+        - Users can login with email/password
+        - JWT tokens are properly validated
+        - Role-based permissions are enforced
+        ''')
+
+    Validation Errors:
+        If the format is incorrect, the tool returns the complete template format
+        with specific error guidance. Common issues:
+        - Missing '# TASK: <task_id>' first line
+        - Missing required sections (Title, Context, Implementation Details, Acceptance Criteria)
+        - Incorrect section headers (must use '##')
+        - Empty content
+        - Duplicate task_id
+
+    Next Actions:
+        After successful creation, use work_on_task(task_id) to start working on the task.
+
+    Note: This tool enforces the exact template format to ensure consistency across
+    all tasks in the Alfred system. The template format is non-negotiable and must
+    be followed precisely for successful task creation.
+    """
+    pass  # Implementation handled by decorator
+
+
+@app.tool()
 async def plan_task(task_id: str) -> ToolResponse:
     """
     Initiates the detailed technical planning for a specific task.
@@ -2790,8 +3623,12 @@ async def plan_task(task_id: str) -> ToolResponse:
         - Planning tool instance registered and active
         - First planning prompt returned for contextualization phase
     """
-    handler = PlanTaskHandler()
+    handler = get_tool_handler(ToolName.PLAN_TASK)
     return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.PLAN_TASK)
 
 
 @app.tool()
@@ -2987,16 +3824,6 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
 
 
 @app.tool()
-@tool_registry.register(
-    name=ToolName.IMPLEMENT_TASK,
-    handler_class=ImplementTaskHandler,
-    tool_class=ImplementTaskTool,
-    # THIS IS FIX #6: Add self-map for IN_DEVELOPMENT
-    entry_status_map={
-        TaskStatus.READY_FOR_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
-        TaskStatus.IN_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
-    },
-)
 async def implement_task(task_id: str) -> ToolResponse:
     """
     Executes the implementation phase for a task that has completed planning.
@@ -3023,19 +3850,15 @@ async def implement_task(task_id: str) -> ToolResponse:
     Example:
         implement_task("TS-01") -> Starts implementation of planned task
     """
-    return await implement_task_handler.execute(task_id)
+    handler = get_tool_handler(ToolName.IMPLEMENT_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.IMPLEMENT_TASK)
 
 
 @app.tool()
-@tool_registry.register(
-    name=ToolName.REVIEW_TASK,
-    handler_class=ReviewTaskHandler,
-    tool_class=ReviewTaskTool,
-    entry_status_map={
-        TaskStatus.READY_FOR_REVIEW: TaskStatus.IN_REVIEW,
-        TaskStatus.IN_REVIEW: TaskStatus.IN_REVIEW,
-    },
-)
 async def review_task(task_id: str) -> ToolResponse:
     """
     Initiates the code review phase for a task that has completed implementation.
@@ -3086,19 +3909,15 @@ async def review_task(task_id: str) -> ToolResponse:
         - Implementation must be complete
         - All subtasks should be marked complete
     """
-    return await review_task_handler.execute(task_id)
+    handler = get_tool_handler(ToolName.REVIEW_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.REVIEW_TASK)
 
 
 @app.tool()
-@tool_registry.register(
-    name=ToolName.TEST_TASK,
-    handler_class=TestTaskHandler,
-    tool_class=TestTaskTool,
-    entry_status_map={
-        TaskStatus.READY_FOR_TESTING: TaskStatus.IN_TESTING,
-        TaskStatus.IN_TESTING: TaskStatus.IN_TESTING,
-    },
-)
 async def test_task(task_id: str) -> ToolResponse:
     """
     Initiates the testing phase for a task that has passed code review.
@@ -3159,20 +3978,15 @@ async def test_task(task_id: str) -> ToolResponse:
         - Code review must be complete and approved
         - Implementation should be stable
     """
-    return await test_task_handler.execute(task_id)
+    handler = get_tool_handler(ToolName.TEST_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.TEST_TASK)
 
 
 @app.tool()
-@tool_registry.register(
-    name=ToolName.FINALIZE_TASK,
-    handler_class=FinalizeTaskHandler,
-    tool_class=FinalizeTaskTool,
-    entry_status_map={
-        TaskStatus.READY_FOR_FINALIZATION: TaskStatus.IN_FINALIZATION,
-        TaskStatus.IN_FINALIZATION: TaskStatus.IN_FINALIZATION,
-    },
-)
-@log_tool_transaction(finalize_task_impl)
 async def finalize_task(task_id: str) -> ToolResponse:
     """
     Completes the task by creating a commit and pull request.
@@ -3241,7 +4055,12 @@ async def finalize_task(task_id: str) -> ToolResponse:
     Note: This tool does NOT push to remote or merge the PR.
     Manual review and merge is required per team process.
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.FINALIZE_TASK)
+    return await handler.execute(task_id)
+
+
+# Register with tool registry
+register_tool_from_definition(app, ToolName.FINALIZE_TASK)
 
 
 @app.tool()
@@ -3342,23 +4161,26 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 
 from src.alfred.lib.fs_utils import file_lock
 from src.alfred.lib.logger import get_logger
-from src.alfred.models.state import TaskState
-from src.alfred.state.unit_of_work import StateUnitOfWork
+from src.alfred.models.state import TaskState, WorkflowState
 from src.alfred.models.schemas import TaskStatus
+from src.alfred.config.settings import settings
+from pydantic import BaseModel
 
 logger = get_logger(__name__)
 
 
 class StateManager:
-    """Manages the persistence layer for TaskState objects."""
+    """
+    Simplified state manager with direct methods instead of UoW pattern.
+
+    Each method handles its own locking and atomic writes.
+    """
 
     def _get_task_dir(self, task_id: str) -> Path:
-        from src.alfred.config.settings import settings
-
         return settings.workspace_dir / task_id
 
     def _get_task_state_file(self, task_id: str) -> Path:
@@ -3367,12 +4189,12 @@ class StateManager:
     def _get_lock_file(self, task_id: str) -> Path:
         return self._get_task_dir(task_id) / ".state.lock"
 
-    def _atomic_write(self, state: TaskState):
-        """Internal atomic file write, assumes lock is held."""
+    def _atomic_write(self, state: TaskState) -> None:
+        """Atomically write state to disk. Assumes lock is already held."""
         state_file = self._get_task_state_file(state.task_id)
         state.updated_at = datetime.utcnow().isoformat()
 
-        # Create the complete workspace structure
+        # Ensure directory structure exists
         task_dir = state_file.parent
         task_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3380,73 +4202,129 @@ class StateManager:
         archive_dir = task_dir / "archive"
         archive_dir.mkdir(exist_ok=True)
 
-        # Create empty scratchpad.md if it doesn't exist
+        # Create empty scratchpad if it doesn't exist
         scratchpad_path = task_dir / "scratchpad.md"
         if not scratchpad_path.exists():
-            scratchpad_path.touch(mode=0o600)  # Create with restricted permissions
+            scratchpad_path.touch(mode=0o600)
 
-        fd, temp_path_str = tempfile.mkstemp(dir=state_file.parent, prefix=".tmp_")
+        # Atomic write using temp file
+        fd, temp_path_str = tempfile.mkstemp(dir=state_file.parent, prefix=".tmp_state_", suffix=".json")
         temp_path = Path(temp_path_str)
+
         try:
             with os.fdopen(fd, "w") as f:
                 f.write(state.model_dump_json(indent=2))
             os.replace(temp_path, state_file)
+            logger.debug(f"Atomically wrote state for task {state.task_id}")
         except Exception:
             if temp_path.exists():
                 os.remove(temp_path)
             raise
 
-    def load_or_create(self, task_id: str, lock: bool = True) -> TaskState:
-        """Loads a task's state from disk, creating it if it doesn't exist."""
+    def load_or_create(self, task_id: str) -> TaskState:
+        """Load task state from disk, creating if it doesn't exist."""
         state_file = self._get_task_state_file(task_id)
 
-        def _load():
-            if not state_file.exists():
-                logger.info(f"No state file for task {task_id}. Creating new state.")
-                return TaskState(task_id=task_id)
+        if not state_file.exists():
+            logger.info(f"No state file for task {task_id}. Creating new state.")
+            return TaskState(task_id=task_id)
 
-            try:
-                return TaskState.model_validate_json(state_file.read_text())
-            except Exception as e:
-                logger.error(f"Failed to load or validate state for task {task_id}, creating new. Error: {e}")
-                return TaskState(task_id=task_id)
-
-        if lock:
-            with file_lock(self._get_lock_file(task_id)):
-                return _load()
-        return _load()
-
-    @contextmanager
-    def transaction(self):
-        """Provides a transactional unit of work for state modifications."""
-        uow = StateUnitOfWork(self)
         try:
-            yield uow
-            uow.commit()
+            with state_file.open("r") as f:
+                data = json.load(f)
+            return TaskState.model_validate(data)
         except Exception as e:
-            logger.error(f"State transaction failed, rolling back. Error: {e}", exc_info=True)
-            uow.rollback()
-            raise
+            logger.error(f"Failed to load or validate state for task {task_id}, creating new. Error: {e}")
+            return TaskState(task_id=task_id)
 
-    # --- Thin Wrappers for Backward Compatibility ---
+    # Backward compatibility alias
+    def load_or_create_task_state(self, task_id: str) -> TaskState:
+        """Alias for backward compatibility."""
+        return self.load_or_create(task_id)
+
     def update_task_status(self, task_id: str, new_status: TaskStatus) -> None:
-        with self.transaction() as uow:
-            uow.update_task_status(task_id, new_status)
+        """Update task status with proper locking."""
+        with file_lock(self._get_lock_file(task_id)):
+            state = self.load_or_create(task_id)
+            old_status = state.task_status
+            state.task_status = new_status
+            self._atomic_write(state)
+
+        logger.info(f"Updated task {task_id} status: {old_status.value} -> {new_status.value}")
 
     def update_tool_state(self, task_id: str, tool: Any) -> None:
-        with self.transaction() as uow:
-            uow.update_tool_state(task_id, tool)
+        """Update tool state with proper locking."""
+        with file_lock(self._get_lock_file(task_id)):
+            state = self.load_or_create(task_id)
+
+            # Serialize context store
+            serializable_context = {}
+            for key, value in tool.context_store.items():
+                if isinstance(value, BaseModel):
+                    serializable_context[key] = value.model_dump()
+                else:
+                    serializable_context[key] = value
+
+            # Create workflow state
+            tool_state = WorkflowState(task_id=task_id, tool_name=tool.tool_name, current_state=str(tool.state), context_store=serializable_context)
+
+            state.active_tool_state = tool_state
+            self._atomic_write(state)
+
+        logger.debug(f"Updated tool state for task {task_id}, tool {tool.tool_name}")
 
     def clear_tool_state(self, task_id: str) -> None:
-        with self.transaction() as uow:
-            uow.clear_tool_state(task_id)
+        """Clear active tool state with proper locking."""
+        with file_lock(self._get_lock_file(task_id)):
+            state = self.load_or_create(task_id)
+            state.active_tool_state = None
+            self._atomic_write(state)
+
+        logger.info(f"Cleared tool state for task {task_id}")
 
     def add_completed_output(self, task_id: str, tool_name: str, artifact: Any) -> None:
-        with self.transaction() as uow:
-            uow.add_completed_output(task_id, tool_name, artifact)
+        """Add completed tool output with proper locking."""
+        with file_lock(self._get_lock_file(task_id)):
+            state = self.load_or_create(task_id)
 
-    def load_or_create_task_state(self, task_id: str) -> TaskState:
-        return self.load_or_create(task_id)
+            # Serialize artifact
+            if isinstance(artifact, BaseModel):
+                serializable_artifact = artifact.model_dump()
+            else:
+                serializable_artifact = artifact
+
+            state.completed_tool_outputs[tool_name] = serializable_artifact
+            self._atomic_write(state)
+
+        logger.info(f"Added completed output for task {task_id}, tool {tool_name}")
+
+    @contextmanager
+    def complex_update(self, task_id: str):
+        """
+        Context manager for complex updates that need multiple field changes.
+
+        This is only needed when you need to update multiple fields atomically.
+        For single field updates, use the direct methods above.
+
+        Example:
+            with state_manager.complex_update(task_id) as state:
+                state.task_status = TaskStatus.IN_PROGRESS
+                state.active_tool_state = tool_state
+                # Changes are automatically saved on context exit
+        """
+        with file_lock(self._get_lock_file(task_id)):
+            state = self.load_or_create(task_id)
+            original_data = state.model_dump_json()
+
+            try:
+                yield state
+                # Only write if state actually changed
+                if state.model_dump_json() != original_data:
+                    self._atomic_write(state)
+                    logger.debug(f"Complex update completed for task {task_id}")
+            except Exception as e:
+                logger.error(f"Complex update failed for task {task_id}: {e}", exc_info=True)
+                raise
 
     def get_archive_path(self, task_id: str) -> Path:
         """Get the archive directory path for a task."""
@@ -3479,20 +4357,11 @@ Handles reconstruction of workflow tools from persisted state.
 
 from typing import Dict, Optional, Type
 
-from src.alfred.core.workflow import (
-    BaseWorkflowTool,
-    CreateSpecTool,
-    CreateTasksTool,
-    PlanTaskTool,
-    StartTaskTool,
-    ImplementTaskTool,
-    ReviewTaskTool,
-    TestTaskTool,
-    FinalizeTaskTool,
-)
+from src.alfred.core.workflow import BaseWorkflowTool
 from src.alfred.lib.logger import get_logger
 from src.alfred.state.manager import state_manager
 from src.alfred.constants import ToolName
+from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS
 
 logger = get_logger(__name__)
 
@@ -3500,16 +4369,8 @@ logger = get_logger(__name__)
 class ToolRecovery:
     """Handles recovery of workflow tools from persisted state."""
 
-    TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {
-        ToolName.CREATE_SPEC: CreateSpecTool,
-        ToolName.CREATE_TASKS: CreateTasksTool,
-        ToolName.START_TASK: StartTaskTool,
-        ToolName.PLAN_TASK: PlanTaskTool,
-        ToolName.IMPLEMENT_TASK: ImplementTaskTool,
-        ToolName.REVIEW_TASK: ReviewTaskTool,
-        ToolName.TEST_TASK: TestTaskTool,
-        ToolName.FINALIZE_TASK: FinalizeTaskTool,
-    }
+    # Build registry from definitions
+    TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {name: definition.tool_class for name, definition in TOOL_DEFINITIONS.items()}
 
     @classmethod
     def recover_tool(cls, task_id: str) -> Optional[BaseWorkflowTool]:
@@ -3589,98 +4450,6 @@ def recover_tool_from_state(task_id: str, tool_name: str) -> BaseWorkflowTool:
     logger.info(f"Created new {tool_name} tool for task {task_id}")
 
     return tool_instance
-
-``````
------- src/alfred/state/unit_of_work.py ------
-``````
-# src/alfred/state/unit_of_work.py
-from __future__ import annotations
-import json
-import os
-import tempfile
-from typing import Any, Dict, TYPE_CHECKING
-
-from pydantic import BaseModel
-
-from src.alfred.lib.fs_utils import file_lock
-from src.alfred.lib.logger import get_logger
-from src.alfred.models.state import TaskState, WorkflowState
-
-if TYPE_CHECKING:
-    from src.alfred.core.workflow import BaseWorkflowTool
-    from src.alfred.models.schemas import TaskStatus
-    from src.alfred.state.manager import StateManager
-
-logger = get_logger(__name__)
-
-
-class StateUnitOfWork:
-    """Implements the Unit of Work pattern for atomic state updates."""
-
-    def __init__(self, state_manager: "StateManager"):
-        self.state_manager = state_manager
-        self._pending_changes: Dict[str, TaskState] = {}
-        self._loaded_states: Dict[str, TaskState] = {}
-
-    def _get_current_state(self, task_id: str) -> TaskState:
-        """Gets the current state, loading it from disk or cache if necessary."""
-        if task_id in self._pending_changes:
-            return self._pending_changes[task_id]
-        if task_id in self._loaded_states:
-            return self._loaded_states[task_id]
-
-        state = self.state_manager.load_or_create(task_id, lock=False)
-        self._loaded_states[task_id] = state
-        return state
-
-    def update_task_status(self, task_id: str, status: "TaskStatus"):
-        """Stage a status update."""
-        state = self._get_current_state(task_id)
-        state.task_status = status
-        self._pending_changes[task_id] = state
-
-    def update_tool_state(self, task_id: str, tool: "BaseWorkflowTool"):
-        """Stage a tool state update."""
-        state = self._get_current_state(task_id)
-        serializable_context = {key: value.model_dump() if isinstance(value, BaseModel) else value for key, value in tool.context_store.items()}
-        tool_state_data = WorkflowState(task_id=task_id, tool_name=tool.tool_name, current_state=str(tool.state), context_store=serializable_context)
-        state.active_tool_state = tool_state_data
-        self._pending_changes[task_id] = state
-
-    def clear_tool_state(self, task_id: str):
-        """Stage the clearing of a tool state."""
-        state = self._get_current_state(task_id)
-        state.active_tool_state = None
-        self._pending_changes[task_id] = state
-
-    def add_completed_output(self, task_id: str, tool_name: str, artifact: Any):
-        """Stage the addition of a completed tool's output."""
-        state = self._get_current_state(task_id)
-        serializable_artifact = artifact.model_dump() if isinstance(artifact, BaseModel) else artifact
-        state.completed_tool_outputs[tool_name] = serializable_artifact
-        self._pending_changes[task_id] = state
-
-    def commit(self):
-        """Atomically commit all pending changes for all tasks."""
-        if not self._pending_changes:
-            logger.debug("No pending state changes to commit.")
-            return
-
-        for task_id, state in self._pending_changes.items():
-            lock_file = self.state_manager._get_lock_file(task_id)
-            with file_lock(lock_file):
-                self.state_manager._atomic_write(state)
-
-        logger.info(f"Committed state changes for tasks: {list(self._pending_changes.keys())}")
-        self._pending_changes.clear()
-        self._loaded_states.clear()
-
-    def rollback(self):
-        """Discard all pending changes."""
-        if self._pending_changes:
-            logger.warning(f"Rolling back pending state changes for tasks: {list(self._pending_changes.keys())}")
-        self._pending_changes.clear()
-        self._loaded_states.clear()
 
 ``````
 ------ src/alfred/task_providers/__init__.py ------
@@ -3989,6 +4758,79 @@ class LocalTaskProvider(BaseTaskProvider):
         except Exception as e:
             logger.error(f"Failed to load task {task_id} from {task_md_path}: {e}")
             return None
+
+    def get_task_with_error_details(self, task_id: str) -> tuple[Optional[Task], Optional[str]]:
+        """Fetches the details for a single task with detailed error information.
+
+        Args:
+            task_id: The unique identifier for the task
+
+        Returns:
+            Tuple of (Task object if found or None, error message if failed or None)
+        """
+        task_md_path = self.tasks_dir / f"{task_id}.md"
+
+        if not task_md_path.exists():
+            # Read the template content to show the user
+            template_path = Path(__file__).parent.parent / "templates" / "task_template.md"
+            template_content = ""
+            if template_path.exists():
+                template_content = template_path.read_text()
+                # Replace the sample task ID with the requested one
+                template_content = template_content.replace("SAMPLE-001", task_id)
+
+            error_msg = f"Task '{task_id}' doesn't exist.\n\n"
+            error_msg += f"To create it, save this content as:\n{task_md_path}\n\n"
+            error_msg += f"--- TEMPLATE ---\n{template_content}\n--- END TEMPLATE ---"
+            return None, error_msg
+
+        try:
+            # Read and validate the markdown file
+            content = task_md_path.read_text()
+
+            # Validate format first
+            is_valid, error_msg = self.parser.validate_format(content)
+            if not is_valid:
+                # Read the template content to show the user
+                template_path = Path(__file__).parent.parent / "templates" / "task_template.md"
+                template_content = ""
+                if template_path.exists():
+                    template_content = template_path.read_text()
+                    # Replace the sample task ID with the requested one
+                    template_content = template_content.replace("SAMPLE-001", task_id)
+
+                detailed_error = f"Task file has invalid format: {error_msg}\n\n"
+                detailed_error += f"File location: {task_md_path}\n\n"
+                detailed_error += f"Expected format:\n"
+                detailed_error += f"--- TEMPLATE ---\n{template_content}\n--- END TEMPLATE ---"
+                return None, detailed_error
+
+            # Parse the markdown file
+            task_data = self.parser.parse(content)
+
+            # Validate required fields and provide helpful error if missing
+            if not task_data.get("task_id"):
+                error_msg = f"Task file is missing task_id.\n\n"
+                error_msg += f"Expected format: '# TASK: {task_id}'\n"
+                error_msg += f"Current first line: {content.split('\\n')[0] if content else 'Empty file'}\n"
+                error_msg += f"File location: {task_md_path}"
+                return None, error_msg
+
+            task_model = Task(**task_data)
+
+            # Load and merge the dynamic state
+            task_state = state_manager.load_or_create(task_id)
+            task_model.task_status = task_state.task_status
+
+            return task_model, None
+        except ValueError as e:
+            detailed_error = f"Task file has invalid format: {e}\n\n"
+            detailed_error += f"File location: {task_md_path}\n"
+            detailed_error += f"Template reference: src/alfred/templates/task_template.md"
+            return None, detailed_error
+        except Exception as e:
+            error_msg = f"Failed to load task {task_id} from {task_md_path}: {e}"
+            return None, error_msg
 
     def get_all_tasks(self) -> List[Task]:
         """Fetches all available tasks from the tasks directory.
@@ -4873,7 +5715,7 @@ Create an EngineeringSpec with the following fields:
 
 Call `submit_work` with your completed EngineeringSpec.
 ``````
------- src/alfred/templates/prompts/create_tasks/create_tasks_from_spec.md ------
+------ src/alfred/templates/prompts/create_tasks_from_spec/create_tasks_from_spec.md ------
 ``````
 # ROLE: Senior Principal Engineer & Project Planner
 
@@ -4951,7 +5793,7 @@ Your final output MUST be a single, valid JSON object. It must be an array of `T
 
 **CRITICAL:** Do not include any text, explanations, or markdown formatting before or after the final JSON array. Your entire response must be the JSON object itself.
 ``````
------- src/alfred/templates/prompts/create_tasks/drafting_tasks.md ------
+------ src/alfred/templates/prompts/create_tasks_from_spec/drafting_tasks.md ------
 ``````
 # Review Your Task Breakdown
 
@@ -4995,7 +5837,7 @@ If you want to make improvements:
 - Call `provide_review` with `is_approved=false` and provide specific feedback
 - You'll have the opportunity to revise the task list
 ``````
------- src/alfred/templates/prompts/create_tasks/drafting_tasks_initial.md ------
+------ src/alfred/templates/prompts/create_tasks_from_spec/drafting_tasks_initial.md ------
 ``````
 # CONTEXT
 Task: ${task_id}
@@ -5891,6 +6733,34 @@ The work has been verified and is ready for the next phase of the workflow.
 
 This is an informational prompt. No further action is required.
 ``````
+------ src/alfred/templates/task_template.md ------
+``````
+# TASK: SAMPLE-001
+
+## Title
+Example task demonstrating the correct format
+
+## Context
+This is a sample task file that demonstrates the correct markdown format expected by Alfred. It shows all required and optional sections that can be used when creating tasks.
+
+## Implementation Details
+Create a well-formatted markdown file that follows the exact structure expected by the MarkdownTaskParser. The file should include all required sections and demonstrate optional sections as well.
+
+## Acceptance Criteria
+- Task file must start with "# TASK: <task_id>" format
+- Must include Title, Context, Implementation Details, and Acceptance Criteria sections
+- Should follow the exact section headers expected by the parser
+- Must be parseable by the MarkdownTaskParser without errors
+
+## AC Verification
+- Verify that the md_parser can successfully parse the file
+- Confirm all required fields are extracted correctly
+- Test that the Task pydantic model can be created from parsed data
+- Ensure no validation errors occur during task loading
+
+## Dev Notes
+This file serves as both documentation and a working example. When creating new tasks, copy this format and modify the content as needed.
+``````
 ------ src/alfred/tools/__init__.py ------
 ``````
 
@@ -5899,72 +6769,57 @@ This is an informational prompt. No further action is required.
 ``````
 from src.alfred.state.manager import state_manager
 from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.constants import ToolName
+from src.alfred.core.workflow_config import WorkflowConfiguration
 from src.alfred.lib.artifact_manager import artifact_manager
 from src.alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
-STATUS_TRANSITION_MAP = {
-    TaskStatus.CREATING_SPEC: TaskStatus.SPEC_COMPLETED,
-    TaskStatus.CREATING_TASKS: TaskStatus.TASKS_CREATED,
-    TaskStatus.PLANNING: TaskStatus.READY_FOR_DEVELOPMENT,
-    TaskStatus.IN_DEVELOPMENT: TaskStatus.READY_FOR_REVIEW,
-    TaskStatus.IN_REVIEW: TaskStatus.READY_FOR_TESTING,
-    TaskStatus.IN_TESTING: TaskStatus.READY_FOR_FINALIZATION,
-    TaskStatus.READY_FOR_FINALIZATION: TaskStatus.DONE,
-}
-
-ARTIFACT_PRODUCER_MAP = {
-    TaskStatus.CREATING_SPEC: ToolName.CREATE_SPEC,
-    TaskStatus.CREATING_TASKS: ToolName.CREATE_TASKS,
-    TaskStatus.PLANNING: ToolName.PLAN_TASK,
-    TaskStatus.IN_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
-    TaskStatus.IN_REVIEW: ToolName.REVIEW_TASK,
-    TaskStatus.IN_TESTING: ToolName.TEST_TASK,
-    TaskStatus.READY_FOR_FINALIZATION: ToolName.FINALIZE_TASK,
-}
-
 
 def approve_and_advance_impl(task_id: str) -> ToolResponse:
+    """Approve current phase and advance to next using centralized workflow config."""
     task_state = state_manager.load_or_create(task_id)
     current_status = task_state.task_status
 
-    if current_status not in STATUS_TRANSITION_MAP:
-        return ToolResponse(status="error", message=f"Cannot advance task '{task_id}'. Its status is '{current_status.value}', which is not a completed phase.")
+    # Get current phase from workflow config
+    current_phase = WorkflowConfiguration.get_phase(current_status)
+    if not current_phase:
+        return ToolResponse(status="error", message=f"Unknown workflow phase for status '{current_status.value}'.")
 
-    producer_tool_name = ARTIFACT_PRODUCER_MAP.get(current_status)
-    if producer_tool_name:
-        # Determine workflow step number based on status
-        workflow_step_map = {
-            TaskStatus.CREATING_SPEC: 1,
-            TaskStatus.CREATING_TASKS: 2,
-            TaskStatus.PLANNING: 3,
-            TaskStatus.IN_DEVELOPMENT: 4,
-            TaskStatus.IN_REVIEW: 5,
-            TaskStatus.IN_TESTING: 6,
-            TaskStatus.READY_FOR_FINALIZATION: 7,
-        }
-        workflow_step = workflow_step_map.get(current_status, 0)
+    # Check if this phase can be advanced from
+    if current_phase.terminal:
+        return ToolResponse(status="error", message=f"Cannot advance from terminal status '{current_status.value}'.")
 
-        # Archive the scratchpad BEFORE transitioning
-        artifact_manager.archive_scratchpad(task_id, producer_tool_name, workflow_step)
-        logger.info(f"Archived scratchpad for tool '{producer_tool_name}' at workflow step {workflow_step}")
+    if not current_phase.next_status:
+        return ToolResponse(status="error", message=f"No next phase defined for status '{current_status.value}'.")
 
-        final_artifact = task_state.completed_tool_outputs.get(producer_tool_name)
+    # Archive artifacts if this phase produces them
+    if current_phase.produces_artifact and current_phase.tool_name:
+        workflow_step = WorkflowConfiguration.get_workflow_step_number(current_status)
+
+        # Archive the scratchpad
+        artifact_manager.archive_scratchpad(task_id, current_phase.tool_name, workflow_step)
+        logger.info(f"Archived scratchpad for tool '{current_phase.tool_name}' at workflow step {workflow_step}")
+
+        # Archive the final artifact
+        final_artifact = task_state.completed_tool_outputs.get(current_phase.tool_name)
         if final_artifact:
-            artifact_manager.archive_final_artifact(task_id, producer_tool_name, final_artifact)
+            artifact_manager.archive_final_artifact(task_id, current_phase.tool_name, final_artifact)
             logger.info(f"Archived final artifact for phase '{current_status.value}'.")
         else:
-            logger.warning(f"No final artifact found for tool '{producer_tool_name}' to archive.")
+            logger.warning(f"No final artifact found for tool '{current_phase.tool_name}' to archive.")
 
-    next_status = STATUS_TRANSITION_MAP[current_status]
-    state_manager.update_task_status(task_id, next_status)
+    # Advance to next status
+    next_phase = WorkflowConfiguration.get_next_phase(current_status)
+    if not next_phase:
+        return ToolResponse(status="error", message=f"Failed to determine next phase for status '{current_status.value}'.")
 
-    message = f"Phase '{current_status.value}' approved. Task '{task_id}' is now in status '{next_status.value}'."
+    state_manager.update_task_status(task_id, next_phase.status)
+
+    message = f"Phase '{current_status.value}' approved. Task '{task_id}' is now in status '{next_phase.status.value}'."
     logger.info(message)
 
-    if next_status == TaskStatus.DONE:
+    if next_phase.terminal:
         message += "\n\nThe task is fully complete."
         return ToolResponse(status="success", message=message)
 
@@ -5992,7 +6847,7 @@ from typing import Optional, Type, Any
 from src.alfred.core.prompter import generate_prompt
 from src.alfred.core.workflow import BaseWorkflowTool
 from src.alfred.lib.logger import get_logger, setup_task_logging
-from src.alfred.lib.task_utils import load_task
+from src.alfred.lib.task_utils import load_task, load_task_with_error_details
 from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
 from src.alfred.orchestration.orchestrator import orchestrator
 from src.alfred.state.manager import state_manager
@@ -6019,9 +6874,9 @@ class BaseToolHandler(ABC):
         """Template method defining the algorithm structure for all tools."""
         setup_task_logging(task_id)
 
-        task = load_task(task_id)
+        task, error_msg = load_task_with_error_details(task_id)
         if not task:
-            return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
+            return ToolResponse(status="error", message=error_msg or f"Task '{task_id}' not found.")
 
         get_tool_result = self._get_or_create_tool(task_id, task)
         if isinstance(get_tool_result, ToolResponse):
@@ -6175,9 +7030,129 @@ async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
     return ToolResponse(status="success", message=f"Starting specification creation for task '{task_id}'.", next_prompt=prompt)
 
 ``````
------- src/alfred/tools/create_tasks.py ------
+------ src/alfred/tools/create_task.py ------
 ``````
-# src/alfred/tools/create_tasks.py
+"""
+Create Task Tool - Standardized task creation within Alfred
+"""
+
+import os
+from pathlib import Path
+from typing import Dict, Any
+from src.alfred.lib.logger import get_logger
+from src.alfred.lib.md_parser import MarkdownTaskParser
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.config.settings import settings
+
+logger = get_logger(__name__)
+
+TASK_TEMPLATE = """# TASK: SAMPLE-001
+
+## Title
+Example task demonstrating the correct format
+
+## Context
+This is a sample task file that demonstrates the correct markdown format expected by Alfred. It shows all required and optional sections that can be used when creating tasks.
+
+## Implementation Details
+Create a well-formatted markdown file that follows the exact structure expected by the MarkdownTaskParser. The file should include all required sections and demonstrate optional sections as well.
+
+## Acceptance Criteria
+- Task file must start with "# TASK: <task_id>" format
+- Must include Title, Context, Implementation Details, and Acceptance Criteria sections
+- Should follow the exact section headers expected by the parser
+- Must be parseable by the MarkdownTaskParser without errors
+
+## AC Verification
+- Verify that the md_parser can successfully parse the file
+- Confirm all required fields are extracted correctly
+- Test that the Task pydantic model can be created from parsed data
+- Ensure no validation errors occur during task loading
+
+## Dev Notes
+This file serves as both documentation and a working example. When creating new tasks, copy this format and modify the content as needed."""
+
+
+def create_task_impl(task_content: str) -> ToolResponse:
+    """
+    Creates a new task in the Alfred system by validating the format and saving to .alfred/tasks/.
+
+    Args:
+        task_content: Raw markdown content for the task in the expected template format
+
+    Returns:
+        ToolResponse with success/error status and guidance
+    """
+    try:
+        # Initialize parser
+        parser = MarkdownTaskParser()
+
+        # Validate format first
+        is_valid, error_msg = parser.validate_format(task_content)
+        if not is_valid:
+            return ToolResponse(
+                status="error",
+                message="Task content format is invalid.",
+                data={
+                    "validation_error": error_msg,
+                    "template": TASK_TEMPLATE,
+                    "help": "Your task content must follow the exact template format shown above. Key requirements:\n"
+                    "1. First line must be '# TASK: <task_id>'\n"
+                    "2. Must include sections: Title, Context, Implementation Details, Acceptance Criteria\n"
+                    "3. Sections must use '##' headers\n"
+                    "4. Content cannot be empty",
+                },
+            )
+
+        # Parse to extract task_id and validate structure
+        try:
+            parsed_data = parser.parse(task_content)
+            task_id = parsed_data.get("task_id")
+            if not task_id:
+                return ToolResponse(
+                    status="error", message="Unable to extract task_id from content.", data={"template": TASK_TEMPLATE, "help": "Ensure the first line follows the format: # TASK: <task_id>"}
+                )
+        except Exception as e:
+            return ToolResponse(
+                status="error", message="Failed to parse task content.", data={"parse_error": str(e), "template": TASK_TEMPLATE, "help": "Ensure your task content follows the exact template format."}
+            )
+
+        # Ensure .alfred/tasks directory exists
+        tasks_dir = Path(settings.alfred_dir) / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create task file path
+        task_file_path = tasks_dir / f"{task_id}.md"
+
+        # Check if task already exists
+        if task_file_path.exists():
+            return ToolResponse(
+                status="error", message=f"Task '{task_id}' already exists.", data={"existing_file": str(task_file_path), "help": "Choose a different task_id or update the existing task manually."}
+            )
+
+        # Write the task file
+        task_file_path.write_text(task_content, encoding="utf-8")
+
+        logger.info(f"Created new task file: {task_file_path}")
+
+        return ToolResponse(
+            status="success",
+            message=f"Task '{task_id}' created successfully.",
+            data={"task_id": task_id, "file_path": str(task_file_path), "task_title": parsed_data.get("title", ""), "next_action": "Use work_on_task(task_id) to start working on this task."},
+        )
+
+    except Exception as e:
+        logger.error(f"Error creating task: {e}")
+        return ToolResponse(
+            status="error",
+            message="An unexpected error occurred while creating the task.",
+            data={"error": str(e), "template": TASK_TEMPLATE, "help": "Please check the task content format and try again."},
+        )
+
+``````
+------ src/alfred/tools/create_tasks_from_spec.py ------
+``````
+# src/alfred/tools/create_tasks_from_spec.py
 from src.alfred.models.schemas import ToolResponse
 from src.alfred.constants import ToolName
 from src.alfred.core.workflow import CreateTasksTool
@@ -6188,19 +7163,29 @@ from src.alfred.state.manager import state_manager
 logger = get_logger(__name__)
 
 
-async def create_tasks_impl(task_id: str) -> ToolResponse:
+async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
     """
-    Initializes the workflow for creating tasks from a technical specification.
+    Creates a list of actionable tasks from a completed engineering specification.
 
     This is the second tool in the "idea-to-code" pipeline. It takes a completed
-    Technical Specification and breaks it down into actionable Task objects that
-    can be individually planned and implemented.
+    engineering specification and breaks it down into individual Task objects that
+    can be tracked, assigned, and implemented independently.
+
+    The tool guides through creating tasks that are:
+    - Atomic and focused
+    - Properly ordered with dependencies
+    - Sized appropriately (1-3 days of work)
+    - Complete with acceptance criteria
 
     Args:
-        task_id: The unique identifier for the epic/feature that has a completed spec
+        task_id: The unique identifier for the epic/feature with a completed engineering spec
 
     Returns:
-        ToolResponse containing the first prompt to guide task creation
+        ToolResponse containing the first prompt to guide task breakdown
+
+    Preconditions:
+        - Engineering specification must be completed (via create_spec)
+        - Task status must be "spec_completed"
     """
     # Load the task state
     task_state = state_manager.load_or_create_task_state(task_id)
@@ -6231,7 +7216,7 @@ async def create_tasks_impl(task_id: str) -> ToolResponse:
     # Update status
     state_manager.update_task_status(task_id, TaskStatus.CREATING_TASKS)
 
-    # Initialize the create_tasks tool
+    # Initialize the create_tasks_from_spec tool
     tool = CreateTasksTool(task_id)
 
     # Store the technical spec in context
@@ -6276,63 +7261,105 @@ async def create_tasks_impl(task_id: str) -> ToolResponse:
 ``````
 ------ src/alfred/tools/finalize_task.py ------
 ``````
-from typing import Optional, Any
+"""Finalize task implementation."""
 
-from src.alfred.models.schemas import ToolResponse, TaskStatus, Task
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.lib.logger import get_logger
-from src.alfred.lib.task_utils import load_task
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
-from src.alfred.core.workflow import BaseWorkflowTool, FinalizeTaskTool, FinalizeTaskState
-from src.alfred.core.prompter import generate_prompt
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.tools.tool_factory import get_tool_handler
 from src.alfred.constants import ToolName
-from src.alfred.tools.base_tool_handler import BaseToolHandler
 
-logger = get_logger(__name__)
-
-
-class FinalizeTaskHandler(BaseToolHandler):
-    """Handler for the finalize_task tool."""
-
-    def __init__(self):
-        super().__init__(
-            tool_name=ToolName.FINALIZE_TASK,
-            tool_class=FinalizeTaskTool,
-            required_status=TaskStatus.READY_FOR_FINALIZATION,
-        )
-
-    def _create_new_tool(self, task_id: str, task: Task) -> BaseWorkflowTool:
-        """Factory method to correctly instantiate FinalizeTaskTool."""
-        return FinalizeTaskTool(task_id=task_id)
-
-    async def _setup_tool(self, tool_instance: BaseWorkflowTool, task: Task, **kwargs: Any) -> Optional[ToolResponse]:
-        """Loads test results and dispatches the tool to the 'finalizing' state."""
-        if tool_instance.state == FinalizeTaskState.DISPATCHING.value:
-            task_state = state_manager.load_or_create(task.task_id)
-
-            # Load test results if available
-            test_results = task_state.completed_tool_outputs.get(ToolName.TEST_TASK)
-            if test_results:
-                tool_instance.context_store["test_results"] = test_results
-
-            # Dispatch to finalizing state
-            tool_instance.dispatch()
-
-            with state_manager.transaction() as uow:
-                uow.update_tool_state(task.task_id, tool_instance)
-
-            logger.info(f"Dispatched '{self.tool_name}' for task {task.task_id} to state '{tool_instance.state}'.")
-
-        return None
-
-
-finalize_task_handler = FinalizeTaskHandler()
+# Get the handler from factory
+finalize_task_handler = get_tool_handler(ToolName.FINALIZE_TASK)
 
 
 async def finalize_task_impl(task_id: str) -> ToolResponse:
     """Finalize task entry point - handles the completion phase"""
     return await finalize_task_handler.execute(task_id)
+
+``````
+------ src/alfred/tools/generic_handler.py ------
+``````
+"""
+Generic workflow handler that replaces all individual tool handlers.
+"""
+
+from typing import Optional, Any
+
+from src.alfred.core.workflow import BaseWorkflowTool
+from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
+from src.alfred.tools.base_tool_handler import BaseToolHandler
+from src.alfred.tools.workflow_config import WorkflowToolConfig
+from src.alfred.state.manager import state_manager
+from src.alfred.lib.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+class GenericWorkflowHandler(BaseToolHandler):
+    """
+    A single, configurable handler that replaces all individual workflow tool handlers.
+
+    This handler uses configuration to determine behavior, eliminating the need for
+    separate handler classes for each tool.
+    """
+
+    def __init__(self, config: WorkflowToolConfig):
+        """Initialize with a workflow configuration."""
+        super().__init__(
+            tool_name=config.tool_name,
+            tool_class=config.tool_class,
+            required_status=config.required_status,
+        )
+        self.config = config
+
+    def _create_new_tool(self, task_id: str, task: Task) -> BaseWorkflowTool:
+        """Factory method using the configured tool class."""
+        return self.config.tool_class(task_id=task_id)
+
+    async def _setup_tool(self, tool_instance: BaseWorkflowTool, task: Task, **kwargs: Any) -> Optional[ToolResponse]:
+        """
+        Generic setup logic driven by configuration.
+
+        This method handles:
+        1. Special validation (e.g., plan_task status check)
+        2. Context loading from previous phases
+        3. Auto-dispatch if configured
+        4. State persistence
+        """
+        # Special validation for plan_task
+        if self.config.tool_name == "plan_task":
+            if task.task_status not in [TaskStatus.NEW, TaskStatus.PLANNING]:
+                return ToolResponse(
+                    status="error",
+                    message=f"Task '{task.task_id}' has status '{task.task_status.value}'. Planning can only start on a 'new' or resume a 'planning' task.",
+                )
+
+        # Check if we should dispatch on initialization
+        if self.config.dispatch_on_init and tool_instance.state == self.config.dispatch_state_attr:
+            # Load task state for context
+            task_state = state_manager.load_or_create(task.task_id)
+
+            # Load context using configured loader
+            if self.config.context_loader:
+                try:
+                    context = self.config.context_loader(task, task_state)
+                    tool_instance.context_store.update(context)
+                except ValueError as e:
+                    # Context loader can raise ValueError for missing dependencies
+                    return ToolResponse(status="error", message=str(e))
+                except Exception as e:
+                    logger.error(f"Context loader failed for {self.config.tool_name}: {e}")
+                    return ToolResponse(status="error", message=f"Failed to load required context for {self.config.tool_name}: {str(e)}")
+
+            # Dispatch to next state
+            dispatch_method = getattr(tool_instance, self.config.target_state_method)
+            dispatch_method()
+
+            # Persist the state change
+            state_manager.update_tool_state(task.task_id, tool_instance)
+
+            logger.info(f"Dispatched '{self.config.tool_name}' for task {task.task_id} to state '{tool_instance.state}'.")
+
+        return None
 
 ``````
 ------ src/alfred/tools/get_next_task.py ------
@@ -6379,62 +7406,16 @@ async def get_next_task_impl() -> ToolResponse:
 ``````
 ------ src/alfred/tools/implement_task.py ------
 ``````
-# src/alfred/tools/implement_task.py
-from typing import Optional, Any
+"""Implement task implementation."""
 
-from src.alfred.core.workflow import BaseWorkflowTool, ImplementTaskTool, ImplementTaskState
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.tools.base_tool_handler import BaseToolHandler
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.tools.tool_factory import get_tool_handler
 from src.alfred.constants import ToolName
-from src.alfred.state.manager import state_manager
-from src.alfred.lib.logger import get_logger
 
-logger = get_logger(__name__)
-
-
-class ImplementTaskHandler(BaseToolHandler):
-    """Handler for the implement_task tool."""
-
-    def __init__(self):
-        super().__init__(
-            tool_name=ToolName.IMPLEMENT_TASK,
-            tool_class=ImplementTaskTool,
-            required_status=TaskStatus.READY_FOR_DEVELOPMENT,
-        )
-
-    def _create_new_tool(self, task_id: str, task: Task) -> BaseWorkflowTool:
-        """Factory method to correctly instantiate ImplementTaskTool."""
-        return ImplementTaskTool(task_id=task_id)
-
-    async def _setup_tool(self, tool_instance: BaseWorkflowTool, task: Task, **kwargs: Any) -> Optional[ToolResponse]:
-        """Loads the execution plan and dispatches the tool to the 'implementing' state."""
-        # Use the Enum for comparison
-        if tool_instance.state == ImplementTaskState.DISPATCHING.value:
-            task_state = state_manager.load_or_create(task.task_id)
-            execution_plan = task_state.completed_tool_outputs.get(ToolName.PLAN_TASK)
-
-            if not execution_plan:
-                return ToolResponse(
-                    status="error", message=f"CRITICAL: Cannot start implementation. Execution plan from 'plan_task' not found for task '{task.task_id}'. Please run 'plan_task' first."
-                )
-
-            # Store as artifact_content so the prompter can convert it to artifact_json for templates
-            tool_instance.context_store["artifact_content"] = execution_plan
-
-            tool_instance.dispatch()
-
-            with state_manager.transaction() as uow:
-                uow.update_tool_state(task.task_id, tool_instance)
-
-            logger.info(f"Dispatched '{self.tool_name}' for task {task.task_id} to state '{tool_instance.state}'.")
-
-        return None
+# Get the handler from factory
+implement_task_handler = get_tool_handler(ToolName.IMPLEMENT_TASK)
 
 
-implement_task_handler = ImplementTaskHandler()
-
-
-# Keep the old implementation function for backward compatibility
 async def implement_task_impl(task_id: str) -> ToolResponse:
     """Implementation logic for the implement_task tool."""
     return await implement_task_handler.execute(task_id)
@@ -6737,59 +7718,18 @@ def _validate_mcp_connectivity(provider: str) -> bool:
 ``````
 ------ src/alfred/tools/plan_task.py ------
 ``````
-# src/alfred/tools/plan_task.py
-from typing import Optional, Any
+"""Plan task implementation."""
 
-from src.alfred.core.workflow import BaseWorkflowTool, PlanTaskTool, PlanTaskState
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.tools.base_tool_handler import BaseToolHandler
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.tools.tool_factory import get_tool_handler
 from src.alfred.constants import ToolName
-from src.alfred.state.manager import state_manager
+
+# Get the handler from factory
+plan_task_handler = get_tool_handler(ToolName.PLAN_TASK)
 
 
-class PlanTaskHandler(BaseToolHandler):
-    """Handler for the plan_task tool."""
-
-    def __init__(self):
-        # THIS IS THE FIX for Blocker #1
-        super().__init__(
-            tool_name=ToolName.PLAN_TASK,
-            tool_class=PlanTaskTool,
-            required_status=None,  # Validation is handled in _setup_tool
-        )
-
-    def _create_new_tool(self, task_id: str, task: Task) -> BaseWorkflowTool:
-        """Factory method to correctly instantiate PlanTaskTool."""
-        # PlanTaskTool does not require special args for its __init__
-        return PlanTaskTool(task_id=task_id)
-
-    async def _setup_tool(self, tool_instance: BaseWorkflowTool, task: Task, **kwargs: Any) -> Optional[ToolResponse]:
-        """Validate status and handle initial dispatch."""
-        if task.task_status not in [TaskStatus.NEW, TaskStatus.PLANNING]:
-            return ToolResponse(
-                status="error",
-                message=f"Task '{task.task_id}' has status '{task.task_status.value}'. Planning can only start on a 'new' or resume a 'planning' task.",
-            )
-
-        # Status update is now handled by BaseToolHandler via ToolRegistry
-
-        # This is the crucial fix for Blocker #1.
-        # If the tool is in its initial state, we perform no action,
-        # as the initial prompt is already correct. The user will call
-        # `submit_work` to advance it.
-        if tool_instance.state == PlanTaskState.CONTEXTUALIZE.value:
-            # No dispatch needed, we are already in the correct starting state.
-            pass
-
-        return None
-
-
-plan_task_handler = PlanTaskHandler()
-
-
-# Keep the old implementation function for backward compatibility
 async def plan_task_impl(task_id: str) -> ToolResponse:
-    """Implementation logic for the plan_task tool with unified state."""
+    """Implementation logic for the plan_task tool."""
     return await plan_task_handler.execute(task_id)
 
 ``````
@@ -6855,8 +7795,7 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
         tool_instance.context_store["completed_subtasks"] = sorted(list(completed_subtasks))  # Store sorted for consistency
 
         # Persist the updated tool state
-        with state_manager.transaction() as uow:
-            uow.update_tool_state(task.task_id, tool_instance)
+        state_manager.update_tool_state(task.task_id, tool_instance)
 
         # Generate a progress report message
         completed_count = len(completed_subtasks)
@@ -6936,7 +7875,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         # Clear any previous feedback when approving
         if "feedback_notes" in active_tool.context_store:
             del active_tool.context_store["feedback_notes"]
-        
+
         if current_state.endswith("_awaiting_ai_review"):
             active_tool.trigger(Triggers.AI_APPROVE)
             message = "AI review approved. Awaiting human review."
@@ -6953,8 +7892,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         else:
             return ToolResponse(status="error", message=f"Cannot provide review from non-review state '{current_state}'.")
 
-    with state_manager.transaction() as uow:
-        uow.update_tool_state(task_id, active_tool)
+    state_manager.update_tool_state(task_id, active_tool)
 
     if active_tool.is_terminal:
         tool_name = active_tool.tool_name
@@ -6962,24 +7900,30 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         key = ArtifactKeys.get_artifact_key(final_state)
         artifact = active_tool.context_store.get(key)
 
-        with state_manager.transaction() as uow:
-            if artifact:
-                uow.add_completed_output(task_id, tool_name, artifact)
-            uow.clear_tool_state(task_id)
+        if artifact:
+            state_manager.add_completed_output(task_id, tool_name, artifact)
+        state_manager.clear_tool_state(task_id)
 
         orchestrator.active_tools.pop(task_id, None)
         cleanup_task_logging(task_id)
 
-        handoff = f"The '{tool_name}' workflow has completed successfully. To formally approve this phase, call `alfred.approve_and_advance(task_id='{task_id}')`."
+        handoff = f"""The '{tool_name}' workflow has completed successfully! 
+
+**Next Action Required:**
+Call `alfred.approve_and_advance(task_id='{task_id}')` to:
+- Archive the completed work
+- Advance to the next phase  
+- Update task status
+
+**Alternative:** If you need to review the work first, call `alfred.work_on_task(task_id='{task_id}')` to see current status."""
         return ToolResponse(status="success", message=f"'{tool_name}' completed. Awaiting final approval.", next_prompt=handoff)
 
     if not is_approved and feedback_notes:
         # Store feedback in the tool's context for persistence
         active_tool.context_store["feedback_notes"] = feedback_notes
         # Persist the updated tool state with feedback
-        with state_manager.transaction() as uow:
-            uow.update_tool_state(task_id, active_tool)
-    
+        state_manager.update_tool_state(task_id, active_tool)
+
     # Always use the tool's context (which now includes feedback if present)
     ctx = active_tool.context_store.copy()
 
@@ -7022,10 +7966,16 @@ class ToolConfig:
     """Immutable configuration for a registered tool."""
 
     name: str
-    handler_class: Type["BaseToolHandler"]  # Use forward reference
+    handler_class: Any  # Can be Type or Callable returning instance
     tool_class: Type[BaseWorkflowTool]
     entry_status_map: Dict[TaskStatus, TaskStatus]
     implementation: Callable[..., Coroutine[Any, Any, ToolResponse]]
+
+    def get_handler(self):
+        """Get handler instance, handling both class and instance cases."""
+        if callable(self.handler_class):
+            return self.handler_class()
+        return self.handler_class
 
 
 class ToolRegistry:
@@ -7037,7 +7987,7 @@ class ToolRegistry:
     def register(
         self,
         name: str,
-        handler_class: Type["BaseToolHandler"],  # Use forward reference
+        handler_class: Any,  # Can be Type or Callable returning instance
         tool_class: Type[BaseWorkflowTool],
         entry_status_map: Dict[TaskStatus, TaskStatus],
     ):
@@ -7079,61 +8029,19 @@ async def request_revision_impl(task_id: str, feedback_notes: str) -> ToolRespon
 ``````
 ------ src/alfred/tools/review_task.py ------
 ``````
-# src/alfred/tools/review_task.py
-from typing import Optional, Any
+"""Review task implementation."""
 
-from src.alfred.core.workflow import BaseWorkflowTool, ReviewTaskTool, ReviewTaskState
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.tools.base_tool_handler import BaseToolHandler
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.tools.tool_factory import get_tool_handler
 from src.alfred.constants import ToolName
-from src.alfred.state.manager import state_manager
-from src.alfred.lib.logger import get_logger
 
-logger = get_logger(__name__)
-
-
-class ReviewTaskHandler(BaseToolHandler):
-    """Handler for the review_task tool."""
-
-    def __init__(self):
-        super().__init__(
-            tool_name=ToolName.REVIEW_TASK,
-            tool_class=ReviewTaskTool,
-            required_status=TaskStatus.READY_FOR_REVIEW,
-        )
-
-    def _create_new_tool(self, task_id: str, task: Task) -> BaseWorkflowTool:
-        """Factory method to correctly instantiate ReviewTaskTool."""
-        return ReviewTaskTool(task_id=task_id)
-
-    async def _setup_tool(self, tool_instance: BaseWorkflowTool, task: Task, **kwargs: Any) -> Optional[ToolResponse]:
-        """Dispatches the tool to the 'reviewing' state."""
-        # Guard against incorrect status
-        if task.task_status != TaskStatus.READY_FOR_REVIEW and tool_instance.state == ReviewTaskState.DISPATCHING.value:
-            logger.warning(f"Task {task.task_id} is not in READY_FOR_REVIEW status. Current status: {task.task_status}")
-            return ToolResponse(status="error", message=f"Task '{task.task_id}' must be in READY_FOR_REVIEW status to start review.")
-
-        if tool_instance.state == ReviewTaskState.DISPATCHING.value:
-            # Load context from the previous (implementation) phase
-            task_state = state_manager.load_or_create(task.task_id)
-            implementation_manifest = task_state.completed_tool_outputs.get(ToolName.IMPLEMENT_TASK)
-
-            if not implementation_manifest:
-                logger.warning(f"Implementation manifest not found for task '{task.task_id}'. Review may lack context.")
-
-            tool_instance.context_store["implementation_manifest"] = implementation_manifest
-
-            tool_instance.dispatch()
-
-            with state_manager.transaction() as uow:
-                uow.update_tool_state(task.task_id, tool_instance)
-
-            logger.info(f"Dispatched '{self.tool_name}' for task {task.task_id} to state '{tool_instance.state}'.")
-
-        return None
+# Get the handler from factory
+review_task_handler = get_tool_handler(ToolName.REVIEW_TASK)
 
 
-review_task_handler = ReviewTaskHandler()
+async def review_task_impl(task_id: str) -> ToolResponse:
+    """Implementation logic for the review_task tool."""
+    return await review_task_handler.execute(task_id)
 
 ``````
 ------ src/alfred/tools/start_task.py ------
@@ -7247,17 +8155,20 @@ class SubmitWorkHandler(BaseToolHandler):
         current_state_enum = tool_instance.state
         current_state_val = tool_instance.state.value if hasattr(tool_instance.state, "value") else tool_instance.state
 
-        # 1. Validate the artifact against the model for the current state
+        # 1. Normalize artifact fields before validation
+        normalized_artifact = self._normalize_artifact(artifact)
+
+        # 2. Validate the artifact against the model for the current state
         artifact_model = tool_instance.artifact_map.get(current_state_enum)
         if artifact_model:
             try:
-                validated_artifact = artifact_model.model_validate(artifact)
+                validated_artifact = artifact_model.model_validate(normalized_artifact)
                 logger.info(LogMessages.ARTIFACT_VALIDATED.format(state=current_state_val, model=artifact_model.__name__))
             except ValidationError as e:
                 error_msg = f"{ErrorMessages.VALIDATION_FAILED.format(state=current_state_val)}. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
                 return ToolResponse(status=ResponseStatus.ERROR, message=error_msg)
         else:
-            validated_artifact = artifact  # No model to validate against
+            validated_artifact = normalized_artifact  # No model to validate against
 
         # 2. Store artifact and update scratchpad
         artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
@@ -7282,11 +8193,33 @@ class SubmitWorkHandler(BaseToolHandler):
         logger.info(LogMessages.STATE_TRANSITION.format(task_id=task.task_id, trigger=trigger_name, state=tool_instance.state))
 
         # 4. Persist the new state
-        with state_manager.transaction() as uow:
-            uow.update_tool_state(task.task_id, tool_instance)
+        state_manager.update_tool_state(task.task_id, tool_instance)
 
         # This handler's job is done; we return None to let the main execute method generate the response
         return None
+
+    def _normalize_artifact(self, artifact: dict) -> dict:
+        """Normalize artifact fields to handle case-insensitive inputs."""
+        if not isinstance(artifact, dict):
+            return artifact
+
+        normalized = artifact.copy()
+
+        # Normalize file_breakdown operations (for DesignArtifact)
+        if "file_breakdown" in normalized and isinstance(normalized["file_breakdown"], list):
+            for file_change in normalized["file_breakdown"]:
+                if isinstance(file_change, dict) and "operation" in file_change:
+                    # Normalize operation to uppercase
+                    file_change["operation"] = file_change["operation"].upper()
+
+        # Normalize subtasks operations (for ExecutionPlanArtifact)
+        if "subtasks" in normalized and isinstance(normalized["subtasks"], list):
+            for subtask in normalized["subtasks"]:
+                if isinstance(subtask, dict) and "operation" in subtask:
+                    # Normalize operation to uppercase
+                    subtask["operation"] = subtask["operation"].upper()
+
+        return normalized
 
 
 submit_work_handler = SubmitWorkHandler()
@@ -7302,57 +8235,454 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
 ``````
 ------ src/alfred/tools/test_task.py ------
 ``````
-# src/alfred/tools/test_task.py
-from typing import Optional, Any
+"""Test task implementation."""
 
-from src.alfred.core.workflow import BaseWorkflowTool, TestTaskTool, TestTaskState
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.tools.base_tool_handler import BaseToolHandler
+from src.alfred.models.schemas import ToolResponse
+from src.alfred.tools.tool_factory import get_tool_handler
 from src.alfred.constants import ToolName
-from src.alfred.state.manager import state_manager
+
+# Get the handler from factory
+test_task_handler = get_tool_handler(ToolName.TEST_TASK)
+
+
+async def test_task_impl(task_id: str) -> ToolResponse:
+    """Implementation logic for the test_task tool."""
+    return await test_task_handler.execute(task_id)
+
+``````
+------ src/alfred/tools/tool_commands.py ------
+``````
+"""
+Utility commands for tool management.
+"""
+
+from typing import List, Dict, Any
+
+from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS
+from src.alfred.tools.tool_factory import ToolFactory
+
+
+def list_tools() -> List[Dict[str, Any]]:
+    """List all available tools with their information."""
+    return [ToolFactory.get_tool_info(name) for name in sorted(TOOL_DEFINITIONS.keys())]
+
+
+def validate_tools() -> Dict[str, List[str]]:
+    """Validate all tool definitions and return any issues."""
+    issues = {}
+
+    for name, definition in TOOL_DEFINITIONS.items():
+        tool_issues = []
+
+        # Check for common issues
+        if not definition.description:
+            tool_issues.append("Missing description")
+
+        if definition.work_states and not definition.terminal_state:
+            tool_issues.append("Has work states but no terminal state")
+
+        if definition.entry_statuses and not definition.exit_status:
+            tool_issues.append("Has entry statuses but no exit status")
+
+        # Try to create handler
+        try:
+            ToolFactory.create_handler(name)
+        except Exception as e:
+            tool_issues.append(f"Handler creation failed: {e}")
+
+        if tool_issues:
+            issues[name] = tool_issues
+
+    return issues
+
+
+def generate_tool_documentation() -> str:
+    """Generate markdown documentation for all tools."""
+    lines = ["# Alfred Tools Documentation\n"]
+
+    for name in sorted(TOOL_DEFINITIONS.keys()):
+        definition = TOOL_DEFINITIONS[name]
+        info = ToolFactory.get_tool_info(name)
+
+        lines.append(f"## {name}\n")
+        lines.append(f"{definition.description}\n")
+        lines.append(f"- **Entry Statuses**: {', '.join(info['entry_statuses'])}")
+        lines.append(f"- **Required Status**: {info['required_status'] or 'None'}")
+        lines.append(f"- **Work States**: {', '.join(info['work_states'])}")
+        lines.append(f"- **Auto-dispatch**: {info['dispatch_on_init']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+``````
+------ src/alfred/tools/tool_definitions.py ------
+``````
+"""
+Declarative tool definition system for Alfred.
+
+This module contains all tool definitions in a single place,
+making it trivial to add new tools or modify existing ones.
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Type, Optional, Callable, Any
+from enum import Enum
+
+from src.alfred.core.workflow import (
+    BaseWorkflowTool,
+    PlanTaskTool,
+    PlanTaskState,
+    StartTaskTool,
+    StartTaskState,
+    ImplementTaskTool,
+    ImplementTaskState,
+    ReviewTaskTool,
+    ReviewTaskState,
+    TestTaskTool,
+    TestTaskState,
+    FinalizeTaskTool,
+    FinalizeTaskState,
+    CreateSpecTool,
+    CreateSpecState,
+    CreateTasksTool,
+    CreateTasksState,
+)
+from src.alfred.models.schemas import TaskStatus
+from src.alfred.constants import ToolName
+
+
+@dataclass
+class ToolDefinition:
+    """Complete definition of a workflow tool."""
+
+    # Basic info
+    name: str
+    tool_class: Type[BaseWorkflowTool]
+    description: str
+
+    # States
+    work_states: List[Enum] = field(default_factory=list)
+    dispatch_state: Optional[Enum] = None
+    terminal_state: Optional[Enum] = None
+    initial_state: Optional[Enum] = None
+
+    # Status mapping
+    entry_statuses: List[TaskStatus] = field(default_factory=list)
+    exit_status: Optional[TaskStatus] = None
+    required_status: Optional[TaskStatus] = None
+
+    # Behavior flags
+    dispatch_on_init: bool = False
+    produces_artifacts: bool = True
+    requires_artifact_from: Optional[str] = None
+
+    # Context loading
+    context_loader: Optional[Callable[[Any, Any], Dict[str, Any]]] = None
+
+    # Validation
+    custom_validator: Optional[Callable[[Any], Optional[str]]] = None
+
+    def get_entry_status_map(self) -> Dict[TaskStatus, TaskStatus]:
+        """Build entry status map from definition."""
+        if not self.exit_status:
+            return {}
+
+        return {entry: self.exit_status for entry in self.entry_statuses}
+
+    def get_all_states(self) -> List[str]:
+        """Get all states including review states."""
+        states = []
+
+        # Add dispatch state if exists
+        if self.dispatch_state:
+            states.append(self.dispatch_state.value)
+
+        # Add work states and their review states
+        for state in self.work_states:
+            state_value = state.value if hasattr(state, "value") else str(state)
+            states.append(state_value)
+            states.append(f"{state_value}_awaiting_ai_review")
+            states.append(f"{state_value}_awaiting_human_review")
+
+        # Add terminal state
+        if self.terminal_state:
+            states.append(self.terminal_state.value)
+
+        return states
+
+    def validate(self) -> None:
+        """Validate the tool definition for consistency."""
+        if self.dispatch_on_init and not self.dispatch_state:
+            raise ValueError(f"Tool {self.name} has dispatch_on_init=True but no dispatch_state")
+
+        if self.work_states and not self.terminal_state:
+            raise ValueError(f"Tool {self.name} has work states but no terminal state")
+
+        if self.entry_statuses and not self.exit_status:
+            raise ValueError(f"Tool {self.name} has entry statuses but no exit status")
+
+
+# Context loaders
+def load_execution_plan_context(task, task_state):
+    """Load execution plan for implement_task."""
+    execution_plan = task_state.completed_tool_outputs.get(ToolName.PLAN_TASK)
+    if not execution_plan:
+        raise ValueError(f"CRITICAL: Cannot start implementation. Execution plan from 'plan_task' not found for task '{task.task_id}'.")
+    return {"artifact_content": execution_plan}
+
+
+def load_implementation_context(task, task_state):
+    """Load implementation manifest for review_task."""
+    manifest = task_state.completed_tool_outputs.get(ToolName.IMPLEMENT_TASK)
+    return {"implementation_manifest": manifest}
+
+
+def load_test_context(task, task_state):
+    """Load test context from task."""
+    return {"ac_verification_steps": getattr(task, "ac_verification_steps", [])}
+
+
+def load_finalize_context(task, task_state):
+    """Load test results for finalize_task."""
+    test_results = task_state.completed_tool_outputs.get(ToolName.TEST_TASK)
+    return {"test_results": test_results} if test_results else {}
+
+
+def load_spec_context(task, task_state):
+    """Load technical spec for create_tasks."""
+    # This is loaded from archive, not task state
+    return {}  # Handled specially in create_tasks_impl
+
+
+# Custom validators
+def validate_plan_task_status(task) -> Optional[str]:
+    """Validate that task is in correct status for planning."""
+    if task.task_status not in [TaskStatus.NEW, TaskStatus.PLANNING]:
+        return f"Task '{task.task_id}' has status '{task.task_status.value}'. Planning can only start on a 'new' or resume a 'planning' task."
+    return None
+
+
+# Define all tools declaratively
+TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
+    ToolName.PLAN_TASK: ToolDefinition(
+        name=ToolName.PLAN_TASK,
+        tool_class=PlanTaskTool,
+        description="Create detailed execution plan for a task",
+        work_states=[
+            PlanTaskState.CONTEXTUALIZE,
+            PlanTaskState.STRATEGIZE,
+            PlanTaskState.DESIGN,
+            PlanTaskState.GENERATE_SUBTASKS,
+        ],
+        terminal_state=PlanTaskState.VERIFIED,
+        initial_state=PlanTaskState.CONTEXTUALIZE,
+        entry_statuses=[TaskStatus.NEW, TaskStatus.PLANNING, TaskStatus.TASKS_CREATED],
+        exit_status=TaskStatus.PLANNING,
+        dispatch_on_init=False,
+        custom_validator=validate_plan_task_status,
+    ),
+    ToolName.START_TASK: ToolDefinition(
+        name=ToolName.START_TASK,
+        tool_class=StartTaskTool,
+        description="Setup git environment for task",
+        work_states=[
+            StartTaskState.AWAITING_GIT_STATUS,
+            StartTaskState.AWAITING_BRANCH_CREATION,
+        ],
+        terminal_state=StartTaskState.VERIFIED,
+        initial_state=StartTaskState.AWAITING_GIT_STATUS,
+        entry_statuses=[TaskStatus.NEW, TaskStatus.PLANNING],
+        exit_status=TaskStatus.PLANNING,
+        dispatch_on_init=False,
+    ),
+    ToolName.IMPLEMENT_TASK: ToolDefinition(
+        name=ToolName.IMPLEMENT_TASK,
+        tool_class=ImplementTaskTool,
+        description="Execute the planned implementation",
+        work_states=[ImplementTaskState.IMPLEMENTING],
+        dispatch_state=ImplementTaskState.DISPATCHING,
+        terminal_state=ImplementTaskState.VERIFIED,
+        initial_state=ImplementTaskState.DISPATCHING,
+        entry_statuses=[TaskStatus.READY_FOR_DEVELOPMENT, TaskStatus.IN_DEVELOPMENT],
+        exit_status=TaskStatus.IN_DEVELOPMENT,
+        required_status=TaskStatus.READY_FOR_DEVELOPMENT,
+        dispatch_on_init=True,
+        requires_artifact_from=ToolName.PLAN_TASK,
+        context_loader=load_execution_plan_context,
+    ),
+    ToolName.REVIEW_TASK: ToolDefinition(
+        name=ToolName.REVIEW_TASK,
+        tool_class=ReviewTaskTool,
+        description="Perform code review",
+        work_states=[ReviewTaskState.REVIEWING],
+        dispatch_state=ReviewTaskState.DISPATCHING,
+        terminal_state=ReviewTaskState.VERIFIED,
+        initial_state=ReviewTaskState.DISPATCHING,
+        entry_statuses=[TaskStatus.READY_FOR_REVIEW, TaskStatus.IN_REVIEW],
+        exit_status=TaskStatus.IN_REVIEW,
+        required_status=TaskStatus.READY_FOR_REVIEW,
+        dispatch_on_init=True,
+        context_loader=load_implementation_context,
+    ),
+    ToolName.TEST_TASK: ToolDefinition(
+        name=ToolName.TEST_TASK,
+        tool_class=TestTaskTool,
+        description="Run and validate tests",
+        work_states=[TestTaskState.TESTING],
+        dispatch_state=TestTaskState.DISPATCHING,
+        terminal_state=TestTaskState.VERIFIED,
+        initial_state=TestTaskState.DISPATCHING,
+        entry_statuses=[TaskStatus.READY_FOR_TESTING, TaskStatus.IN_TESTING],
+        exit_status=TaskStatus.IN_TESTING,
+        required_status=TaskStatus.READY_FOR_TESTING,
+        dispatch_on_init=True,
+        context_loader=load_test_context,
+    ),
+    ToolName.FINALIZE_TASK: ToolDefinition(
+        name=ToolName.FINALIZE_TASK,
+        tool_class=FinalizeTaskTool,
+        description="Create commit and pull request",
+        work_states=[FinalizeTaskState.FINALIZING],
+        dispatch_state=FinalizeTaskState.DISPATCHING,
+        terminal_state=FinalizeTaskState.VERIFIED,
+        initial_state=FinalizeTaskState.DISPATCHING,
+        entry_statuses=[TaskStatus.READY_FOR_FINALIZATION, TaskStatus.IN_FINALIZATION],
+        exit_status=TaskStatus.IN_FINALIZATION,
+        required_status=TaskStatus.READY_FOR_FINALIZATION,
+        dispatch_on_init=True,
+        context_loader=load_finalize_context,
+    ),
+    ToolName.CREATE_SPEC: ToolDefinition(
+        name=ToolName.CREATE_SPEC,
+        tool_class=CreateSpecTool,
+        description="Create technical specification from PRD",
+        work_states=[CreateSpecState.DRAFTING_SPEC],
+        dispatch_state=CreateSpecState.DISPATCHING,
+        terminal_state=CreateSpecState.VERIFIED,
+        initial_state=CreateSpecState.DISPATCHING,
+        entry_statuses=[TaskStatus.NEW, TaskStatus.CREATING_SPEC],
+        exit_status=TaskStatus.CREATING_SPEC,
+        dispatch_on_init=True,
+    ),
+    ToolName.CREATE_TASKS_FROM_SPEC: ToolDefinition(
+        name=ToolName.CREATE_TASKS_FROM_SPEC,
+        tool_class=CreateTasksTool,
+        description="Break down spec into actionable tasks",
+        work_states=[CreateTasksState.DRAFTING_TASKS],
+        dispatch_state=CreateTasksState.DISPATCHING,
+        terminal_state=CreateTasksState.VERIFIED,
+        initial_state=CreateTasksState.DISPATCHING,
+        entry_statuses=[TaskStatus.SPEC_COMPLETED, TaskStatus.CREATING_TASKS],
+        exit_status=TaskStatus.CREATING_TASKS,
+        required_status=TaskStatus.SPEC_COMPLETED,
+        dispatch_on_init=True,
+        context_loader=load_spec_context,
+    ),
+}
+
+
+# Validate all definitions on module load
+for tool_def in TOOL_DEFINITIONS.values():
+    tool_def.validate()
+
+
+def get_tool_definition(tool_name: str) -> ToolDefinition:
+    """Get tool definition by name."""
+    if tool_name not in TOOL_DEFINITIONS:
+        raise ValueError(f"Unknown tool: {tool_name}")
+    return TOOL_DEFINITIONS[tool_name]
+
+
+def get_all_tool_names() -> List[str]:
+    """Get all registered tool names."""
+    return sorted(TOOL_DEFINITIONS.keys())
+
+``````
+------ src/alfred/tools/tool_factory.py ------
+``````
+"""
+Factory for creating tools from definitions.
+"""
+
+from typing import Dict, Any, Optional
+
+from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS, ToolDefinition
+from src.alfred.tools.generic_handler import GenericWorkflowHandler
+from src.alfred.tools.workflow_config import WorkflowToolConfig
+from src.alfred.models.schemas import ToolResponse
 from src.alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class TestTaskHandler(BaseToolHandler):
-    """Handler for the test_task tool."""
+class ToolFactory:
+    """Factory for creating tool handlers from definitions."""
 
-    def __init__(self):
-        super().__init__(
-            tool_name=ToolName.TEST_TASK,
-            tool_class=TestTaskTool,
-            required_status=TaskStatus.READY_FOR_TESTING,
+    @staticmethod
+    def create_handler(tool_name: str) -> GenericWorkflowHandler:
+        """Create a handler for the given tool."""
+        definition = TOOL_DEFINITIONS.get(tool_name)
+        if not definition:
+            raise ValueError(f"No definition found for tool: {tool_name}")
+
+        # Convert ToolDefinition to WorkflowToolConfig
+        config = WorkflowToolConfig(
+            tool_name=definition.name,
+            tool_class=definition.tool_class,
+            required_status=definition.required_status,
+            entry_status_map=definition.get_entry_status_map(),
+            dispatch_on_init=definition.dispatch_on_init,
+            dispatch_state_attr=(definition.dispatch_state.value if definition.dispatch_state and hasattr(definition.dispatch_state, "value") else None),
+            context_loader=definition.context_loader,
+            requires_artifact_from=definition.requires_artifact_from,
         )
 
-    def _create_new_tool(self, task_id: str, task: Task) -> BaseWorkflowTool:
-        """Factory method to correctly instantiate TestTaskTool."""
-        return TestTaskTool(task_id=task_id)
+        return GenericWorkflowHandler(config)
 
-    async def _setup_tool(self, tool_instance: BaseWorkflowTool, task: Task, **kwargs: Any) -> Optional[ToolResponse]:
-        """Dispatches the tool to the 'testing' state."""
-        if tool_instance.state == TestTaskState.DISPATCHING.value:
-            # Load context from the original task definition for verification steps
-            tool_instance.context_store["ac_verification_steps"] = getattr(task, "ac_verification_steps", [])
+    @staticmethod
+    async def execute_tool(tool_name: str, **kwargs) -> ToolResponse:
+        """Execute a tool by name with the given arguments."""
+        try:
+            handler = ToolFactory.create_handler(tool_name)
+            return await handler.execute(**kwargs)
+        except Exception as e:
+            logger.error(f"Failed to execute tool {tool_name}: {e}", exc_info=True)
+            return ToolResponse(status="error", message=f"Failed to execute tool {tool_name}: {str(e)}")
 
-            tool_instance.dispatch()
+    @staticmethod
+    def get_tool_info(tool_name: str) -> Dict[str, Any]:
+        """Get information about a tool."""
+        definition = TOOL_DEFINITIONS.get(tool_name)
+        if not definition:
+            return {"error": f"Unknown tool: {tool_name}"}
 
-            with state_manager.transaction() as uow:
-                uow.update_tool_state(task.task_id, tool_instance)
+        return {
+            "name": definition.name,
+            "description": definition.description,
+            "entry_statuses": [s.value for s in definition.entry_statuses],
+            "required_status": definition.required_status.value if definition.required_status else None,
+            "produces_artifacts": definition.produces_artifacts,
+            "work_states": [s.value for s in definition.work_states],
+            "dispatch_on_init": definition.dispatch_on_init,
+        }
 
-            logger.info(f"Dispatched '{self.tool_name}' for task {task.task_id} to state '{tool_instance.state}'.")
 
-        return None
+# Create singleton handlers for backward compatibility
+_tool_handlers: Dict[str, GenericWorkflowHandler] = {}
 
 
-test_task_handler = TestTaskHandler()
+def get_tool_handler(tool_name: str) -> GenericWorkflowHandler:
+    """Get or create a singleton handler for a tool."""
+    if tool_name not in _tool_handlers:
+        _tool_handlers[tool_name] = ToolFactory.create_handler(tool_name)
+    return _tool_handlers[tool_name]
 
 ``````
 ------ src/alfred/tools/work_on.py ------
 ``````
 from src.alfred.state.manager import state_manager
 from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.constants import ToolName
+from src.alfred.core.workflow_config import WorkflowConfiguration
 from src.alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
 from src.alfred.task_providers.factory import get_provider
 from src.alfred.lib.logger import get_logger
@@ -7361,6 +8691,8 @@ logger = get_logger(__name__)
 
 
 def work_on_impl(task_id: str) -> ToolResponse:
+    """Smart dispatch using centralized workflow configuration."""
+
     # Step 1: Check if the task exists locally first (cache-first architecture)
     if not does_task_exist_locally(task_id):
         logger.info(f"Task '{task_id}' not found in local cache. Fetching from provider...")
@@ -7391,37 +8723,79 @@ def work_on_impl(task_id: str) -> ToolResponse:
             logger.error(f"Failed to fetch task from provider: {e}")
             return ToolResponse(status="error", message=f"Failed to fetch task '{task_id}' from provider: {str(e)}")
 
-    # Step 3: Now that the task is guaranteed to be local, proceed with the
-    # original "Smart Dispatch" logic
+    # Step 3: Use centralized workflow config for smart dispatch
     task_state = state_manager.load_or_create_task_state(task_id)
     task_status = task_state.task_status
 
-    handoff_tool_map = {
-        TaskStatus.NEW: ToolName.PLAN_TASK,  # Start with creating spec for new epics
-        TaskStatus.CREATING_SPEC: ToolName.CREATE_SPEC,
-        TaskStatus.SPEC_COMPLETED: ToolName.CREATE_TASKS,
-        TaskStatus.CREATING_TASKS: ToolName.CREATE_TASKS,
-        TaskStatus.TASKS_CREATED: ToolName.PLAN_TASK,  # After tasks are created, plan the first one
-        TaskStatus.PLANNING: ToolName.PLAN_TASK,
-        TaskStatus.READY_FOR_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
-        TaskStatus.IN_DEVELOPMENT: ToolName.IMPLEMENT_TASK,
-        TaskStatus.READY_FOR_REVIEW: ToolName.REVIEW_TASK,
-        TaskStatus.IN_REVIEW: ToolName.REVIEW_TASK,
-        TaskStatus.READY_FOR_TESTING: ToolName.TEST_TASK,
-        TaskStatus.IN_TESTING: ToolName.TEST_TASK,
-        TaskStatus.READY_FOR_FINALIZATION: ToolName.FINALIZE_TASK,
-    }
+    # Get the appropriate tool from workflow configuration
+    next_tool = WorkflowConfiguration.get_tool_for_status(task_status)
 
-    if task_status in handoff_tool_map:
-        handoff_tool = handoff_tool_map[task_status]
-        message = f"Task '{task_id}' is in status '{task_status.value}'. The next action is to use the '{handoff_tool}' tool."
-        next_prompt = f"To proceed with task '{task_id}', call `alfred.{handoff_tool}(task_id='{task_id}')`."
+    if next_tool:
+        phase = WorkflowConfiguration.get_phase(task_status)
+        message = f"Task '{task_id}' is in status '{task_status.value}'. The next action is to use the '{next_tool}' tool."
+
+        if phase and phase.description:
+            message += f"\nPhase: {phase.description}"
+
+        next_prompt = f"To proceed with task '{task_id}', call `alfred.{next_tool}(task_id='{task_id}')`."
         return ToolResponse(status="success", message=message, next_prompt=next_prompt)
 
-    if task_status == TaskStatus.DONE:
+    # Check if task is done
+    if WorkflowConfiguration.is_terminal_status(task_status):
         return ToolResponse(status="success", message=f"Task '{task_id}' is already done. No further action is required.")
 
-    return ToolResponse(status="error", message=f"Unhandled status '{task_status.value}' for task '{task_id}'.")
+    # Unknown status
+    return ToolResponse(status="error", message=f"Unhandled status '{task_status.value}' for task '{task_id}'. This may be a configuration error.")
+
+``````
+------ src/alfred/tools/workflow_config.py ------
+``````
+"""
+Workflow tool configuration system for eliminating handler duplication.
+"""
+
+from dataclasses import dataclass
+from typing import Optional, Dict, Type, Callable, Any
+from enum import Enum
+
+from src.alfred.core.workflow import BaseWorkflowTool
+from src.alfred.models.schemas import TaskStatus
+
+
+@dataclass
+class WorkflowToolConfig:
+    """Configuration for a workflow tool, replacing individual handlers."""
+
+    # Basic configuration
+    tool_name: str
+    tool_class: Type[BaseWorkflowTool]
+    required_status: Optional[TaskStatus] = None
+
+    # Entry status mapping (for status transitions on tool creation)
+    entry_status_map: Dict[TaskStatus, TaskStatus] = None
+
+    # Dispatch configuration
+    dispatch_on_init: bool = False
+    dispatch_state_attr: Optional[str] = None  # e.g., "DISPATCHING"
+    target_state_method: str = "dispatch"  # method to call for state transition
+
+    # Context loading configuration
+    context_loader: Optional[Callable[[Any, Any], Dict[str, Any]]] = None
+
+    # Validation
+    requires_artifact_from: Optional[str] = None  # e.g., ToolName.PLAN_TASK
+
+    def __post_init__(self):
+        """Validate configuration consistency."""
+        if self.dispatch_on_init and not self.dispatch_state_attr:
+            raise ValueError(f"Tool {self.tool_name} has dispatch_on_init=True but no dispatch_state_attr")
+
+        if self.entry_status_map is None:
+            self.entry_status_map = {}
+
+
+# NOTE: Individual tool configurations have been moved to tool_definitions.py
+# This file now only contains the WorkflowToolConfig class for backward compatibility.
 
 ``````
 ------ src/alfred/workflow.yml ------
@@ -7436,9 +8810,9 @@ tools:
     enabled: true
     description: "Create technical specification from PRD"
   
-  create_tasks:
+  create_tasks_from_spec:
     enabled: true
-    description: "Break down spec into actionable tasks"
+    description: "Break down engineering spec into actionable tasks"
   
   plan_task:
     enabled: true
@@ -7499,4 +8873,103 @@ debug:
   
   # Log level (DEBUG, INFO, WARNING, ERROR)
   log_level: INFO
+``````
+------ src/alfred_task_manager.egg-info/SOURCES.txt ------
+``````
+README.md
+pyproject.toml
+src/alfred/__init__.py
+src/alfred/constants.py
+src/alfred/server.py
+src/alfred/config/__init__.py
+src/alfred/config/manager.py
+src/alfred/config/settings.py
+src/alfred/core/__init__.py
+src/alfred/core/prompter.py
+src/alfred/core/state_machine_builder.py
+src/alfred/core/workflow.py
+src/alfred/lib/artifact_manager.py
+src/alfred/lib/fs_utils.py
+src/alfred/lib/logger.py
+src/alfred/lib/md_parser.py
+src/alfred/lib/structured_logger.py
+src/alfred/lib/task_utils.py
+src/alfred/lib/transaction_logger.py
+src/alfred/models/__init__.py
+src/alfred/models/alfred_config.py
+src/alfred/models/config.py
+src/alfred/models/engineering_spec.py
+src/alfred/models/planning_artifacts.py
+src/alfred/models/schemas.py
+src/alfred/models/state.py
+src/alfred/orchestration/__init__.py
+src/alfred/orchestration/orchestrator.py
+src/alfred/state/__init__.py
+src/alfred/state/manager.py
+src/alfred/state/recovery.py
+src/alfred/task_providers/__init__.py
+src/alfred/task_providers/base.py
+src/alfred/task_providers/factory.py
+src/alfred/task_providers/jira_provider.py
+src/alfred/task_providers/local_provider.py
+src/alfred/templates/__init__.py
+src/alfred/templates/prompts/__init__.py
+src/alfred/tools/__init__.py
+src/alfred/tools/approve_and_advance.py
+src/alfred/tools/approve_review.py
+src/alfred/tools/base_tool_handler.py
+src/alfred/tools/create_spec.py
+src/alfred/tools/create_tasks.py
+src/alfred/tools/finalize_task.py
+src/alfred/tools/generic_handler.py
+src/alfred/tools/get_next_task.py
+src/alfred/tools/implement_task.py
+src/alfred/tools/initialize.py
+src/alfred/tools/plan_task.py
+src/alfred/tools/progress.py
+src/alfred/tools/provide_review_logic.py
+src/alfred/tools/registry.py
+src/alfred/tools/request_revision.py
+src/alfred/tools/review_task.py
+src/alfred/tools/start_task.py
+src/alfred/tools/submit_work.py
+src/alfred/tools/test_task.py
+src/alfred/tools/work_on.py
+src/alfred/tools/workflow_config.py
+src/alfred_task_manager.egg-info/PKG-INFO
+src/alfred_task_manager.egg-info/SOURCES.txt
+src/alfred_task_manager.egg-info/dependency_links.txt
+src/alfred_task_manager.egg-info/requires.txt
+src/alfred_task_manager.egg-info/top_level.txt
+``````
+------ src/alfred_task_manager.egg-info/dependency_links.txt ------
+``````
+
+
+``````
+------ src/alfred_task_manager.egg-info/requires.txt ------
+``````
+fastmcp>=2.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+transitions>=0.9.0
+python-dateutil>=2.8.0
+aiofiles>=23.0.0
+jira>=3.5.0
+python-dotenv>=1.1.0
+PyYAML>=6.0.0
+Jinja2>=3.0.0
+tabulate>=0.9.0
+
+[dev]
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+ruff>=0.1.0
+pre-commit>=3.0.0
+
+``````
+------ src/alfred_task_manager.egg-info/top_level.txt ------
+``````
+alfred
+
 ``````

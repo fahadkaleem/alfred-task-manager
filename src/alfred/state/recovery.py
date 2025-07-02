@@ -6,20 +6,11 @@ Handles reconstruction of workflow tools from persisted state.
 
 from typing import Dict, Optional, Type
 
-from src.alfred.core.workflow import (
-    BaseWorkflowTool,
-    CreateSpecTool,
-    CreateTasksTool,
-    PlanTaskTool,
-    StartTaskTool,
-    ImplementTaskTool,
-    ReviewTaskTool,
-    TestTaskTool,
-    FinalizeTaskTool,
-)
+from src.alfred.core.workflow import BaseWorkflowTool
 from src.alfred.lib.logger import get_logger
 from src.alfred.state.manager import state_manager
 from src.alfred.constants import ToolName
+from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS
 
 logger = get_logger(__name__)
 
@@ -27,16 +18,8 @@ logger = get_logger(__name__)
 class ToolRecovery:
     """Handles recovery of workflow tools from persisted state."""
 
-    TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {
-        ToolName.CREATE_SPEC: CreateSpecTool,
-        ToolName.CREATE_TASKS_FROM_SPEC: CreateTasksTool,
-        ToolName.START_TASK: StartTaskTool,
-        ToolName.PLAN_TASK: PlanTaskTool,
-        ToolName.IMPLEMENT_TASK: ImplementTaskTool,
-        ToolName.REVIEW_TASK: ReviewTaskTool,
-        ToolName.TEST_TASK: TestTaskTool,
-        ToolName.FINALIZE_TASK: FinalizeTaskTool,
-    }
+    # Build registry from definitions
+    TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {name: definition.tool_class for name, definition in TOOL_DEFINITIONS.items()}
 
     @classmethod
     def recover_tool(cls, task_id: str) -> Optional[BaseWorkflowTool]:

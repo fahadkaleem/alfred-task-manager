@@ -1,13 +1,11 @@
-# src/alfred/tools/plan_task.py
-"""Plan task implementation using generic handler."""
+"""Plan task implementation."""
 
 from src.alfred.models.schemas import ToolResponse
-from src.alfred.tools.generic_handler import GenericWorkflowHandler
-from src.alfred.tools.workflow_config import WORKFLOW_TOOL_CONFIGS
+from src.alfred.tools.tool_factory import get_tool_handler
 from src.alfred.constants import ToolName
 
-# Create the handler instance
-plan_task_handler = GenericWorkflowHandler(WORKFLOW_TOOL_CONFIGS[ToolName.PLAN_TASK])
+# Get the handler from factory
+plan_task_handler = get_tool_handler(ToolName.PLAN_TASK)
 
 
 async def plan_task_impl(task_id: str) -> ToolResponse:

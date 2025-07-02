@@ -1,9 +1,10 @@
 from typing import Dict, Any
 from datetime import datetime
 
+
 class MockTaskDataFactory:
     """Factory class for generating test data for Alfred MCP tools validation."""
-    
+
     @staticmethod
     def create_test_task(task_id: str) -> Dict[str, Any]:
         """Create a test task with standard fields."""
@@ -14,9 +15,9 @@ class MockTaskDataFactory:
             "status": "new",
             "created_at": datetime.now().isoformat(),
             "priority": "medium",
-            "tags": ["test", "validation"]
+            "tags": ["test", "validation"],
         }
-    
+
     @staticmethod
     def create_test_artifacts() -> Dict[str, Any]:
         """Create sample artifacts for planning phase testing."""
@@ -24,20 +25,20 @@ class MockTaskDataFactory:
             "context": {
                 "understanding": "This is a test task for validating MCP tools functionality",
                 "constraints": ["Must follow LOST framework", "Must complete all subtasks"],
-                "risks": ["Tool integration issues", "State persistence problems"]
+                "risks": ["Tool integration issues", "State persistence problems"],
             },
             "strategy": {
                 "approach": "Create comprehensive test suite",
                 "architecture": "Modular utility classes for different test aspects",
-                "dependencies": ["Alfred state manager", "MCP tool interfaces"]
+                "dependencies": ["Alfred state manager", "MCP tool interfaces"],
             },
             "design": {
                 "components": ["MockTaskDataFactory", "StateVerificationUtility", "ErrorScenarioTestSuite"],
                 "interfaces": ["Standard Python class interfaces"],
-                "data_flow": "Test data -> Validation -> Results -> Reporting"
-            }
+                "data_flow": "Test data -> Validation -> Results -> Reporting",
+            },
         }
-    
+
     @staticmethod
     def create_invalid_data() -> Dict[str, Any]:
         """Create malformed data for error testing."""
@@ -45,5 +46,5 @@ class MockTaskDataFactory:
             "missing_required_field": {"title": "Missing task_id"},
             "invalid_types": {"task_id": 12345, "status": ["invalid", "list"]},
             "empty_strings": {"task_id": "", "title": "", "description": ""},
-            "none_values": {"task_id": None, "title": None, "status": None}
+            "none_values": {"task_id": None, "title": None, "status": None},
         }

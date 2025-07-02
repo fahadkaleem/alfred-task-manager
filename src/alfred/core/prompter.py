@@ -98,13 +98,13 @@ class PromptLibrary:
     def get(self, prompt_key: str, context: Dict[str, Any] = None) -> Union[PromptTemplate, str]:
         """
         Get a prompt template by key.
-        
+
         First checks for file-based template, then falls back to template class.
         """
         # Check file-based cache first
         if prompt_key in self._cache:
             return self._cache[prompt_key]
-        
+
         # Check if we have a template class
         if context and "." in prompt_key:
             tool_name, state = prompt_key.rsplit(".", 1)
@@ -113,13 +113,10 @@ class PromptLibrary:
                 # Render directly from template class
                 template_instance = template_class()
                 return template_instance.render(context)
-        
+
         # Fallback to not found
         available = ", ".join(sorted(self._cache.keys()))
-        raise KeyError(
-            f"Prompt '{prompt_key}' not found in files or template registry.\n"
-            f"Available file prompts: {available}"
-        )
+        raise KeyError(f"Prompt '{prompt_key}' not found in files or template registry.\nAvailable file prompts: {available}")
 
     def get_prompt_key(self, tool_name: str, state: str) -> str:
         """Map tool and state to the correct prompt key."""
@@ -146,18 +143,18 @@ class PromptLibrary:
     def render(self, prompt_key: str, context: Dict[str, Any], strict: bool = True) -> str:
         """Render a prompt with context."""
         template = self.get(prompt_key, context)
-        
+
         # If we got a string back, it's already rendered
         if isinstance(template, str):
             return template
-        
+
         # Otherwise it's a file-based PromptTemplate
         if not strict:
             # Add empty strings for missing vars
             for var in template._required_vars:
                 if var not in context:
                     context[var] = ""
-        
+
         return template.render(context)
 
     def list_prompts(self) -> Dict[str, Dict[str, Any]]:
