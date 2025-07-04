@@ -18,10 +18,8 @@ class TestCompleteWorkflowIntegration:
 
     @pytest.fixture
     def workflow_task_content(self):
-        """Complete task content for workflow testing."""
-        return """# TASK: WORKFLOW-001
-
-## Title
+        """Complete task content for workflow testing (without task ID line)."""
+        return """## Title
 Complete Workflow Integration Test
 
 ## Context
@@ -63,20 +61,19 @@ work together correctly with actual data and minimal mocking.
         # Create task using real implementation
         response = create_task_impl(workflow_task_content)
 
-        # Verify successful creation
+        # Verify successful creation with auto-generated ID
         assert response.status == "success"
-        assert response.data["task_id"] == "WORKFLOW-001"
+        assert response.data["task_id"] == "TS-01"
         assert response.data["task_title"] == "Complete Workflow Integration Test"
 
         # Verify file was created in test directory (not production)
-        task_file = test_alfred_dir / "tasks" / "WORKFLOW-001.md"
+        task_file = test_alfred_dir / "tasks" / "TS-01.md"
         assert task_file.exists()
         assert task_file.is_file()
 
-        # Verify content integrity
+        # Verify content integrity (includes auto-generated task ID)
         saved_content = task_file.read_text()
-        assert saved_content == workflow_task_content
-        assert "# TASK: WORKFLOW-001" in saved_content
+        assert saved_content.startswith("# TASK: TS-01\n\n")
         assert "Complete Workflow Integration Test" in saved_content
 
     def test_parser_integration_workflow(self, test_alfred_dir, workflow_task_content):
@@ -85,8 +82,8 @@ work together correctly with actual data and minimal mocking.
         response = create_task_impl(workflow_task_content)
         assert response.status == "success"
 
-        # Read created file
-        task_file = test_alfred_dir / "tasks" / "WORKFLOW-001.md"
+        # Read created file with auto-generated ID
+        task_file = test_alfred_dir / "tasks" / "TS-01.md"
         file_content = task_file.read_text()
 
         # Test real parser integration
@@ -98,7 +95,7 @@ work together correctly with actual data and minimal mocking.
 
         # Parse with real parser
         parsed_data = parser.parse(file_content)
-        assert parsed_data["task_id"] == "WORKFLOW-001"
+        assert parsed_data["task_id"] == "TS-01"
         assert parsed_data["title"] == "Complete Workflow Integration Test"
 
         # Verify all sections were parsed
@@ -121,16 +118,18 @@ work together correctly with actual data and minimal mocking.
             response = create_task_impl(task_content)
 
             assert response.status == "success"
-            task_id = f"VALID-{i + 1:03d}"
-            assert response.data["task_id"] == task_id
-            created_tasks.append(task_id)
+            # Task IDs should be auto-generated: TS-01, TS-02, TS-03
+            expected_task_id = f"TS-{i + 1:02d}"
+            assert response.data["task_id"] == expected_task_id
+            created_tasks.append(response.data["task_id"])
 
             # Verify file exists
-            task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
+            task_file = test_alfred_dir / "tasks" / f"{expected_task_id}.md"
             assert task_file.exists()
 
         # Verify all tasks exist simultaneously
         assert len(created_tasks) == 3
+        assert created_tasks == ["TS-01", "TS-02", "TS-03"]
 
         # Test each task independently
         for task_id in created_tasks:
@@ -169,9 +168,7 @@ work together correctly with actual data and minimal mocking.
     def test_file_system_integration_workflow(self, test_alfred_dir):
         """Test complete file system integration workflow."""
         # Create task with comprehensive content
-        comprehensive_content = """# TASK: FILESYSTEM-001
-
-## Title
+        comprehensive_content = """## Title
 File System Integration Test
 
 ## Context
@@ -220,19 +217,20 @@ This test validates complete file system integration including:
         assert tasks_dir.exists()
         assert tasks_dir.is_dir()
 
-        # Verify file creation
-        task_file = test_alfred_dir / "tasks" / "FILESYSTEM-001.md"
+        # Verify file creation with auto-generated ID
+        task_file = test_alfred_dir / "tasks" / "TS-01.md"
         assert task_file.exists()
         assert task_file.is_file()
 
-        # Verify content preservation
+        # Verify content preservation (includes auto-generated task ID)
         saved_content = task_file.read_text(encoding="utf-8")
-        assert saved_content == comprehensive_content
+        assert saved_content.startswith("# TASK: TS-01\n\n")
+        assert "File System Integration Test" in saved_content
 
         # Verify path resolution
         absolute_path = task_file.resolve()
         assert str(test_alfred_dir.resolve()) in str(absolute_path)
-        assert "FILESYSTEM-001.md" in str(absolute_path)
+        assert "TS-01.md" in str(absolute_path)
 
     def test_concurrent_workflow_integration(self, test_alfred_dir):
         """Test concurrent operations in workflow integration."""
@@ -240,10 +238,7 @@ This test validates complete file system integration including:
         concurrent_tasks = []
 
         for i in range(5):
-            task_id = f"CONCURRENT-{i + 1:03d}"
-            content = f"""# TASK: {task_id}
-
-## Title
+            content = f"""## Title
 Concurrent Task {i + 1}
 
 ## Context
@@ -267,20 +262,23 @@ Each task should be processed independently with:
 
             response = create_task_impl(content)
             assert response.status == "success"
-            assert response.data["task_id"] == task_id
-            concurrent_tasks.append(task_id)
+            # Task IDs should be auto-generated sequentially
+            expected_task_id = f"TS-{i + 1:02d}"
+            assert response.data["task_id"] == expected_task_id
+            concurrent_tasks.append(response.data["task_id"])
 
         # Verify all tasks were created successfully
         assert len(concurrent_tasks) == 5
+        assert concurrent_tasks == ["TS-01", "TS-02", "TS-03", "TS-04", "TS-05"]
 
         # Verify each task file exists and has correct content
-        for task_id in concurrent_tasks:
+        for i, task_id in enumerate(concurrent_tasks):
             task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
             assert task_file.exists()
 
             content = task_file.read_text()
             assert f"# TASK: {task_id}" in content
-            assert f"Concurrent Task" in content
+            assert f"Concurrent Task {i + 1}" in content
 
             # Verify parser can handle each task
             parser = MarkdownTaskParser()
@@ -292,9 +290,7 @@ Each task should be processed independently with:
 
     def test_duplicate_prevention_workflow(self, test_alfred_dir):
         """Test duplicate prevention in complete workflow."""
-        original_content = """# TASK: DUPLICATE-001
-
-## Title
+        original_content = """## Title
 Original Duplicate Test Task
 
 ## Context
@@ -312,31 +308,39 @@ This task should be created once and prevent subsequent duplicates.
         # Create original task
         response1 = create_task_impl(original_content)
         assert response1.status == "success"
+        assert response1.data["task_id"] == "TS-01"
 
         # Verify file exists
-        task_file = test_alfred_dir / "tasks" / "DUPLICATE-001.md"
+        task_file = test_alfred_dir / "tasks" / "TS-01.md"
         assert task_file.exists()
         original_saved_content = task_file.read_text()
 
-        # Attempt duplicate with different content
+        # Create second task with different content - should get new ID
         duplicate_content = original_content.replace("Original", "Modified")
         response2 = create_task_impl(duplicate_content)
 
-        # Should fail
-        assert response2.status == "error"
-        assert "already exists" in response2.message.lower()
+        # Should succeed with new ID
+        assert response2.status == "success"
+        assert response2.data["task_id"] == "TS-02"
 
+        # Both files should exist independently
+        task_file2 = test_alfred_dir / "tasks" / "TS-02.md"
+        assert task_file2.exists()
+        
         # Original file should be unchanged
         current_content = task_file.read_text()
         assert current_content == original_saved_content
         assert "Original" in current_content
         assert "Modified" not in current_content
+        
+        # New file should have modified content
+        new_content = task_file2.read_text()
+        assert "Modified" in new_content
+        assert "Original" not in new_content
 
     def test_special_characters_workflow_integration(self, test_alfred_dir):
         """Test special characters handling in complete workflow."""
-        special_content = """# TASK: SPECIAL-CHARS-001
-
-## Title
+        special_content = """## Title
 Special Characters Integration Test: àáâã 🚀 ✅
 
 ## Context
@@ -370,14 +374,16 @@ Testing complete workflow integration with special characters and Unicode:
         # Create task with special characters
         response = create_task_impl(special_content)
         assert response.status == "success"
+        assert response.data["task_id"] == "TS-01"
 
         # Verify file creation
-        task_file = test_alfred_dir / "tasks" / "SPECIAL-CHARS-001.md"
+        task_file = test_alfred_dir / "tasks" / "TS-01.md"
         assert task_file.exists()
 
         # Verify character preservation
         saved_content = task_file.read_text(encoding="utf-8")
-        assert saved_content == special_content
+        assert saved_content.startswith("# TASK: TS-01\n\n")
+        assert "Special Characters Integration Test: àáâã 🚀 ✅" in saved_content
 
         # Test specific characters
         special_chars = ["àáâã", "🚀", "✅", "❌", "€", "₿", "α", "∑"]
@@ -390,7 +396,7 @@ Testing complete workflow integration with special characters and Unicode:
         assert is_valid, f"Parser failed with special characters: {error_msg}"
 
         parsed_data = parser.parse(saved_content)
-        assert parsed_data["task_id"] == "SPECIAL-CHARS-001"
+        assert parsed_data["task_id"] == "TS-01"
         assert "àáâã 🚀 ✅" in parsed_data["title"]
 
     def test_workflow_cleanup_and_isolation(self, test_alfred_dir):
@@ -399,10 +405,7 @@ Testing complete workflow integration with special characters and Unicode:
         test_tasks = []
 
         for i in range(3):
-            task_id = f"CLEANUP-{i + 1:03d}"
-            content = f"""# TASK: {task_id}
-
-## Title
+            content = f"""## Title
 Cleanup Test Task {i + 1}
 
 ## Context
@@ -419,9 +422,12 @@ Task should be created and cleaned up properly.
 
             response = create_task_impl(content)
             assert response.status == "success"
-            test_tasks.append(task_id)
+            expected_task_id = f"TS-{i + 1:02d}"
+            assert response.data["task_id"] == expected_task_id
+            test_tasks.append(response.data["task_id"])
 
         # Verify all tasks exist
+        assert test_tasks == ["TS-01", "TS-02", "TS-03"]
         for task_id in test_tasks:
             task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
             assert task_file.exists()
@@ -444,9 +450,7 @@ Task should be created and cleaned up properly.
     def test_end_to_end_workflow_validation(self, test_alfred_dir):
         """Test complete end-to-end workflow validation."""
         # Create a comprehensive task
-        e2e_content = """# TASK: E2E-VALIDATION-001
-
-## Title
+        e2e_content = """## Title
 End-to-End Workflow Validation Test
 
 ## Context
@@ -501,18 +505,19 @@ Execute complete workflow integration:
         # Execute end-to-end workflow
         response = create_task_impl(e2e_content)
 
-        # Verify task creation
+        # Verify task creation with auto-generated ID
         assert response.status == "success"
-        assert response.data["task_id"] == "E2E-VALIDATION-001"
+        assert response.data["task_id"] == "TS-01"
         assert response.data["task_title"] == "End-to-End Workflow Validation Test"
 
         # Verify file system integration
-        task_file = test_alfred_dir / "tasks" / "E2E-VALIDATION-001.md"
+        task_file = test_alfred_dir / "tasks" / "TS-01.md"
         assert task_file.exists()
 
-        # Verify content preservation
+        # Verify content preservation (includes auto-generated task ID)
         saved_content = task_file.read_text()
-        assert saved_content == e2e_content
+        assert saved_content.startswith("# TASK: TS-01\n\n")
+        assert "End-to-End Workflow Validation Test" in saved_content
 
         # Test parser integration
         parser = MarkdownTaskParser()
@@ -521,7 +526,7 @@ Execute complete workflow integration:
 
         # Test parsing functionality
         parsed_data = parser.parse(saved_content)
-        assert parsed_data["task_id"] == "E2E-VALIDATION-001"
+        assert parsed_data["task_id"] == "TS-01"
         assert parsed_data["title"] == "End-to-End Workflow Validation Test"
         assert "comprehensive end-to-end test" in parsed_data["context"].lower()
 
@@ -546,5 +551,5 @@ Execute complete workflow integration:
         if production_alfred.exists():
             production_tasks = production_alfred / "tasks"
             if production_tasks.exists():
-                production_task_file = production_tasks / "E2E-VALIDATION-001.md"
+                production_task_file = production_tasks / "TS-01.md"
                 assert not production_task_file.exists(), "Test task leaked to production!"

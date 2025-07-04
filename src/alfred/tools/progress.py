@@ -64,9 +64,23 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
         completed_count = len(completed_subtasks)
         total_count = len(valid_subtask_ids)
         progress = (completed_count / total_count) * 100 if total_count > 0 else 0
+        remaining = total_count - completed_count
 
-        message = f"Acknowledged: Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%)."
-        logger.info(message)
+        # Create an encouraging message based on progress
+        if completed_count == total_count:
+            message = (f"🎉 Excellent! Subtask '{subtask_id}' is complete. All {total_count} subtasks are now finished! "
+                      f"\n\n**Next Action**: Call `alfred.submit_work` with your ImplementationManifestArtifact to complete the implementation phase.")
+        elif progress >= 80:
+            message = (f"Great progress! Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
+                      f"Almost there - only {remaining} subtask{'s' if remaining > 1 else ''} left!")
+        elif progress >= 50:
+            message = (f"Good work! Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
+                      f"You're over halfway done!")
+        else:
+            message = (f"✓ Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
+                      f"Keep going - {remaining} subtasks remaining.")
+        
+        logger.info(f"Subtask '{subtask_id}' marked complete for task {task.task_id}")
 
         # This tool does not return a next_prompt, as the AI should continue its work.
         return ToolResponse(status="success", message=message, data={"completed_count": completed_count, "total_count": total_count})

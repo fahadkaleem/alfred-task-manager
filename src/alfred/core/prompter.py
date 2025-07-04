@@ -9,7 +9,6 @@ from enum import Enum
 from alfred.config.settings import settings
 from alfred.lib.structured_logger import get_logger
 from alfred.lib.turn_manager import turn_manager
-from alfred.core.template_registry import template_registry
 
 logger = get_logger(__name__)
 
@@ -89,28 +88,17 @@ class PromptLibrary:
         parts = list(relative.parts[:-1]) + [relative.stem]
         return ".".join(parts)
 
-    def get(self, prompt_key: str, context: Dict[str, Any] = None) -> Union[PromptTemplate, str]:
+    def get(self, prompt_key: str, context: Dict[str, Any] = None) -> PromptTemplate:
         """
-        Get a prompt template by key.
-
-        First checks for file-based template, then falls back to template class.
+        Get a prompt template by key from .md files only.
         """
-        # Check file-based cache first
+        # Check file-based cache
         if prompt_key in self._cache:
             return self._cache[prompt_key]
 
-        # Check if we have a template class
-        if context and "." in prompt_key:
-            tool_name, state = prompt_key.rsplit(".", 1)
-            template_class = template_registry.get_template(tool_name, state)
-            if template_class:
-                # Render directly from template class
-                template_instance = template_class()
-                return template_instance.render(context)
-
-        # Fallback to not found
+        # Explicit failure - no fallback
         available = ", ".join(sorted(self._cache.keys()))
-        raise KeyError(f"Prompt '{prompt_key}' not found in files or template registry.\nAvailable file prompts: {available}")
+        raise KeyError(f"Prompt '{prompt_key}' not found.\nAvailable file prompts: {available}")
 
     def get_prompt_key(self, tool_name: str, state: str) -> str:
         """Map tool and state to the correct prompt key."""
@@ -135,14 +123,10 @@ class PromptLibrary:
         return "errors.not_found"
 
     def render(self, prompt_key: str, context: Dict[str, Any], strict: bool = True) -> str:
-        """Render a prompt with context."""
+        """Render a prompt with context - file-based only."""
         template = self.get(prompt_key, context)
 
-        # If we got a string back, it's already rendered
-        if isinstance(template, str):
-            return template
-
-        # Otherwise it's a file-based PromptTemplate
+        # File-based PromptTemplate only
         if not strict:
             # Add empty strings for missing vars
             for var in template._required_vars:

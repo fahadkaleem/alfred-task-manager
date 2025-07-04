@@ -34,9 +34,10 @@ def approve_and_advance_impl(task_id: str) -> ToolResponse:
                 return ToolResponse(
                     status="error",
                     message=f"Cannot use approve_and_advance while in sub-state '{state_value}'. "
-                    f"The workflow tool '{active_tool.tool_name}' has internal states that must be completed first. "
-                    f"Use 'approve_review' to advance through the current workflow's sub-states, "
-                    f"or complete the workflow before advancing to the next major phase.",
+                    f"The workflow tool '{active_tool.tool_name}' has internal states that must be completed first.\n\n"
+                    f"**Next Action**: Call `alfred.approve_review(task_id='{task_id}')` to continue through the current workflow.\n\n"
+                    f"**Note**: approve_and_advance is only for moving between major phases (e.g., implementation → review), "
+                    f"not for approving sub-states within a workflow.",
                 )
 
             # Check if the tool has a method to determine if it's complete

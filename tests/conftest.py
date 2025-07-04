@@ -36,6 +36,7 @@ def setup_test_environment():
 
     # Patch settings to use test directory - patch multiple import locations
     patches = [
+        patch("alfred.config.settings.settings"),  # Patch the actual settings object
         patch("src.alfred.tools.create_task.settings"),
         patch("src.alfred.config.settings.settings"),
         patch("src.alfred.lib.logger.settings"),
@@ -73,6 +74,11 @@ def setup_test_environment():
         for task_file in tasks_dir.glob("*.md"):
             if task_file.name != "README.md":  # Keep README for reference
                 task_file.unlink()
+        
+        # Also remove task_counter.json to reset ID generation
+        counter_file = tasks_dir / "task_counter.json"
+        if counter_file.exists():
+            counter_file.unlink()
 
     # Clean workspace directories
     workspace_dir = TEST_ALFRED_DIR / "workspace"
@@ -103,10 +109,8 @@ def sample_task():
 
 @pytest.fixture
 def sample_task_content():
-    """Sample task content in markdown format."""
-    return """# TASK: SAMPLE-001
-
-## Title
+    """Sample task content in markdown format (without task ID line)."""
+    return """## Title
 Sample Test Task
 
 ## Context
@@ -142,11 +146,9 @@ and validation without interfering with production data.
 
 @pytest.fixture
 def valid_task_contents():
-    """Multiple valid task contents for testing."""
+    """Multiple valid task contents for testing (without task ID lines)."""
     return [
-        """# TASK: VALID-001
-
-## Title
+        """## Title
 First Valid Task
 
 ## Context
@@ -158,9 +160,7 @@ First implementation details.
 ## Acceptance Criteria
 - First criterion
 """,
-        """# TASK: VALID-002
-
-## Title
+        """## Title
 Second Valid Task
 
 ## Context
@@ -172,9 +172,7 @@ Second implementation details.
 ## Acceptance Criteria
 - Second criterion
 """,
-        """# TASK: VALID-003
-
-## Title
+        """## Title
 Third Valid Task
 
 ## Context
@@ -193,42 +191,35 @@ Third implementation details.
 def invalid_task_contents():
     """Multiple invalid task contents for testing validation."""
     return [
-        # Missing task header
+        # Missing required sections - no Implementation Details
         """## Title
-Invalid Task
+Missing Implementation Details
 
 ## Context
-Missing task header
+This task is missing Implementation Details section
+
+## Acceptance Criteria
+- Criterion
+""",
+        # Missing required sections - no Acceptance Criteria
+        """## Title
+Missing Acceptance Criteria
+
+## Context
+This task is missing Acceptance Criteria section
+
+## Implementation Details
+Some implementation details here
+""",
+        # Missing Title section
+        """## Context
+Missing Title Section
 
 ## Implementation Details
 Details
 
 ## Acceptance Criteria
 - Criterion
-""",
-        # Wrong header format
-        """# WRONG: INVALID-001
-
-## Title
-Wrong Header
-
-## Context
-Wrong header format
-
-## Implementation Details
-Details
-
-## Acceptance Criteria
-- Criterion
-""",
-        # Missing required sections
-        """# TASK: INVALID-002
-
-## Title
-Missing Sections
-
-## Context
-Only has title and context
 """,
         # Empty content
         "",

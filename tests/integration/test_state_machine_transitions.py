@@ -18,9 +18,7 @@ class TestTaskManagementIntegration:
 
     def test_task_creation_and_initial_state(self, test_alfred_dir):
         """Test that newly created tasks start in proper state."""
-        content = """# TASK: STATE-001
-
-## Title
+        content = """## Title
 Task State Management Test
 
 ## Context
@@ -37,21 +35,23 @@ Task should be created successfully and maintain proper state.
 
         response = create_task_impl(content)
         assert response.status == "success"
-        assert response.data["task_id"] == "STATE-001"
+        
+        # Get the auto-generated task ID
+        task_id = response.data["task_id"]
+        assert task_id.startswith("TS-")
 
         # Verify file creation
-        task_file = test_alfred_dir / "tasks" / "STATE-001.md"
+        task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
         assert task_file.exists()
 
-        # Verify content preservation
+        # Verify content preservation (with auto-generated ID prepended)
         saved_content = task_file.read_text()
-        assert saved_content == content
+        assert saved_content.startswith(f"# TASK: {task_id}\n\n")
+        assert "Task State Management Test" in saved_content
 
     def test_task_validation_with_real_parser(self, test_alfred_dir):
         """Test task validation using actual parser components."""
-        valid_content = """# TASK: VALIDATION-001
-
-## Title
+        valid_content = """## Title
 Real Parser Validation Test
 
 ## Context
@@ -70,8 +70,12 @@ Parser should correctly validate task format and extract data.
         response = create_task_impl(valid_content)
         assert response.status == "success"
 
+        # Get the auto-generated task ID
+        task_id = response.data["task_id"]
+        assert task_id.startswith("TS-")
+
         # Test real parser validation
-        task_file = test_alfred_dir / "tasks" / "VALIDATION-001.md"
+        task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
         file_content = task_file.read_text()
 
         parser = MarkdownTaskParser()
@@ -80,57 +84,50 @@ Parser should correctly validate task format and extract data.
 
         # Test parsing
         parsed_data = parser.parse(file_content)
-        assert parsed_data["task_id"] == "VALIDATION-001"
+        assert parsed_data["task_id"] == task_id
         assert parsed_data["title"] == "Real Parser Validation Test"
 
     def test_task_validation_error_scenarios(self, test_alfred_dir):
         """Test validation error scenarios with real validation logic."""
         error_scenarios = [
-            # Missing task header
+            # Missing required sections - no Implementation Details
             (
                 """## Title
-No Task Header
+Missing Implementation Details
 
 ## Context
-Missing the required task header.
-
-## Implementation Details
-Should fail validation.
+Missing the required implementation details section.
 
 ## Acceptance Criteria
 - Should not be created
 """,
-                "task header",
+                "missing implementation details",
             ),
-            # Wrong header format
+            # Missing required sections - no Acceptance Criteria
             (
-                """# WRONG: BAD-001
-
-## Title
-Wrong Header Format
+                """## Title
+Missing Acceptance Criteria
 
 ## Context
-Using wrong header format.
+Missing the required acceptance criteria section.
 
 ## Implementation Details
 Should fail validation.
+""",
+                "missing acceptance criteria",
+            ),
+            # Missing required sections - no Context
+            (
+                """## Title
+Missing Context
+
+## Implementation Details
+Missing the required context section.
 
 ## Acceptance Criteria
 - Should not be created
 """,
-                "header format",
-            ),
-            # Missing required sections
-            (
-                """# TASK: INCOMPLETE-001
-
-## Title
-Incomplete Task
-
-## Context
-Missing implementation details section.
-""",
-                "missing sections",
+                "missing context",
             ),
         ]
 
@@ -152,14 +149,12 @@ Missing implementation details section.
     def test_concurrent_task_operations(self, test_alfred_dir):
         """Test concurrent task operations and isolation."""
         # Create multiple tasks to test isolation
-        task_specs = [("CONCURRENT-A-001", "Concurrent Task A"), ("CONCURRENT-B-002", "Concurrent Task B"), ("CONCURRENT-C-003", "Concurrent Task C")]
+        task_specs = ["Concurrent Task A", "Concurrent Task B", "Concurrent Task C"]
 
         created_tasks = []
 
-        for task_id, title in task_specs:
-            content = f"""# TASK: {task_id}
-
-## Title
+        for i, title in enumerate(task_specs):
+            content = f"""## Title
 {title}
 
 ## Context
@@ -180,7 +175,11 @@ Each task should be processed independently with:
 
             response = create_task_impl(content)
             assert response.status == "success"
-            assert response.data["task_id"] == task_id
+            
+            # Get the auto-generated task ID
+            task_id = response.data["task_id"]
+            expected_id = f"TS-{i + 1:02d}"
+            assert task_id == expected_id
             created_tasks.append(task_id)
 
             # Verify file exists
@@ -189,14 +188,16 @@ Each task should be processed independently with:
 
         # Verify all tasks exist independently
         assert len(created_tasks) == 3
+        assert created_tasks == ["TS-01", "TS-02", "TS-03"]
 
         # Check each task maintains its integrity
-        for task_id in created_tasks:
+        for i, task_id in enumerate(created_tasks):
             task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
             assert task_file.exists()
 
             content = task_file.read_text()
             assert f"# TASK: {task_id}" in content
+            assert task_specs[i] in content
 
             # Verify parser can handle each independently
             parser = MarkdownTaskParser()
@@ -207,83 +208,94 @@ Each task should be processed independently with:
             assert parsed_data["task_id"] == task_id
 
     def test_task_id_format_validation(self, test_alfred_dir):
-        """Test validation of various task ID formats."""
-        valid_task_ids = ["SIMPLE-001", "PROJECT-123", "EPIC-01", "BUG-999", "FEATURE-2024-001", "TEST-A-001"]
+        """Test validation of auto-generated task ID formats."""
+        # Create multiple tasks to test auto-generated IDs
+        num_tasks = 6
 
-        for task_id in valid_task_ids:
-            content = f"""# TASK: {task_id}
-
-## Title
-Task ID Format Test
+        for i in range(num_tasks):
+            content = f"""## Title
+Task ID Format Test {i + 1}
 
 ## Context
-Testing task ID format validation with ID: {task_id}
+Testing auto-generated task ID format validation.
 
 ## Implementation Details
-Task ID should be accepted if it follows valid format.
+Task ID should be auto-generated in the correct format.
 
 ## Acceptance Criteria
 - Task is created successfully
-- Task ID is preserved correctly
+- Task ID follows TS-XX format
 """
 
             response = create_task_impl(content)
-            assert response.status == "success", f"Valid task ID {task_id} should be accepted"
-            assert response.data["task_id"] == task_id
+            assert response.status == "success"
+            
+            # Verify auto-generated ID format
+            task_id = response.data["task_id"]
+            expected_id = f"TS-{i + 1:02d}"
+            assert task_id == expected_id
+            assert task_id.startswith("TS-")
 
             # Verify file created with correct name
             task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
             assert task_file.exists()
 
     def test_duplicate_task_prevention_logic(self, test_alfred_dir):
-        """Test duplicate prevention using real file system checks."""
-        original_content = """# TASK: DUPLICATE-TEST-001
-
-## Title
+        """Test that auto-generated IDs prevent duplicates by design."""
+        original_content = """## Title
 Original Duplicate Prevention Test
 
 ## Context
-Testing that duplicate task IDs are properly prevented using real file checks.
+Testing that auto-generated task IDs naturally prevent duplicates.
 
 ## Implementation Details
-System should reject attempts to create tasks with existing IDs.
+Auto-generated IDs ensure no duplicates can occur.
 
 ## Acceptance Criteria
-- First creation succeeds
-- Subsequent creations with same ID fail
-- Error message is clear and helpful
-- Original file remains unchanged
+- First creation succeeds with auto-generated ID
+- Second creation gets a new unique ID
+- Both files exist independently
 """
 
         # Create original task
         response1 = create_task_impl(original_content)
         assert response1.status == "success"
-        assert response1.data["task_id"] == "DUPLICATE-TEST-001"
+        task_id_1 = response1.data["task_id"]
+        assert task_id_1 == "TS-01"
 
         # Verify file exists
-        task_file = test_alfred_dir / "tasks" / "DUPLICATE-TEST-001.md"
-        assert task_file.exists()
-        original_file_content = task_file.read_text()
+        task_file_1 = test_alfred_dir / "tasks" / f"{task_id_1}.md"
+        assert task_file_1.exists()
+        original_file_content = task_file_1.read_text()
 
-        # Attempt to create duplicate
+        # Create second task with modified content
         duplicate_content = original_content.replace("Original", "Modified")
         response2 = create_task_impl(duplicate_content)
 
-        # Should fail
-        assert response2.status == "error"
-        assert "already exists" in response2.message.lower()
+        # Should succeed with new ID
+        assert response2.status == "success"
+        task_id_2 = response2.data["task_id"]
+        assert task_id_2 == "TS-02"
+        assert task_id_2 != task_id_1
+
+        # Both files should exist
+        task_file_2 = test_alfred_dir / "tasks" / f"{task_id_2}.md"
+        assert task_file_2.exists()
 
         # Original file should be unchanged
-        current_file_content = task_file.read_text()
+        current_file_content = task_file_1.read_text()
         assert current_file_content == original_file_content
         assert "Original" in current_file_content
         assert "Modified" not in current_file_content
 
+        # New file should have modified content
+        new_file_content = task_file_2.read_text()
+        assert "Modified" in new_file_content
+        assert "Original" not in new_file_content
+
     def test_task_response_data_completeness(self, test_alfred_dir):
         """Test that task responses contain all expected data."""
-        content = """# TASK: RESPONSE-DATA-001
-
-## Title
+        content = """## Title
 Response Data Completeness Test
 
 ## Context
@@ -297,6 +309,7 @@ Response should include all required fields for subsequent operations.
 - Response contains file_path
 - Response contains task_title
 - Response contains next_action guidance
+- Response contains note about auto-generation
 """
 
         response = create_task_impl(content)
@@ -306,17 +319,19 @@ Response should include all required fields for subsequent operations.
         assert isinstance(response.data, dict)
 
         # Check required fields
-        required_fields = ["task_id", "file_path", "task_title", "next_action"]
+        required_fields = ["task_id", "file_path", "task_title", "next_action", "note"]
         for field in required_fields:
             assert field in response.data, f"Missing required field: {field}"
             assert response.data[field] is not None
             assert response.data[field] != ""
 
         # Verify field values
-        assert response.data["task_id"] == "RESPONSE-DATA-001"
+        task_id = response.data["task_id"]
+        assert task_id.startswith("TS-")
         assert response.data["task_title"] == "Response Data Completeness Test"
-        assert "RESPONSE-DATA-001.md" in response.data["file_path"]
+        assert f"{task_id}.md" in response.data["file_path"]
         assert "work_on_task" in response.data["next_action"]
+        assert "automatically generated" in response.data["note"]
 
     def test_directory_auto_creation_behavior(self, test_alfred_dir):
         """Test automatic directory creation behavior."""
@@ -329,9 +344,7 @@ Response should include all required fields for subsequent operations.
 
         assert not tasks_dir.exists()
 
-        content = """# TASK: AUTO-CREATE-001
-
-## Title
+        content = """## Title
 Auto Directory Creation Test
 
 ## Context
@@ -353,16 +366,15 @@ Tasks directory should be created automatically if missing.
         assert tasks_dir.exists()
         assert tasks_dir.is_dir()
 
-        # Verify task file was created
-        task_file = tasks_dir / "AUTO-CREATE-001.md"
+        # Verify task file was created with auto-generated ID
+        task_id = response.data["task_id"]
+        task_file = tasks_dir / f"{task_id}.md"
         assert task_file.exists()
         assert task_file.is_file()
 
     def test_special_characters_handling(self, test_alfred_dir):
         """Test handling of special characters and encoding."""
-        special_content = """# TASK: SPECIAL-HANDLING-001
-
-## Title
+        special_content = """## Title
 Special Characters Test: àáâã & <>"' 🚀 ✅
 
 ## Context
@@ -389,11 +401,14 @@ Testing complete handling of special characters and Unicode:
         assert response.status == "success"
 
         # Verify file creation and character preservation
-        task_file = test_alfred_dir / "tasks" / "SPECIAL-HANDLING-001.md"
+        task_id = response.data["task_id"]
+        task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
         assert task_file.exists()
 
         saved_content = task_file.read_text(encoding="utf-8")
-        assert saved_content == special_content
+        assert saved_content.startswith(f"# TASK: {task_id}\n\n")
+        assert 'Special Characters Test: àáâã & <>"' in saved_content
+        assert "🚀 ✅" in saved_content
 
         # Test specific special characters
         special_chars = ["àáâã", "🚀", "✅", "❌", "€", "₿", "α", "∑"]
@@ -406,19 +421,17 @@ Testing complete handling of special characters and Unicode:
         assert is_valid, f"Parser failed with special characters: {error_msg}"
 
         parsed_data = parser.parse(saved_content)
-        assert parsed_data["task_id"] == "SPECIAL-HANDLING-001"
+        assert parsed_data["task_id"] == task_id
         assert "àáâã" in parsed_data["title"]
 
     def test_production_isolation_verification(self, test_alfred_dir):
         """Test that operations are isolated from production .alfred directory."""
         # Create test tasks
-        test_task_ids = ["ISOLATION-001", "ISOLATION-002", "ISOLATION-003"]
+        created_task_ids = []
 
-        for task_id in test_task_ids:
-            content = f"""# TASK: {task_id}
-
-## Title
-Production Isolation Test
+        for i in range(3):
+            content = f"""## Title
+Production Isolation Test {i + 1}
 
 ## Context
 Testing that test operations don't affect production .alfred directory.
@@ -434,6 +447,9 @@ All test operations should be isolated to test directory.
 
             response = create_task_impl(content)
             assert response.status == "success"
+            
+            task_id = response.data["task_id"]
+            created_task_ids.append(task_id)
 
             # Verify task exists in test directory
             test_task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
@@ -444,21 +460,19 @@ All test operations should be isolated to test directory.
         if production_alfred.exists():
             production_tasks = production_alfred / "tasks"
             if production_tasks.exists():
-                for task_id in test_task_ids:
+                for task_id in created_task_ids:
                     production_task_file = production_tasks / f"{task_id}.md"
                     assert not production_task_file.exists(), f"Test task {task_id} leaked to production!"
 
         # Verify all test tasks exist only in test directory
-        for task_id in test_task_ids:
+        for task_id in created_task_ids:
             test_task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
             assert test_task_file.exists(), f"Test task {task_id} missing from test directory"
 
     def test_comprehensive_real_data_integration(self, test_alfred_dir):
         """Test comprehensive integration using only real data and components."""
         # Create a complex task to test all aspects
-        complex_content = """# TASK: COMPREHENSIVE-REAL-001
-
-## Title
+        complex_content = """## Title
 Comprehensive Real Data Integration Test
 
 ## Context
@@ -526,17 +540,21 @@ Technical requirements:
 
         # Verify task creation success
         assert response.status == "success"
-        assert response.data["task_id"] == "COMPREHENSIVE-REAL-001"
+        
+        # Get the auto-generated task ID
+        task_id = response.data["task_id"]
+        assert task_id.startswith("TS-")
         assert response.data["task_title"] == "Comprehensive Real Data Integration Test"
 
         # Verify real file creation
-        task_file = test_alfred_dir / "tasks" / "COMPREHENSIVE-REAL-001.md"
+        task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
         assert task_file.exists()
         assert task_file.is_file()
 
-        # Verify exact content preservation
+        # Verify content preservation (with auto-generated ID prepended)
         saved_content = task_file.read_text()
-        assert saved_content == complex_content
+        assert saved_content.startswith(f"# TASK: {task_id}\n\n")
+        assert "Comprehensive Real Data Integration Test" in saved_content
 
         # Test real parser integration
         parser = MarkdownTaskParser()
@@ -547,7 +565,7 @@ Technical requirements:
 
         # Real parsing
         parsed_data = parser.parse(saved_content)
-        assert parsed_data["task_id"] == "COMPREHENSIVE-REAL-001"
+        assert parsed_data["task_id"] == task_id
         assert parsed_data["title"] == "Comprehensive Real Data Integration Test"
         assert "comprehensive test" in parsed_data["context"].lower()
 
@@ -572,5 +590,5 @@ Technical requirements:
         if production_alfred.exists():
             production_tasks = production_alfred / "tasks"
             if production_tasks.exists():
-                production_task_file = production_tasks / "COMPREHENSIVE-REAL-001.md"
+                production_task_file = production_tasks / f"{task_id}.md"
                 assert not production_task_file.exists(), "Comprehensive test task leaked to production!"

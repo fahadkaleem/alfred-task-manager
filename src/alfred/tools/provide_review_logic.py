@@ -97,13 +97,13 @@ Call `alfred.work_on_task(task_id='{task_id}')` to start implementation."""
             # For other tools, provide the standard handoff message
             handoff = f"""The '{tool_name}' workflow has completed successfully! 
 
-**Next Action Required:**
-Call `alfred.approve_and_advance(task_id='{task_id}')` to:
-- Archive the completed work
-- Advance to the next phase  
-- Update task status
+**Next Actions:**
+1. Call `alfred.work_on_task(task_id='{task_id}')` to check the current status and see what phase comes next
+2. Then use the suggested tool for the next phase (e.g., `review_task`, `test_task`, etc.)
 
-**Alternative:** If you need to review the work first, call `alfred.work_on_task(task_id='{task_id}')` to see current status."""
+**Quick Option:** If you're confident and want to skip the status check, call `alfred.approve_and_advance(task_id='{task_id}')` to automatically advance to the next phase.
+
+**Note**: approve_and_advance only works after a workflow is fully complete, not during sub-states."""
 
         return ToolResponse(status="success", message=f"'{tool_name}' completed.", next_prompt=handoff)
 

@@ -28,8 +28,8 @@ ${artifact_json}
 2. Implement each subtask in order, following the LOST specifications
 3. After completing each subtask, call `alfred.mark_subtask_complete` with the task_id and subtask_id
 4. Test your implementation as you go
-5. Once all subtasks are complete, create an implementation manifest
-6. Submit the final manifest for review
+5. **IMPORTANT**: Only after ALL subtasks show 100% completion, create your implementation manifest
+6. Submit the final manifest ONLY when you see the message "All X subtasks are now finished!"
 
 # CONSTRAINTS
 - Follow the execution plan precisely
@@ -40,7 +40,9 @@ ${artifact_json}
 # OUTPUT
 When all subtasks are complete, create an ImplementationManifestArtifact with:
 - `summary`: Brief summary of what was implemented
-- `completed_subtasks`: List of completed subtask IDs
+- `completed_subtasks`: List of completed subtask IDs (must match ALL planned subtasks)
 - `testing_notes`: Any notes about testing or validation
 
 **Required Action:** Call `alfred.submit_work` with your `ImplementationManifestArtifact`
+
+**Warning**: If you submit before completing all subtasks, you'll get an error showing completion percentage and missing subtasks.
