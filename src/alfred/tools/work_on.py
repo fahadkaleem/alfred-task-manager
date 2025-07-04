@@ -1,9 +1,9 @@
-from src.alfred.state.manager import state_manager
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.core.workflow_config import WorkflowConfiguration
-from src.alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
-from src.alfred.task_providers.factory import get_provider
-from src.alfred.lib.logger import get_logger
+from alfred.state.manager import state_manager
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.core.workflow_config import WorkflowConfiguration
+from alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
+from alfred.task_providers.factory import get_provider
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 

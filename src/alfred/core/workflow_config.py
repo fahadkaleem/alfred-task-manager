@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from src.alfred.models.schemas import TaskStatus
-from src.alfred.constants import ToolName
+from alfred.models.schemas import TaskStatus
+from alfred.constants import ToolName
 
 
 @dataclass(frozen=True)

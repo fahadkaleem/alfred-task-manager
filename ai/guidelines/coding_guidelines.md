@@ -29,9 +29,9 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine
 
 # Local application imports
-from epicmanager.models.project import Project
-from epicmanager.services.task_service import TaskService
-from epicmanager.utils.validators import validate_project_name
+from alfred.models.project import Project
+from alfred.services.task_service import TaskService
+from alfred.utils.validators import validate_project_name
 ```
 
 ## Variable and Function Naming
@@ -155,7 +155,7 @@ if not items:
 # Good comments
 import time
 from typing import List, Optional
-from epicmanager.models.user import User
+from alfred.models.user import User
 
 MAX_RETRY_ATTEMPTS = 3
 
@@ -213,7 +213,7 @@ def process_order(order):
         log_transaction()
 
 # Good
-from epicmanager.models.order import Order, OrderStatus
+from alfred.models.order import Order, OrderStatus
 
 BULK_DISCOUNT_RATE = 0.1
 
@@ -297,8 +297,8 @@ def get_user(user_id):
         return None
 
 # Good
-from epicmanager.models.user import User
-from epicmanager.exceptions import DatabaseConnectionError, ServiceUnavailableError, UserNotFoundError
+from alfred.models.user import User
+from alfred.exceptions import DatabaseConnectionError, ServiceUnavailableError, UserNotFoundError
 
 def get_user_by_id(user_id: int) -> User:
     if not isinstance(user_id, int) or user_id <= 0:
@@ -318,7 +318,7 @@ Always use type hints for function parameters and return values. For forward ref
 
 ```python
 from typing import List, Optional, Dict, Union, Tuple, Generator
-from epicmanager.models.task import Task, TaskStatus
+from alfred.models.task import Task, TaskStatus
 
 def find_tasks_by_status(
     status: TaskStatus,
@@ -616,7 +616,7 @@ def test_user():
     assert u.name == "John"
 
 # Good
-from epicmanager.models.user import User
+from alfred.models.user import User
 
 def test_user_creation_with_valid_data_sets_correct_attributes():
     # Arrange
@@ -679,7 +679,7 @@ class ProjectORM(Base):
 ```python
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from epicmanager.models.project import Project  # Domain model
+from alfred.models.project import Project  # Domain model
 
 class ProjectRepository:
     def __init__(self, session: Session):
@@ -819,7 +819,7 @@ class Task:
 
 ### Module Structure
 ```
-epicmanager/
+alfred/
 ├── models/          # Domain models (Pydantic)
 ├── database/        # Database models and repositories
 ├── services/        # Business logic
@@ -852,7 +852,7 @@ Use generators for large datasets:
 
 ```python
 from typing import List, Generator
-from epicmanager.models.task import Task
+from alfred.models.task import Task
 
 # Bad - loads everything into memory
 def get_all_active_tasks() -> List[Task]:

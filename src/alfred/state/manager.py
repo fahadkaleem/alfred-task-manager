@@ -3,15 +3,15 @@ import json
 import os
 import tempfile
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any, Dict
 
-from src.alfred.lib.fs_utils import file_lock
-from src.alfred.lib.logger import get_logger
-from src.alfred.models.state import TaskState, WorkflowState
-from src.alfred.models.schemas import TaskStatus
-from src.alfred.config.settings import settings
+from alfred.lib.fs_utils import file_lock
+from alfred.lib.logger import get_logger
+from alfred.models.state import TaskState, WorkflowState
+from alfred.models.schemas import TaskStatus
+from alfred.config.settings import settings
 from pydantic import BaseModel
 
 logger = get_logger(__name__)
@@ -36,15 +36,11 @@ class StateManager:
     def _atomic_write(self, state: TaskState) -> None:
         """Atomically write state to disk. Assumes lock is already held."""
         state_file = self._get_task_state_file(state.task_id)
-        state.updated_at = datetime.utcnow().isoformat()
+        state.updated_at = datetime.now(timezone.utc).isoformat()
 
         # Ensure directory structure exists
         task_dir = state_file.parent
         task_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create archive directory
-        archive_dir = task_dir / "archive"
-        archive_dir.mkdir(exist_ok=True)
 
         # Create empty scratchpad if it doesn't exist
         scratchpad_path = task_dir / "scratchpad.md"
@@ -172,7 +168,7 @@ class StateManager:
 
     def get_archive_path(self, task_id: str) -> Path:
         """Get the archive directory path for a task."""
-        from src.alfred.constants import Paths
+        from alfred.constants import Paths
 
         archive_path = self._get_task_dir(task_id) / Paths.ARCHIVE_DIR
         archive_path.mkdir(parents=True, exist_ok=True)
@@ -180,7 +176,7 @@ class StateManager:
 
     def register_tool(self, task_id: str, tool: "BaseWorkflowTool") -> None:
         """Register a tool with the orchestrator and update state."""
-        from src.alfred.orchestration.orchestrator import orchestrator
+        from alfred.orchestration.orchestrator import orchestrator
 
         orchestrator.active_tools[task_id] = tool
         self.update_tool_state(task_id, tool)

@@ -1,8 +1,8 @@
 """Get next task implementation using the task provider factory."""
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.task_providers.factory import get_provider
-from src.alfred.lib.logger import get_logger
+from alfred.models.schemas import ToolResponse
+from alfred.task_providers.factory import get_provider
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 

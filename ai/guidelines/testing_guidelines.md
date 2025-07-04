@@ -25,7 +25,7 @@
 ```python
 # GOOD: Mock external dependency
 def test_create_project_with_external_api(mocker):
-    mocker.patch('epicmanager.services.external_api.notify', return_value=True)
+    mocker.patch('alfred.services.external_api.notify', return_value=True)
 
     # Use real service and repository
     project_service = ProjectService(real_repository)
@@ -37,8 +37,8 @@ def test_create_project_with_external_api(mocker):
 # BAD: Mocking internal components
 def test_create_project_bad(mocker):
     # DON'T DO THIS - mocking internal logic
-    mocker.patch('epicmanager.services.project_service.validate_name')
-    mocker.patch('epicmanager.repositories.project_repository.save')
+    mocker.patch('alfred.services.project_service.validate_name')
+    mocker.patch('alfred.repositories.project_repository.save')
 ```
 
 ### 2. Read Code Before Writing Tests
@@ -51,7 +51,7 @@ Before writing any test:
 
 ```python
 # STEP 1: Read the actual implementation first
-# epicmanager/models/project.py
+# alfred/models/project.py
 class ProjectStatus(Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
@@ -130,8 +130,8 @@ Group related tests under classes for better organization:
 
 ```python
 import pytest
-from epicmanager.models import Project, ProjectStatus
-from epicmanager.services import ProjectService
+from alfred.models import Project, ProjectStatus
+from alfred.services import ProjectService
 
 class TestProjectCreation:
     """Tests for project creation functionality."""
@@ -194,8 +194,8 @@ class TestProjectUpdate:
 # At the top of test_project_service.py
 import pytest
 from datetime import datetime
-from epicmanager.models import Project, ProjectStatus
-from epicmanager.services import ProjectService
+from alfred.models import Project, ProjectStatus
+from alfred.services import ProjectService
 
 # File-specific fixtures at the top
 @pytest.fixture
@@ -251,7 +251,7 @@ Always use `ids` within the parameterize decorator for clarity:
 
 ```python
 import pytest
-from epicmanager.models import TaskPriority, TaskStatus
+from alfred.models import TaskPriority, TaskStatus
 
 class TestTaskPriorityCalculation:
     @pytest.mark.parametrize(
@@ -357,7 +357,7 @@ class TestNotificationService:
     def test_send_task_notification(self, mocker):
         """Test notification sending with mocked email service."""
         # Mock only the external email service
-        mock_email = mocker.patch('epicmanager.external.email_client.send')
+        mock_email = mocker.patch('alfred.external.email_client.send')
         mock_email.return_value = {"status": "sent", "id": "123"}
 
         # Use real notification service
@@ -403,7 +403,7 @@ def test_export_project_data(tmp_path, mocker):
 # BAD: Don't mock internal validation
 def test_validation_bad(mocker):
     # DON'T DO THIS
-    mocker.patch('epicmanager.models.project.validate_name')
+    mocker.patch('alfred.models.project.validate_name')
 
 # GOOD: Test validation directly
 def test_validation_good():
@@ -421,7 +421,7 @@ def test_validation_good():
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from epicmanager.database import Base
+from alfred.database import Base
 
 @pytest.fixture(scope="session")
 def db_engine():
@@ -505,7 +505,7 @@ class TestProjectRepository:
 ```python
 # tests/factories.py
 from datetime import datetime, timedelta
-from epicmanager.models import Project, Task, TaskStatus, TaskPriority
+from alfred.models import Project, Task, TaskStatus, TaskPriority
 
 class ProjectFactory:
     """Factory for creating test projects."""
@@ -706,7 +706,7 @@ def test_transaction_rollback_on_error(db_session, mocker):
 
     # Mock external service to fail after database write
     mocker.patch(
-        'epicmanager.services.audit_service.log_creation',
+        'alfred.services.audit_service.log_creation',
         side_effect=Exception("Audit service failed")
     )
 
@@ -967,7 +967,7 @@ jobs:
     - name: Run tests with coverage
       run: |
         pytest \
-          --cov=epicmanager \
+          --cov=alfred \
           --cov-report=xml \
           --cov-report=term-missing \
           --junitxml=junit/test-results-${{ matrix.python-version }}.xml

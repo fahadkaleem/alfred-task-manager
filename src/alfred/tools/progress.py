@@ -1,14 +1,14 @@
 # src/alfred/tools/progress.py
 from typing import Optional, Any
 
-from src.alfred.core.workflow import BaseWorkflowTool, ImplementTaskTool
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.tools.base_tool_handler import BaseToolHandler
-from src.alfred.constants import ToolName
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
-from src.alfred.lib.logger import get_logger
-from src.alfred.orchestration.orchestrator import orchestrator
+from alfred.core.workflow import BaseWorkflowTool, ImplementTaskTool
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.tools.base_tool_handler import BaseToolHandler
+from alfred.constants import ToolName
+from alfred.state.manager import state_manager
+from alfred.state.recovery import ToolRecovery
+from alfred.lib.logger import get_logger
+from alfred.orchestration.orchestrator import orchestrator
 
 logger = get_logger(__name__)
 
@@ -82,7 +82,28 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
             orchestrator.active_tools[task_id] = recovered_tool
             return recovered_tool
 
-        return ToolResponse(status="error", message=f"No active workflow found for task '{task_id}'. Cannot mark progress.")
+        # Provide helpful context about the task state
+        from alfred.lib.task_utils import load_task
+        task_info = load_task(task_id)
+        task_status = task_info.task_status.value if task_info else "unknown"
+        
+        error_msg = f"""No active implementation workflow found for task '{task_id}'. 
+
+**Current Status**: {task_status}
+
+**Possible Reasons**:
+- Implementation phase has already completed
+- Task is in a different phase (planning, review, testing, etc.)
+- No implementation workflow was started
+
+**What to do**:
+- If implementation is complete: Use `alfred.review_task('{task_id}')` to start code review
+- If you need to restart implementation: Contact support (this shouldn't happen)
+- To see current status: Use `alfred.work_on_task('{task_id}')`
+
+Cannot mark subtask progress without an active implementation workflow."""
+        
+        return ToolResponse(status="error", message=error_msg)
 
 
 mark_subtask_complete_handler = MarkSubtaskCompleteHandler()

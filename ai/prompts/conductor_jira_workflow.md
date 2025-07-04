@@ -8,14 +8,14 @@ This prompt guides you through using Epic Task Manager MCP together with Atlassi
 
 Ensure you have both MCPs available:
 - `atlassian-mcp` - For Jira integration
-- `epic-task-manager` - For workflow orchestration
+- `alfred` - For workflow orchestration
 
 ## Step 1: Initialize Epic Task Manager
 
 First, let's make sure the Epic Task Manager system is initialized:
 
 ```
-Use the epic-task-manager MCP to call mcp_epic-task-manager_initialize_epic_task_manager
+Use the alfred MCP to call mcp_alfred_initialize_alfred
 ```
 
 This creates the `.epic` directory structure if it doesn't exist.
@@ -37,7 +37,7 @@ Use the atlassian-mcp to call mcp_atlassian_getJiraIssue with:
 With the Jira details fetched, start the task in Epic Task Manager:
 
 ```
-Use the epic-task-manager MCP to call mcp_epic-task-manager_start_new_task with:
+Use the alfred MCP to call mcp_alfred_start_new_task with:
 - task_id: [the Jira issue key]
 ```
 
@@ -47,7 +47,7 @@ This will create a context file and set the task to "retrieved" phase.
 
 The task is now in "retrieved" phase. You should:
 
-1. Open the context file at `.epictaskmanager/contexts/[ISSUE-KEY].md`
+1. Open the context file at `.alfred/contexts/[ISSUE-KEY].md`
 2. Replace the placeholder "[Fetch from Jira MCP and add details here]" with the actual Jira ticket information including:
    - Summary
    - Description
@@ -60,17 +60,17 @@ The task is now in "retrieved" phase. You should:
 Once the Jira details are added to the context, advance to planning:
 
 ```
-Use the epic-task-manager MCP to call mcp_epic-task-manager_approve_and_advance
+Use the alfred MCP to call mcp_alfred_approve_and_advance
 ```
 
-Now you're in the planning phase. The prompt file at `.epictaskmanager/prompts/planning.md` will guide you. Create a comprehensive implementation plan and add it to the context file.
+Now you're in the planning phase. The prompt file at `.alfred/prompts/planning.md` will guide you. Create a comprehensive implementation plan and add it to the context file.
 
 ## Step 6: Coding Phase
 
 After completing the plan, advance to coding:
 
 ```
-Use the epic-task-manager MCP to call mcp_epic-task-manager_approve_and_advance
+Use the alfred MCP to call mcp_alfred_approve_and_advance
 ```
 
 **IMPORTANT: Update Jira status to "In Progress"**
@@ -88,7 +88,7 @@ Now implement the solution according to your plan. The coding prompt will guide 
 Once implementation is complete:
 
 ```
-Use the epic-task-manager MCP to call mcp_epic-task-manager_approve_and_advance
+Use the alfred MCP to call mcp_alfred_approve_and_advance
 ```
 
 Perform a thorough self-review following the self_review prompt guidelines. Test the implementation locally and document findings.
@@ -98,7 +98,7 @@ Perform a thorough self-review following the self_review prompt guidelines. Test
 After self-review is done:
 
 ```
-Use the epic-task-manager MCP to call mcp_epic-task-manager_mark_task_ready_for_pr with:
+Use the alfred MCP to call mcp_alfred_mark_task_ready_for_pr with:
 - task_id: [the issue key]
 ```
 
@@ -135,27 +135,27 @@ The complete workflow is:
 At any time, you can check the current status:
 
 ```
-Use the epic-task-manager MCP to call mcp_epic-task-manager_get_current_status
+Use the alfred MCP to call mcp_alfred_get_current_status
 ```
 
 Or continue work on the current task:
 
 ```
-Use the epic-task-manager MCP to call mcp_epic-task-manager_continue_current_task
+Use the alfred MCP to call mcp_alfred_continue_current_task
 ```
 
 ## Important Notes
 
 - Each phase transition opens a new context for focused work
-- The context file (`.epictaskmanager/contexts/[ISSUE-KEY].md`) maintains the complete development history
+- The context file (`.alfred/contexts/[ISSUE-KEY].md`) maintains the complete development history
 - Edit the context file directly to add domain knowledge or corrections
-- Follow the prompts in `.epictaskmanager/prompts/[phase].md` for guidance in each phase
+- Follow the prompts in `.alfred/prompts/[phase].md` for guidance in each phase
 - The workflow enforces linear progression - you cannot skip phases
 
 ## Error Handling
 
 If you encounter errors:
-- "No active task found" - Use `mcp_epic-task-manager_start_new_task` with the Jira issue key
+- "No active task found" - Use `mcp_alfred_start_new_task` with the Jira issue key
 - "Cannot advance from [phase]" - The task may be complete or you need to complete the current phase
 - Jira connection issues - Check your Atlassian MCP configuration
 

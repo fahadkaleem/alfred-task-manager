@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Type, Callable, Any
 from enum import Enum
 
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.models.schemas import TaskStatus
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.models.schemas import TaskStatus
 
 
 @dataclass

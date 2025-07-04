@@ -10,7 +10,7 @@ I've created several prompts for you to test the Epic Task Manager + Jira integr
 - Perfect for quick testing
 
 ## 2. Detailed Assistant
-**File**: `ai/prompts/epic_task_manager_assistant.md`
+**File**: `ai/prompts/alfred_assistant.md`
 - Most comprehensive version
 - Includes example outputs
 - Explicit about every parameter
@@ -23,7 +23,7 @@ I've created several prompts for you to test the Epic Task Manager + Jira integr
 - Clear rules and status commands
 
 ## 4. Complete Documentation
-**File**: `ai/prompts/epic_task_manager_jira_workflow.md`
+**File**: `ai/prompts/alfred_jira_workflow.md`
 - Full workflow documentation
 - Educational - explains why each step
 - Good for understanding the system

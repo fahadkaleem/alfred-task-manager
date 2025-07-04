@@ -8,7 +8,7 @@ Traverse the project structure and ensure each significant module has an up-to-d
 
 ### 1. Module Discovery
 
-- Start from project root: `epicmanager/`
+- Start from project root: `alfred/`
 - Identify all Python modules (directories with `__init__.py`)
 - Skip: `__pycache__`, `.git`, `node_modules`, `venv`, `.venv`
 
@@ -58,12 +58,12 @@ Traverse the project structure and ensure each significant module has an up-to-d
 
 ### 4. Special Handling for Key Directories
 
-**epicmanager/models/**: Focus on Pydantic models, validation rules, business entities
-**epicmanager/database/**: SQLAlchemy models, repository patterns, migrations
-**epicmanager/services/**: Business logic, transaction handling, service patterns
-**epicmanager/tools/**: FastMCP tool definitions, MCP patterns
-**epicmanager/tests/**: Testing strategies, fixtures, test organization
-**epicmanager/config/**: Configuration management, environment handling
+**alfred/models/**: Focus on Pydantic models, validation rules, business entities
+**alfred/database/**: SQLAlchemy models, repository patterns, migrations
+**alfred/services/**: Business logic, transaction handling, service patterns
+**alfred/tools/**: FastMCP tool definitions, MCP patterns
+**alfred/tests/**: Testing strategies, fixtures, test organization
+**alfred/config/**: Configuration management, environment handling
 
 ### 5. Output Summary
 

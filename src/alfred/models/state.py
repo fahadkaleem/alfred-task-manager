@@ -4,12 +4,12 @@ Pydantic models for Alfred's state management.
 This module defines the single source of truth for task state.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from pydantic import BaseModel, Field
 
-from src.alfred.models.schemas import TaskStatus
+from alfred.models.schemas import TaskStatus
 
 
 class WorkflowState(BaseModel):
@@ -23,8 +23,8 @@ class WorkflowState(BaseModel):
     tool_name: str
     current_state: str  # String representation of the state enum
     context_store: Dict[str, Any] = Field(default_factory=dict)
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class TaskState(BaseModel):
@@ -37,4 +37,4 @@ class TaskState(BaseModel):
     task_status: TaskStatus = Field(default=TaskStatus.NEW)
     active_tool_state: Optional[WorkflowState] = Field(default=None)
     completed_tool_outputs: Dict[str, Any] = Field(default_factory=dict)
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

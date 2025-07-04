@@ -2,15 +2,15 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Type, Any
 
-from src.alfred.core.prompter import generate_prompt
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.lib.logger import get_logger, setup_task_logging
-from src.alfred.lib.task_utils import load_task, load_task_with_error_details
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
-from src.alfred.tools.registry import tool_registry
+from alfred.core.prompter import generate_prompt
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.logger import get_logger, setup_task_logging
+from alfred.lib.task_utils import load_task, load_task_with_error_details
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.manager import state_manager
+from alfred.state.recovery import ToolRecovery
+from alfred.tools.registry import tool_registry
 
 logger = get_logger(__name__)
 

@@ -1,8 +1,8 @@
 """Test task implementation."""
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.tools.tool_factory import get_tool_handler
-from src.alfred.constants import ToolName
+from alfred.models.schemas import ToolResponse
+from alfred.tools.tool_factory import get_tool_handler
+from alfred.constants import ToolName
 
 # Get the handler from factory
 test_task_handler = get_tool_handler(ToolName.TEST_TASK)

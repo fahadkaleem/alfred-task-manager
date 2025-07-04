@@ -3,14 +3,14 @@
 The start_task tool, re-architected as a stateful workflow tool.
 """
 
-from src.alfred.core.prompter import generate_prompt
-from src.alfred.core.workflow import StartTaskTool
-from src.alfred.lib.logger import get_logger, setup_task_logging
-from src.alfred.lib.task_utils import load_task
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
+from alfred.core.prompter import generate_prompt
+from alfred.core.workflow import StartTaskTool
+from alfred.lib.logger import get_logger, setup_task_logging
+from alfred.lib.task_utils import load_task
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.manager import state_manager
+from alfred.state.recovery import ToolRecovery
 
 logger = get_logger(__name__)
 

@@ -5,31 +5,19 @@ from typing import Any, Dict, List, Optional, Type
 from pydantic import BaseModel
 from transitions.core import Machine
 
-from src.alfred.constants import ToolName, Triggers
-from src.alfred.core.state_machine_builder import workflow_builder
-from src.alfred.models.planning_artifacts import (
+from alfred.constants import ToolName, Triggers
+from alfred.core.state_machine_builder import workflow_builder
+from alfred.models.planning_artifacts import (
     BranchCreationArtifact,
-    ContextAnalysisArtifact,
-    DesignArtifact,
-    ExecutionPlanArtifact,
     FinalizeArtifact,
     GitStatusArtifact,
     ImplementationManifestArtifact,
     PRDInputArtifact,
     ReviewArtifact,
-    StrategyArtifact,
     TaskCreationArtifact,
     TestResultArtifact,
 )
-from src.alfred.models.engineering_spec import EngineeringSpec
-
-
-class PlanTaskState(str, Enum):
-    CONTEXTUALIZE = "contextualize"
-    STRATEGIZE = "strategize"
-    DESIGN = "design"
-    GENERATE_SUBTASKS = "generate_subtasks"
-    VERIFIED = "verified"
+from alfred.models.engineering_spec import EngineeringSpec
 
 
 class StartTaskState(str, Enum):
@@ -101,29 +89,6 @@ class BaseWorkflowTool:
         that produces the primary artifact for the tool.
         """
         raise NotImplementedError(f"{self.__class__.__name__} must implement get_final_work_state()")
-
-
-class PlanTaskTool(BaseWorkflowTool):
-    def __init__(self, task_id: str):
-        super().__init__(task_id, tool_name=ToolName.PLAN_TASK)
-        self.artifact_map = {
-            PlanTaskState.CONTEXTUALIZE: ContextAnalysisArtifact,
-            PlanTaskState.STRATEGIZE: StrategyArtifact,
-            PlanTaskState.DESIGN: DesignArtifact,
-            PlanTaskState.GENERATE_SUBTASKS: ExecutionPlanArtifact,
-        }
-
-        # Use the builder to create the state machine configuration
-        machine_config = workflow_builder.build_workflow_with_reviews(
-            work_states=[PlanTaskState.CONTEXTUALIZE, PlanTaskState.STRATEGIZE, PlanTaskState.DESIGN, PlanTaskState.GENERATE_SUBTASKS],
-            terminal_state=PlanTaskState.VERIFIED,
-            initial_state=PlanTaskState.CONTEXTUALIZE,
-        )
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
-
-    def get_final_work_state(self) -> str:
-        return PlanTaskState.GENERATE_SUBTASKS.value
 
 
 class StartTaskTool(BaseWorkflowTool):

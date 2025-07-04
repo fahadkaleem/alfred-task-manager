@@ -6,9 +6,10 @@ from typing import Dict, Any, Optional, Set, Union
 from dataclasses import dataclass
 from enum import Enum
 
-from src.alfred.config.settings import settings
-from src.alfred.lib.logger import get_logger
-from src.alfred.core.template_registry import template_registry
+from alfred.config.settings import settings
+from alfred.lib.logger import get_logger
+from alfred.lib.turn_manager import turn_manager
+from alfred.core.template_registry import template_registry
 
 logger = get_logger(__name__)
 
@@ -264,6 +265,26 @@ def generate_prompt(task_id: str, tool_name: str, state: str, task: Any, additio
     # Build context using the builder
     builder = PromptBuilder(task_id, tool_name, state_value).with_task(task)
 
+    # Load turn-based context
+    try:
+        # Get latest artifacts from turn history
+        latest_artifacts = turn_manager.get_latest_artifacts_by_state(task_id)
+
+        # Add each state's artifact to context with flattened keys
+        for state_name, artifact_data in latest_artifacts.items():
+            # Add the entire artifact data under the state name
+            builder.with_custom(**{state_name: artifact_data})
+
+            # Also flatten specific fields for backward compatibility
+            if isinstance(artifact_data, dict):
+                for key, value in artifact_data.items():
+                    # Create flattened keys like "discovery_findings", "clarification_decisions"
+                    flattened_key = f"{state_name}_{key}"
+                    builder.with_custom(**{flattened_key: value})
+    except Exception as e:
+        logger.warning(f"Could not load turn-based context for {task_id}: {e}")
+        # Continue with traditional context loading
+
     # Add additional context
     if additional_context:
         if "artifact_content" in additional_context:
@@ -277,7 +298,13 @@ def generate_prompt(task_id: str, tool_name: str, state: str, task: Any, additio
 
     # Render the prompt
     try:
-        return prompt_library.render(prompt_key, builder.build())
+        context = builder.build()
+
+        # Special handling for plan_task discovery template
+        if prompt_key == "plan_task.discovery" and "autonomous_note" not in context:
+            context["autonomous_note"] = "Running in interactive mode - human reviews are enabled for each phase"
+
+        return prompt_library.render(prompt_key, context)
     except KeyError:
         # Fallback for missing prompts
         logger.warning(f"Prompt not found for {prompt_key}, using fallback")

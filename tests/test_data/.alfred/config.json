@@ -1,0 +1,6 @@
+{
+  "provider": "local",
+  "project_name": "test_project",
+  "version": "1.0.0",
+  "debug": true
+}

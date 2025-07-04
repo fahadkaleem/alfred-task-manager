@@ -1,10 +1,10 @@
 # src/alfred/tools/create_spec.py
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.constants import ToolName
-from src.alfred.core.workflow import CreateSpecTool
-from src.alfred.models.planning_artifacts import PRDInputArtifact
-from src.alfred.models.engineering_spec import EngineeringSpec
-from src.alfred.state.manager import state_manager
+from alfred.models.schemas import ToolResponse
+from alfred.constants import ToolName
+from alfred.core.workflow import CreateSpecTool
+from alfred.models.planning_artifacts import PRDInputArtifact
+from alfred.models.engineering_spec import EngineeringSpec
+from alfred.state.manager import state_manager
 
 
 async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
@@ -26,7 +26,7 @@ async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
     task_state = state_manager.load_or_create_task_state(task_id)
 
     # Update status to creating_spec
-    from src.alfred.models.schemas import TaskStatus
+    from alfred.models.schemas import TaskStatus
 
     state_manager.update_task_status(task_id, TaskStatus.CREATING_SPEC)
 
@@ -45,13 +45,13 @@ async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
     state_manager.update_tool_state(task_id, tool)
 
     # Load the drafting prompt
-    from src.alfred.core.prompter import generate_prompt
-    from src.alfred.lib.task_utils import load_task
+    from alfred.core.prompter import generate_prompt
+    from alfred.lib.task_utils import load_task
 
     task = load_task(task_id)
     if not task:
         # Create a basic task object for the spec creation phase
-        from src.alfred.models.schemas import Task
+        from alfred.models.schemas import Task
 
         task = Task(
             task_id=task_id,

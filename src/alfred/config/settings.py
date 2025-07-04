@@ -3,15 +3,17 @@ Configuration settings for Alfred using pydantic_settings
 """
 
 from pathlib import Path
+from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from src.alfred.constants import Paths
+from alfred.constants import Paths
 
 
 class Settings(BaseSettings):
     """Application settings"""
 
-    model_config = SettingsConfigDict(env_prefix="ALFRED_", case_sensitive=False)
+    model_config = SettingsConfigDict(env_prefix="ALFRED_", case_sensitive=False, env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Debugging flag
     debugging_mode: bool = True
@@ -26,6 +28,11 @@ class Settings(BaseSettings):
 
     # Base paths
     project_root: Path = Path.cwd()
+
+    # AI Provider API Keys (using standard env var names)
+    openai_api_key: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
+    google_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")
+    anthropic_api_key: Optional[str] = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
 
     @property
     def alfred_dir(self) -> Path:

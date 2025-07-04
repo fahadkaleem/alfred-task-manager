@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import re
 
-from src.alfred.lib.logger import get_logger
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 

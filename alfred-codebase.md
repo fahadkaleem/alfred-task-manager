@@ -6,7 +6,7 @@
 ``````
 """Alfred configuration module."""
 
-from src.alfred.models.alfred_config import AlfredConfig, FeaturesConfig
+from alfred.models.alfred_config import AlfredConfig, FeaturesConfig
 
 from .manager import ConfigManager
 
@@ -17,11 +17,11 @@ __all__ = ["ConfigManager", "AlfredConfig", "FeaturesConfig"]
 ``````
 """Configuration manager for Alfred."""
 
-import json
 import logging
+import yaml
 from pathlib import Path
 
-from src.alfred.models.alfred_config import AlfredConfig
+from alfred.models.alfred_config import AlfredConfig
 
 logger = logging.getLogger("alfred.config.manager")
 
@@ -29,7 +29,7 @@ logger = logging.getLogger("alfred.config.manager")
 class ConfigManager:
     """Manages Alfred configuration."""
 
-    CONFIG_FILENAME = "config.json"
+    CONFIG_FILENAME = "config.yml"
 
     def __init__(self, config_dir: Path):
         """Initialize the config manager.
@@ -55,7 +55,7 @@ class ConfigManager:
 
         try:
             with open(self.config_path) as f:
-                data = json.load(f)
+                data = yaml.safe_load(f)
 
             self._config = AlfredConfig(**data)
             logger.info(f"Loaded configuration from {self.config_path}")
@@ -74,7 +74,7 @@ class ConfigManager:
             self.config_dir.mkdir(parents=True, exist_ok=True)
 
             with open(self.config_path, "w") as f:
-                json.dump(config.model_dump(), f, indent=2)
+                yaml.dump(config.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False)
 
             self._config = config
             logger.info(f"Saved configuration to {self.config_path}")
@@ -154,15 +154,23 @@ Configuration settings for Alfred using pydantic_settings
 """
 
 from pathlib import Path
+from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from src.alfred.constants import Paths
+from alfred.constants import Paths
 
 
 class Settings(BaseSettings):
     """Application settings"""
 
-    model_config = SettingsConfigDict(env_prefix="ALFRED_", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_prefix="ALFRED_", 
+        case_sensitive=False,
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
     # Debugging flag
     debugging_mode: bool = True
@@ -173,10 +181,15 @@ class Settings(BaseSettings):
 
     # Directory configuration
     alfred_dir_name: str = Paths.ALFRED_DIR
-    workflow_filename: str = Paths.WORKFLOW_FILE
+    config_filename: str = Paths.CONFIG_FILE
 
     # Base paths
     project_root: Path = Path.cwd()
+
+    # AI Provider API Keys (using standard env var names)
+    openai_api_key: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
+    google_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY") 
+    anthropic_api_key: Optional[str] = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
 
     @property
     def alfred_dir(self) -> Path:
@@ -184,14 +197,14 @@ class Settings(BaseSettings):
         return self.project_root / self.alfred_dir_name
 
     @property
-    def workflow_file(self) -> Path:
-        """Get the project's workflow.yml file path."""
-        return self.alfred_dir / self.workflow_filename
+    def config_file(self) -> Path:
+        """Get the project's config.yml file path."""
+        return self.alfred_dir / self.config_filename
 
     @property
-    def packaged_workflow_file(self) -> Path:
-        """Get the path to the default workflow file inside the package."""
-        return Path(__file__).parent.parent / Paths.WORKFLOW_FILE
+    def packaged_config_file(self) -> Path:
+        """Get the path to the default config file inside the package."""
+        return Path(__file__).parent.parent / Paths.CONFIG_FILE
 
     @property
     def packaged_templates_dir(self) -> Path:
@@ -207,6 +220,82 @@ class Settings(BaseSettings):
 # Global settings instance
 settings = Settings()
 
+``````
+------ src/alfred/config.yml ------
+``````
+version: "2.0.0"
+
+provider:
+  type: "local"
+
+ai:
+  providers:
+    - name: "openai"
+      enabled: true
+    - name: "google"
+      enabled: true
+    - name: "anthropic"
+      enabled: false
+  default_provider: "openai"
+  enable_token_tracking: true
+  max_tokens_per_request: 8000
+  default_temperature: 0.5
+  default_model: "gpt-4"
+
+features:
+  scaffolding_mode: false
+  autonomous_mode: false
+
+tools:
+  create_spec:
+    enabled: true
+    description: "Create technical specification from PRD"
+  
+  create_tasks_from_spec:
+    enabled: true
+    description: "Break down engineering spec into actionable tasks"
+  
+  plan_task:
+    enabled: true
+    description: "Create detailed execution plan for a task"
+    
+  implement_task:
+    enabled: true
+    description: "Execute the planned implementation"
+    
+  review_task:
+    enabled: true
+    description: "Perform code review"
+    
+  test_task:
+    enabled: true
+    description: "Run and validate tests"
+    
+  finalize_task:
+    enabled: true
+    description: "Create commit and pull request"
+
+workflow:
+  require_human_approval: true
+  enable_ai_review: true
+  max_thinking_time: 300
+  auto_create_branches: true
+
+providers:
+  jira:
+    transition_on_start: true
+    transition_on_complete: true
+    
+  linear:
+    update_status: true
+    
+  local:
+    task_file_pattern: "*.md"
+
+debug:
+  save_debug_logs: true
+  save_state_snapshots: true
+  log_level: INFO
 ``````
 ------ src/alfred/constants.py ------
 ``````
@@ -256,7 +345,7 @@ class Paths:
     SCRATCHPAD_FILE: Final[str] = "scratchpad.md"
     EXECUTION_PLAN_FILE: Final[str] = "execution_plan.json"
     TOOL_STATE_FILE: Final[str] = "tool_state.json"
-    WORKFLOW_FILE: Final[str] = "workflow.yml"
+    CONFIG_FILE: Final[str] = "config.yml"
     STATE_FILE: Final[str] = "state.json"
     TASK_FILE: Final[str] = "task.json"
 
@@ -274,19 +363,15 @@ class TemplatePaths:
     ARTIFACT_PATTERN: Final[str] = "artifacts/{template_name}.md"
 
 
-# Plan Task State Names (as strings for transitions)
+# Plan Task State Names (as strings for transitions) - Discovery Planning
 class PlanTaskStates:
-    """Plan task state string constants."""
+    """Discovery planning state string constants."""
 
-    INITIAL: Final[str] = "initial"
-    CONTEXTUALIZE: Final[str] = "contextualize"
-    REVIEW_CONTEXT: Final[str] = "review_context"
-    STRATEGIZE: Final[str] = "strategize"
-    REVIEW_STRATEGY: Final[str] = "review_strategy"
-    DESIGN: Final[str] = "design"
-    REVIEW_DESIGN: Final[str] = "review_design"
-    GENERATE_SUBTASKS: Final[str] = "generate_subtasks"
-    REVIEW_PLAN: Final[str] = "review_plan"
+    DISCOVERY: Final[str] = "discovery"
+    CLARIFICATION: Final[str] = "clarification"
+    CONTRACTS: Final[str] = "contracts"
+    IMPLEMENTATION_PLAN: Final[str] = "implementation_plan"
+    VALIDATION: Final[str] = "validation"
     VERIFIED: Final[str] = "verified"
 
 
@@ -296,11 +381,12 @@ class ArtifactKeys:
 
     # State to artifact name mapping
     STATE_TO_ARTIFACT_MAP: Final[dict] = {
-        # PlanTask states
-        PlanTaskStates.CONTEXTUALIZE: "context",
-        PlanTaskStates.STRATEGIZE: "strategy",
-        PlanTaskStates.DESIGN: "design",
-        PlanTaskStates.GENERATE_SUBTASKS: "execution_plan",
+        # Discovery Planning states
+        PlanTaskStates.DISCOVERY: "context_discovery",
+        PlanTaskStates.CLARIFICATION: "clarification",
+        PlanTaskStates.CONTRACTS: "contract_design",
+        PlanTaskStates.IMPLEMENTATION_PLAN: "implementation_plan",
+        PlanTaskStates.VALIDATION: "validation",
         # Other tool states
         "drafting_spec": "drafting_spec",
         "drafting_tasks": "drafting_tasks",
@@ -338,10 +424,11 @@ class StateDescriptions:
     """Human-readable state descriptions."""
 
     DESCRIPTIONS: Final[dict] = {
-        PlanTaskStates.CONTEXTUALIZE: "Understanding the Requirements and Codebase",
-        PlanTaskStates.STRATEGIZE: "Technical Strategy and Approach",
-        PlanTaskStates.DESIGN: "Detailed Implementation Design",
-        PlanTaskStates.GENERATE_SUBTASKS: "Execution Plan",
+        PlanTaskStates.DISCOVERY: "Deep Context Discovery and Codebase Exploration",
+        PlanTaskStates.CLARIFICATION: "Conversational Human-AI Clarification",
+        PlanTaskStates.CONTRACTS: "Interface-First Design and Contracts",
+        PlanTaskStates.IMPLEMENTATION_PLAN: "Self-Contained Subtask Creation",
+        PlanTaskStates.VALIDATION: "Final Plan Validation and Coherence Check",
     }
 
 
@@ -419,11 +506,317 @@ class ErrorMessages:
 ------ src/alfred/core/__init__.py ------
 ``````
 # src/alfred/core/__init__.py
-from .workflow import BaseWorkflowTool, PlanTaskTool, PlanTaskState
+from .workflow import BaseWorkflowTool
+from .discovery_workflow import PlanTaskTool, PlanTaskState
 from .prompter import prompt_library, generate_prompt
 
 __all__ = ["BaseWorkflowTool", "PlanTaskTool", "PlanTaskState", "prompt_library", "generate_prompt"]
 
+``````
+------ src/alfred/core/discovery_context.py ------
+``````
+"""Pure function context loaders for discovery planning."""
+
+from typing import Any, Dict
+from alfred.models.schemas import Task
+from alfred.models.state import TaskState
+
+
+def load_plan_task_context(task: Task, task_state: TaskState) -> Dict[str, Any]:
+    """Pure function context loader for plan_task tool.
+    
+    Args:
+        task: The task being planned
+        task_state: Current task state with artifacts and context
+        
+    Returns:
+        Context dictionary for prompt template rendering
+        
+    Raises:
+        ValueError: If required dependencies are missing
+    """
+    # Check for re-planning context from active tool state
+    restart_context = None
+    context_store = {}
+    if task_state.active_tool_state:
+        restart_context = task_state.active_tool_state.context_store.get("restart_context")
+        context_store = task_state.active_tool_state.context_store
+    
+    # Base context for all planning states
+    context = {
+        "task_title": task.title or "Untitled Task",
+        "task_context": task.context or "",
+        "implementation_details": task.implementation_details or "",
+        "acceptance_criteria": task.acceptance_criteria or [],
+        "restart_context": restart_context,
+        "preserved_artifacts": context_store.get("preserved_artifacts", []),
+        # Autonomous mode configuration
+        "autonomous_mode": context_store.get("autonomous_mode", False),
+        "autonomous_note": context_store.get("autonomous_note", "Running in interactive mode - human reviews are enabled for each phase"),
+        "skip_contracts": context_store.get("skip_contracts", False),
+        "complexity_note": context_store.get("complexity_note", "")
+    }
+    
+    # Add state-specific context
+    current_state = None
+    if task_state.active_tool_state:
+        current_state = task_state.active_tool_state.current_state
+        context["current_state"] = current_state
+        
+        # Add artifacts from previous states using context_store from active tool
+        # Map the stored artifact keys to template variable names
+        if current_state != "discovery":
+            discovery_artifact = task_state.active_tool_state.context_store.get("context_discovery_artifact")
+            if discovery_artifact:
+                context["discovery_artifact"] = discovery_artifact
+                # Flatten for template access
+                if hasattr(discovery_artifact, 'findings'):
+                    context["discovery_findings"] = discovery_artifact.findings
+                elif isinstance(discovery_artifact, dict) and 'findings' in discovery_artifact:
+                    context["discovery_findings"] = discovery_artifact['findings']
+                    
+                if hasattr(discovery_artifact, 'questions'):
+                    context["discovery_questions"] = '\n'.join(f"- {q}" for q in discovery_artifact.questions)
+                elif isinstance(discovery_artifact, dict) and 'questions' in discovery_artifact:
+                    questions = discovery_artifact.get('questions', [])
+                    context["discovery_questions"] = '\n'.join(f"- {q}" for q in questions)
+                
+        if current_state in ["contracts", "implementation_plan", "validation"]:
+            clarification_artifact = task_state.active_tool_state.context_store.get("clarification_artifact")
+            if clarification_artifact:
+                context["clarification_artifact"] = clarification_artifact
+                
+        if current_state in ["implementation_plan", "validation"]:
+            contracts_artifact = task_state.active_tool_state.context_store.get("contract_design_artifact")
+            if contracts_artifact:
+                context["contracts_artifact"] = contracts_artifact
+                
+        if current_state == "validation":
+            implementation_artifact = task_state.active_tool_state.context_store.get("implementation_plan_artifact")
+            if implementation_artifact:
+                context["implementation_artifact"] = implementation_artifact
+    
+    return context
+
+
+def load_simple_task_context(task: Task, task_state: TaskState) -> Dict[str, Any]:
+    """Context loader for simple tasks that skip CONTRACTS state."""
+    context = load_plan_task_context(task, task_state)
+    context["skip_contracts"] = True
+    return context
+``````
+------ src/alfred/core/discovery_workflow.py ------
+``````
+"""Discovery planning workflow state machine implementation."""
+
+from enum import Enum
+from typing import Any, Dict, List, Optional
+from transitions.core import Machine
+
+from alfred.constants import ToolName
+from alfred.core.state_machine_builder import workflow_builder
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.models.planning_artifacts import (
+    ContextDiscoveryArtifact,
+    ClarificationArtifact,
+    ContractDesignArtifact,
+    ImplementationPlanArtifact,
+    ValidationArtifact,
+)
+
+
+class PlanTaskState(str, Enum):
+    """State enumeration for the discovery planning workflow."""
+    DISCOVERY = "discovery"
+    CLARIFICATION = "clarification"
+    CONTRACTS = "contracts"
+    IMPLEMENTATION_PLAN = "implementation_plan"
+    VALIDATION = "validation"
+    VERIFIED = "verified"
+
+
+class PlanTaskTool(BaseWorkflowTool):
+    """Discovery planning tool with conversational, context-rich workflow."""
+    
+    def __init__(self, task_id: str, restart_context: Optional[Dict] = None, autonomous_mode: bool = False):
+        super().__init__(task_id, tool_name=ToolName.PLAN_TASK)
+        
+        # Define artifact mapping
+        self.artifact_map = {
+            PlanTaskState.DISCOVERY: ContextDiscoveryArtifact,
+            PlanTaskState.CLARIFICATION: ClarificationArtifact,
+            PlanTaskState.CONTRACTS: ContractDesignArtifact,
+            PlanTaskState.IMPLEMENTATION_PLAN: ImplementationPlanArtifact,
+            PlanTaskState.VALIDATION: ValidationArtifact,
+        }
+        
+        # Handle re-planning context
+        if restart_context:
+            initial_state = self._determine_restart_state(restart_context)
+            self._load_preserved_artifacts(restart_context)
+        else:
+            initial_state = PlanTaskState.DISCOVERY
+            
+        # Initially include all states - we'll skip dynamically during transitions
+        workflow_states = [
+            PlanTaskState.DISCOVERY,
+            PlanTaskState.CLARIFICATION,
+            PlanTaskState.CONTRACTS,
+            PlanTaskState.IMPLEMENTATION_PLAN,
+            PlanTaskState.VALIDATION
+        ]
+        
+        # Use the builder to create state machine configuration
+        machine_config = workflow_builder.build_workflow_with_reviews(
+            work_states=workflow_states,
+            terminal_state=PlanTaskState.VERIFIED,
+            initial_state=initial_state,
+        )
+        
+        # Create the state machine
+        self.machine = Machine(
+            model=self,
+            states=machine_config["states"],
+            transitions=machine_config["transitions"],
+            initial=machine_config["initial"],
+            auto_transitions=False
+        )
+        
+        # Configuration flags
+        self._skip_contracts = False
+        self.autonomous_mode = autonomous_mode
+        
+        # Store autonomous mode in context for templates
+        self.context_store["autonomous_mode"] = autonomous_mode
+        if autonomous_mode:
+            self.context_store["autonomous_note"] = "Running in autonomous mode - human reviews will be skipped"
+        else:
+            self.context_store["autonomous_note"] = "Running in interactive mode - human reviews are enabled for each phase"
+        
+    def get_final_work_state(self) -> str:
+        """Return the final work state that produces the main artifact."""
+        return PlanTaskState.VALIDATION.value
+        
+    def _determine_restart_state(self, restart_context: Dict) -> PlanTaskState:
+        """Determine initial state for re-planning."""
+        restart_from = restart_context.get("restart_from", "DISCOVERY")
+        return PlanTaskState(restart_from.lower())
+        
+    def _load_preserved_artifacts(self, restart_context: Dict) -> None:
+        """Load preserved artifacts from previous planning attempt."""
+        preserved = restart_context.get("preserve_artifacts", [])
+        for artifact_name in preserved:
+            # Load preserved artifact into context_store
+            self.context_store[f"preserved_{artifact_name}"] = restart_context.get(artifact_name)
+            
+    def _determine_workflow_states(self, discovery_artifact: Optional[ContextDiscoveryArtifact] = None) -> list:
+        """Determine which states to include based on complexity."""
+        base_states = [
+            PlanTaskState.DISCOVERY,
+            PlanTaskState.CLARIFICATION
+        ]
+        
+        # Only add CONTRACTS state for complex tasks
+        if discovery_artifact and not self.should_skip_contracts(discovery_artifact):
+            base_states.append(PlanTaskState.CONTRACTS)
+        elif discovery_artifact is None:
+            # If no discovery artifact yet (initial setup), include contracts
+            # Will be validated later in the workflow
+            base_states.append(PlanTaskState.CONTRACTS)
+        
+        base_states.extend([
+            PlanTaskState.IMPLEMENTATION_PLAN,
+            PlanTaskState.VALIDATION
+        ])
+        
+        return base_states
+        
+    def should_skip_contracts(self, discovery_artifact: ContextDiscoveryArtifact) -> bool:
+        """Determine if CONTRACTS state should be skipped for simple tasks."""
+        if not discovery_artifact:
+            return False
+            
+        # Simple task criteria based on multiple factors
+        complexity = getattr(discovery_artifact, 'complexity_assessment', 'MEDIUM')
+        relevant_files = getattr(discovery_artifact, 'relevant_files', [])
+        integration_points = getattr(discovery_artifact, 'integration_points', [])
+        code_patterns = getattr(discovery_artifact, 'code_patterns', [])
+        
+        # Skip contracts for simple tasks if:
+        # 1. Complexity is explicitly LOW
+        # 2. Few files affected (≤ 3)
+        # 3. No new integration points
+        # 4. Follows existing patterns (no new architecture)
+        
+        is_low_complexity = complexity == 'LOW'
+        few_files = len(relevant_files) <= 3
+        no_new_integrations = len(integration_points) == 0
+        follows_patterns = len(code_patterns) > 0  # Uses existing patterns
+        
+        # Skip if it's clearly a simple task
+        should_skip = (
+            is_low_complexity and 
+            few_files and 
+            no_new_integrations
+        )
+        
+        return should_skip
+    
+    def check_complexity_after_clarification(self) -> None:
+        """Check if we should skip contracts after clarification phase."""
+        # Get discovery artifact from context store
+        discovery_artifact = self.context_store.get("context_discovery_artifact")
+        if discovery_artifact and self.should_skip_contracts(discovery_artifact):
+            self._skip_contracts = True
+            # Add note to context for templates
+            self.context_store["skip_contracts"] = True
+            self.context_store["complexity_note"] = "Skipping CONTRACTS phase due to LOW complexity assessment"
+    
+    def get_next_state_after_clarification(self) -> str:
+        """Determine next state after clarification based on complexity."""
+        if self._skip_contracts:
+            return PlanTaskState.IMPLEMENTATION_PLAN.value
+        return PlanTaskState.CONTRACTS.value
+    
+    def should_auto_approve(self) -> bool:
+        """Check if we should automatically approve after AI review."""
+        return self.autonomous_mode
+    
+    def get_autonomous_config(self) -> Dict[str, Any]:
+        """Get configuration for autonomous mode."""
+        return {
+            "skip_human_reviews": self.autonomous_mode,
+            "auto_approve_after_ai": self.autonomous_mode,
+            "question_handling": "best_guess" if self.autonomous_mode else "interactive"
+        }
+    
+    def initiate_replanning(self, trigger: str, restart_from: str, changes: str, 
+                           preserve_artifacts: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Initiate re-planning with preserved context."""
+        restart_context = {
+            "trigger": trigger,  # "requirements_changed", "implementation_failed", "review_failed"
+            "restart_from": restart_from,  # State to restart from
+            "changes": changes,  # What changed
+            "preserve_artifacts": preserve_artifacts or [],
+            "timestamp": __import__('datetime').datetime.now().isoformat(),
+            "previous_state": self.state
+        }
+        
+        # Store restart context for next planning session
+        self.context_store["restart_context"] = restart_context
+        
+        return restart_context
+    
+    def can_restart_from_state(self, state: str) -> bool:
+        """Check if we can restart planning from a given state."""
+        valid_restart_states = [
+            PlanTaskState.DISCOVERY.value,
+            PlanTaskState.CLARIFICATION.value, 
+            PlanTaskState.CONTRACTS.value,
+            PlanTaskState.IMPLEMENTATION_PLAN.value,
+            PlanTaskState.VALIDATION.value
+        ]
+        return state in valid_restart_states
 ``````
 ------ src/alfred/core/prompt_templates.py ------
 ``````
@@ -434,7 +827,7 @@ Each template is a data structure - no logic, just content definition.
 """
 
 from typing import List
-from src.alfred.core.template_base import WorkflowPromptTemplate, WorkflowWithTaskDetailsTemplate, SubmitWorkPromptTemplate, ReviewPromptTemplate
+from alfred.core.template_base import WorkflowPromptTemplate, WorkflowWithTaskDetailsTemplate, SubmitWorkPromptTemplate, ReviewPromptTemplate
 
 
 # Plan Task Templates
@@ -588,9 +981,10 @@ from typing import Dict, Any, Optional, Set, Union
 from dataclasses import dataclass
 from enum import Enum
 
-from src.alfred.config.settings import settings
-from src.alfred.lib.logger import get_logger
-from src.alfred.core.template_registry import template_registry
+from alfred.config.settings import settings
+from alfred.lib.logger import get_logger
+from alfred.lib.turn_manager import turn_manager
+from alfred.core.template_registry import template_registry
 
 logger = get_logger(__name__)
 
@@ -634,19 +1028,12 @@ class PromptLibrary:
         """Initialize the prompt library.
 
         Args:
-            prompts_dir: Directory containing prompts. Defaults to checking
-                        user customization first, then packaged prompts.
+            prompts_dir: Directory containing prompts. Defaults to packaged prompts.
         """
         if prompts_dir is None:
-            # Check for user customization first
-            user_prompts = settings.alfred_dir / "templates" / "prompts"
-            if user_prompts.exists():
-                prompts_dir = user_prompts
-                logger.info(f"Using user prompt templates from {user_prompts}")
-            else:
-                # Fall back to packaged prompts
-                prompts_dir = Path(__file__).parent.parent / "templates" / "prompts"
-                logger.info(f"Using default prompt templates from {prompts_dir}")
+            # Always use packaged prompts
+            prompts_dir = Path(__file__).parent.parent / "templates" / "prompts"
+            logger.info(f"Using packaged prompt templates from {prompts_dir}")
 
         self.prompts_dir = prompts_dir
         self._cache: Dict[str, PromptTemplate] = {}
@@ -853,6 +1240,26 @@ def generate_prompt(task_id: str, tool_name: str, state: str, task: Any, additio
     # Build context using the builder
     builder = PromptBuilder(task_id, tool_name, state_value).with_task(task)
 
+    # Load turn-based context
+    try:
+        # Get latest artifacts from turn history
+        latest_artifacts = turn_manager.get_latest_artifacts_by_state(task_id)
+        
+        # Add each state's artifact to context with flattened keys
+        for state_name, artifact_data in latest_artifacts.items():
+            # Add the entire artifact data under the state name
+            builder.with_custom(**{state_name: artifact_data})
+            
+            # Also flatten specific fields for backward compatibility
+            if isinstance(artifact_data, dict):
+                for key, value in artifact_data.items():
+                    # Create flattened keys like "discovery_findings", "clarification_decisions"
+                    flattened_key = f"{state_name}_{key}"
+                    builder.with_custom(**{flattened_key: value})
+    except Exception as e:
+        logger.warning(f"Could not load turn-based context for {task_id}: {e}")
+        # Continue with traditional context loading
+    
     # Add additional context
     if additional_context:
         if "artifact_content" in additional_context:
@@ -866,7 +1273,13 @@ def generate_prompt(task_id: str, tool_name: str, state: str, task: Any, additio
 
     # Render the prompt
     try:
-        return prompt_library.render(prompt_key, builder.build())
+        context = builder.build()
+        
+        # Special handling for plan_task discovery template
+        if prompt_key == "plan_task.discovery" and "autonomous_note" not in context:
+            context["autonomous_note"] = "Running in interactive mode - human reviews are enabled for each phase"
+            
+        return prompt_library.render(prompt_key, context)
     except KeyError:
         # Fallback for missing prompts
         logger.warning(f"Prompt not found for {prompt_key}, using fallback")
@@ -884,8 +1297,8 @@ from enum import Enum
 from typing import List, Dict, Any, Type, Optional, Union
 from transitions import Machine
 
-from src.alfred.constants import Triggers
-from src.alfred.lib.logger import get_logger
+from alfred.constants import Triggers
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -915,6 +1328,7 @@ class WorkflowStateMachineBuilder:
         3. ai_review -> work_state (via request_revision trigger)
         4. human_review -> next_state (via human_approve trigger)
         5. human_review -> work_state (via request_revision trigger)
+        6. work_state -> work_state (via request_revision trigger)
         """
         if revision_destination_state is None:
             revision_destination_state = source_state
@@ -952,6 +1366,12 @@ class WorkflowStateMachineBuilder:
             {
                 "trigger": Triggers.REQUEST_REVISION,
                 "source": human_review_state,
+                "dest": revision_destination_state,
+            },
+            # Working state requests revision (iterative refinement)
+            {
+                "trigger": Triggers.REQUEST_REVISION,
+                "source": source_state,
                 "dest": revision_destination_state,
             },
         ]
@@ -1044,7 +1464,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import re
 
-from src.alfred.lib.logger import get_logger
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -1217,8 +1637,8 @@ This maintains the explicit path principle - each state maps to one template.
 
 from typing import Dict, Type, Optional
 
-from src.alfred.core.template_base import BasePromptTemplate
-from src.alfred.core.prompt_templates import PlanTaskContextualizeTemplate, PlanTaskStrategizeTemplate, AIReviewTemplate, HumanReviewTemplate, SimpleDispatchingTemplate
+from alfred.core.template_base import BasePromptTemplate
+from alfred.core.prompt_templates import PlanTaskContextualizeTemplate, PlanTaskStrategizeTemplate, AIReviewTemplate, HumanReviewTemplate, SimpleDispatchingTemplate
 
 
 class TemplateRegistry:
@@ -1276,31 +1696,20 @@ from typing import Any, Dict, List, Optional, Type
 from pydantic import BaseModel
 from transitions.core import Machine
 
-from src.alfred.constants import ToolName, Triggers
-from src.alfred.core.state_machine_builder import workflow_builder
-from src.alfred.models.planning_artifacts import (
+from alfred.constants import ToolName, Triggers
+from alfred.core.state_machine_builder import workflow_builder
+from alfred.models.planning_artifacts import (
     BranchCreationArtifact,
-    ContextAnalysisArtifact,
-    DesignArtifact,
-    ExecutionPlanArtifact,
     FinalizeArtifact,
     GitStatusArtifact,
     ImplementationManifestArtifact,
     PRDInputArtifact,
     ReviewArtifact,
-    StrategyArtifact,
     TaskCreationArtifact,
     TestResultArtifact,
 )
-from src.alfred.models.engineering_spec import EngineeringSpec
+from alfred.models.engineering_spec import EngineeringSpec
 
-
-class PlanTaskState(str, Enum):
-    CONTEXTUALIZE = "contextualize"
-    STRATEGIZE = "strategize"
-    DESIGN = "design"
-    GENERATE_SUBTASKS = "generate_subtasks"
-    VERIFIED = "verified"
 
 
 class StartTaskState(str, Enum):
@@ -1374,27 +1783,6 @@ class BaseWorkflowTool:
         raise NotImplementedError(f"{self.__class__.__name__} must implement get_final_work_state()")
 
 
-class PlanTaskTool(BaseWorkflowTool):
-    def __init__(self, task_id: str):
-        super().__init__(task_id, tool_name=ToolName.PLAN_TASK)
-        self.artifact_map = {
-            PlanTaskState.CONTEXTUALIZE: ContextAnalysisArtifact,
-            PlanTaskState.STRATEGIZE: StrategyArtifact,
-            PlanTaskState.DESIGN: DesignArtifact,
-            PlanTaskState.GENERATE_SUBTASKS: ExecutionPlanArtifact,
-        }
-
-        # Use the builder to create the state machine configuration
-        machine_config = workflow_builder.build_workflow_with_reviews(
-            work_states=[PlanTaskState.CONTEXTUALIZE, PlanTaskState.STRATEGIZE, PlanTaskState.DESIGN, PlanTaskState.GENERATE_SUBTASKS],
-            terminal_state=PlanTaskState.VERIFIED,
-            initial_state=PlanTaskState.CONTEXTUALIZE,
-        )
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
-
-    def get_final_work_state(self) -> str:
-        return PlanTaskState.GENERATE_SUBTASKS.value
 
 
 class StartTaskTool(BaseWorkflowTool):
@@ -1527,8 +1915,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from src.alfred.models.schemas import TaskStatus
-from src.alfred.constants import ToolName
+from alfred.models.schemas import TaskStatus
+from alfred.constants import ToolName
 
 
 @dataclass(frozen=True)
@@ -1795,6 +2183,9 @@ def validate_transition(from_status: TaskStatus, to_status: TaskStatus) -> bool:
 ``````
 """
 Manages reading and writing all artifacts and data within the .alfred workspace.
+
+Now uses turn-based storage system - no more JSON-to-Markdown conversions!
+Scratchpad is generated as a view, not used for storage.
 """
 
 import json
@@ -1802,14 +2193,17 @@ import os
 import re
 import tempfile
 from pathlib import Path
+from typing import Dict, Any, Optional
 
 from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel
 
-from src.alfred.config.settings import settings
-from src.alfred.lib.logger import get_logger
-from src.alfred.lib.task_utils import load_task
-from src.alfred.constants import Paths, StateDescriptions
+from alfred.config.settings import settings
+from alfred.lib.logger import get_logger
+from alfred.lib.task_utils import load_task
+from alfred.models.schemas import TaskStatus
+from alfred.lib.turn_manager import turn_manager
+from alfred.constants import Paths, StateDescriptions
 
 logger = get_logger(__name__)
 
@@ -1874,94 +2268,341 @@ class ArtifactManager:
             
         logger.info(f"Created workspace for task {task_id} at {task_dir}")
 
-    def append_to_scratchpad(self, task_id: str, state_name: str = None, artifact: BaseModel = None, content: str = None):
-        """Renders a structured artifact and atomically appends it to the scratchpad."""
-        task_dir = self._get_task_dir(task_id)
-        if not task_dir.exists():
-            self.create_task_workspace(task_id)
-
+    def record_artifact(
+        self,
+        task_id: str,
+        state_name: str,
+        tool_name: str,
+        artifact_data: Dict[str, Any],
+        revision_of: Optional[int] = None,
+        revision_feedback: Optional[str] = None
+    ):
+        """Records an artifact as a turn in the event-sourced storage.
+        
+        This replaces append_to_scratchpad. No more JSON-to-Markdown conversion!
+        Just saves the artifact data as a turn.
+        
+        Args:
+            task_id: Task identifier
+            state_name: Current state/phase name
+            tool_name: Tool creating this artifact
+            artifact_data: The artifact data (dict or Pydantic model)
+            revision_of: If revising a previous turn
+            revision_feedback: Feedback for revision
+        """
+        # Convert Pydantic models to dict
+        if hasattr(artifact_data, 'model_dump'):
+            artifact_dict = artifact_data.model_dump()
+        else:
+            artifact_dict = artifact_data
+        
+        # Save as a turn
+        turn_manager.append_turn(
+            task_id=task_id,
+            state_name=state_name,
+            tool_name=tool_name,
+            artifact_data=artifact_dict,
+            revision_of=revision_of,
+            revision_feedback=revision_feedback
+        )
+        
+        # Generate/update the scratchpad view
+        self.generate_scratchpad(task_id)
+    
+    def generate_scratchpad(self, task_id: str):
+        """Generates a human-readable scratchpad showing ONLY the current state.
+        
+        This is a VIEW of the latest state, not a historical log!
+        """
         scratchpad_path = self._get_scratchpad_path(task_id)
         
-        # If we get raw content (string), handle it atomically as well
-        if content is not None:
-            rendered_content = content
-        else:
-            # New template-based approach
-            if artifact is None:
-                logger.error("No artifact provided for template rendering")
-                return
-
-            # Dynamically determine template name from artifact class name
-            # e.g., ContextAnalysisArtifact -> context_analysis.md
-            artifact_type_name = artifact.__class__.__name__
-            template_name_snake = re.sub(r'(?<!^)(?=[A-Z])', '_', artifact_type_name).lower().replace('_artifact', '')
-            
-            template_path = f"artifacts/{template_name_snake}.md"
-
-            # Use centralized state descriptions
-            state_descriptions = StateDescriptions.DESCRIPTIONS
-
-            try:
-                template = self.jinja_env.get_template(template_path)
-            except Exception as e:
-                logger.error(f"Could not find artifact template '{template_path}': {e}. Falling back to raw JSON.")
-                # Use professional heading even in fallback
-                state_desc = state_descriptions.get(state_name, "Artifact Submission")
-                # Handle both Pydantic models and plain dicts
-                if hasattr(artifact, 'model_dump_json'):
-                    artifact_json = artifact.model_dump_json(indent=2)
-                else:
-                    artifact_json = json.dumps(artifact, indent=2)
-                rendered_content = f"## {state_desc}\n\n**Task:** {task_id}\n\n```json\n{artifact_json}\n```"
-            else:
+        # Get all turns to determine current phase
+        all_turns = turn_manager.load_all_turns(task_id)
+        if not all_turns:
+            scratchpad_path.write_text(f"# Task {task_id}\n\nNo work completed yet.\n")
+            return
+        
+        # Get latest artifacts by state
+        latest_artifacts = turn_manager.get_latest_artifacts_by_state(task_id)
+        
+        # Load task for context and status
+        task = load_task(task_id)
+        
+        # Get the latest manifest to know the current state
+        manifest = turn_manager.get_manifest(task_id)
+        current_state = manifest.current_state if manifest else "unknown"
+        
+        # Determine the current phase based on task status and current state
+        current_phase = self._determine_current_phase(task, current_state)
+        
+        # Build clean, current view
+        content_parts = [
+            f"# Task: {task_id}",
+            f"\n## {task.title if task else 'Task Details'}",
+            "",
+            f"**Status:** {task.task_status.value if task else 'Unknown'}",
+            f"**Current Phase:** {current_phase}",
+            ""
+        ]
+        
+        # Add task context if available
+        if task:
+            content_parts.extend([
+                "### Goal",
+                task.context,
+                "",
+                "### Requirements", 
+                task.implementation_details,
+                ""
+            ])
+        
+        # Show current phase information
+        content_parts.append("## Current Work\n")
+        
+        # Display information based on the current phase
+        if current_phase == "Planning":
+            # Show planning artifacts in order
+            planning_states = ["discovery", "clarification", "contracts", "implementation_plan", "validation"]
+            for state in planning_states:
+                if state in latest_artifacts:
+                    self._add_planning_artifact(content_parts, state, latest_artifacts[state])
+                    
+        elif current_phase == "Implementation":
+            # Show implementation progress
+            if "implementing" in latest_artifacts:
+                artifact = latest_artifacts["implementing"]
+                content_parts.append("### Implementation Progress\n")
                 
-                context = {
-                    "task": load_task(task_id),  # Load task for context
-                    "state_name": state_name,  # Keep for technical reference if needed
-                    "state_description": state_descriptions.get(state_name, state_name),
-                    "artifact": artifact
-                }
-                rendered_content = template.render(context)
-
-        # --- THIS IS THE FIX: Atomic Append ---
-        # 1. Read the current content if it exists
-        current_content = ""
-        if scratchpad_path.exists() and scratchpad_path.stat().st_size > 0:
-            current_content = scratchpad_path.read_text(encoding="utf-8")
-
-        # 2. Prepare the new full content
-        separator = "\n\n---\n\n" if current_content else ""
-        full_new_content = current_content + separator + rendered_content
-
-        # 3. Write to a temporary file then rename
-        fd, temp_path_str = tempfile.mkstemp(dir=scratchpad_path.parent, prefix=".tmp_scratch_")
+                if "summary" in artifact:
+                    content_parts.append(f"**Summary:** {artifact['summary']}\n")
+                    
+                if "completed_subtasks" in artifact:
+                    content_parts.append("**Completed Subtasks:**")
+                    for subtask in artifact["completed_subtasks"]:
+                        content_parts.append(f"- {subtask}")
+                    content_parts.append("")
+                    
+                if "testing_notes" in artifact:
+                    content_parts.append(f"**Testing Notes:** {artifact['testing_notes']}\n")
+                    
+        elif current_phase == "Review":
+            # Show review findings
+            if "reviewing" in latest_artifacts:
+                artifact = latest_artifacts["reviewing"]
+                content_parts.append("### Code Review\n")
+                
+                if "summary" in artifact:
+                    content_parts.append(f"**Summary:** {artifact['summary']}\n")
+                    
+                if "approved" in artifact:
+                    status = "✅ Approved" if artifact["approved"] else "❌ Changes Requested"
+                    content_parts.append(f"**Status:** {status}\n")
+                    
+                if "feedback" in artifact and artifact["feedback"]:
+                    content_parts.append("**Feedback:**")
+                    for item in artifact["feedback"]:
+                        content_parts.append(f"- {item}")
+                    content_parts.append("")
+                    
+        elif current_phase == "Testing":
+            # Show test results
+            if "testing" in latest_artifacts:
+                artifact = latest_artifacts["testing"]
+                content_parts.append("### Test Results\n")
+                
+                if "command" in artifact:
+                    content_parts.append(f"**Command:** `{artifact['command']}`\n")
+                    
+                if "exit_code" in artifact:
+                    status = "✅ Passed" if artifact["exit_code"] == 0 else "❌ Failed"
+                    content_parts.append(f"**Status:** {status} (exit code: {artifact['exit_code']})\n")
+                    
+                if "output" in artifact:
+                    content_parts.append("**Output:**")
+                    content_parts.append("```")
+                    content_parts.append(artifact["output"])
+                    content_parts.append("```")
+                    content_parts.append("")
+                    
+        elif current_phase == "Finalization":
+            # Show finalization details
+            if "finalizing" in latest_artifacts:
+                artifact = latest_artifacts["finalizing"]
+                content_parts.append("### Finalization\n")
+                
+                if "commit_hash" in artifact:
+                    content_parts.append(f"**Commit:** `{artifact['commit_hash']}`")
+                    
+                if "pr_url" in artifact:
+                    content_parts.append(f"**Pull Request:** {artifact['pr_url']}")
+                    
+                content_parts.append("")
+                
+        elif current_phase == "Completed":
+            content_parts.append("### Task Completed\n")
+            
+            # Show finalization details if available
+            if "finalizing" in latest_artifacts:
+                artifact = latest_artifacts["finalizing"]
+                
+                if "commit_hash" in artifact:
+                    content_parts.append(f"**Commit:** `{artifact['commit_hash']}`")
+                    
+                if "pr_url" in artifact:
+                    content_parts.append(f"**Pull Request:** {artifact['pr_url']}")
+                    
+                content_parts.append("")
+            else:
+                content_parts.append("This task has been successfully completed.")
+                content_parts.append("")
+        
+        # Write atomically
+        fd, temp_path_str = tempfile.mkstemp(
+            dir=scratchpad_path.parent,
+            prefix=".tmp_scratch_",
+            suffix=".md"
+        )
         temp_path = Path(temp_path_str)
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                f.write(full_new_content)
+                f.write('\n'.join(content_parts))
             os.replace(temp_path, scratchpad_path)
-            logger.info(f"Atomically updated scratchpad for task {task_id}")
+            logger.info(f"Generated current state scratchpad for task {task_id}")
         except Exception as e:
-            logger.error(f"Failed to atomically update scratchpad for {task_id}: {e}")
+            logger.error(f"Failed to generate scratchpad for {task_id}: {e}")
             if temp_path.exists():
                 os.remove(temp_path)
             raise
+    
+    def _determine_current_phase(self, task, current_state: str) -> str:
+        """Determine the current phase based on task status and state."""
+        if not task:
+            return "Unknown"
+            
+        status = task.task_status
+        
+        # Map task status to phase
+        if status in [TaskStatus.NEW, TaskStatus.PLANNING, TaskStatus.READY_FOR_DEVELOPMENT]:
+            return "Planning"
+        elif status in [TaskStatus.IN_DEVELOPMENT]:
+            return "Implementation"
+        elif status in [TaskStatus.READY_FOR_REVIEW, TaskStatus.IN_REVIEW]:
+            return "Review"
+        elif status in [TaskStatus.READY_FOR_TESTING, TaskStatus.IN_TESTING]:
+            return "Testing"
+        elif status in [TaskStatus.READY_FOR_FINALIZATION, TaskStatus.IN_FINALIZATION]:
+            return "Finalization"
+        elif status == TaskStatus.DONE:
+            return "Completed"
+        else:
+            return "Unknown"
+    
+    def _add_planning_artifact(self, content_parts: list, state: str, artifact: dict):
+        """Add a planning phase artifact to the content."""
+        state_title = StateDescriptions.DESCRIPTIONS.get(state, state.title())
+        content_parts.append(f"### {state_title}\n")
+        
+        # Render artifact based on its structure (NO nested markdown!)
+        if state == "discovery" and "findings" in artifact:
+            content_parts.append("**Findings:**")
+            content_parts.append(artifact["findings"])
+            content_parts.append("")
+            
+            if "questions" in artifact:
+                content_parts.append("**Questions:**")
+                for q in artifact["questions"]:
+                    content_parts.append(f"- {q}")
+                content_parts.append("")
+                
+            if "complexity" in artifact:
+                content_parts.append(f"**Complexity:** {artifact['complexity']}\n")
+                
+        elif state == "clarification" and "decisions" in artifact:
+            content_parts.append("**Decisions Made:**")
+            for d in artifact["decisions"]:
+                content_parts.append(f"- {d}")
+            content_parts.append("")
+            
+            if "additional_constraints" in artifact:
+                content_parts.append("**Additional Constraints:**")
+                for c in artifact["additional_constraints"]:
+                    content_parts.append(f"- {c}")
+                content_parts.append("")
+                
+        elif state == "contracts":
+            if "interface_design" in artifact:
+                content_parts.append(artifact["interface_design"])
+                content_parts.append("")
+                
+        elif state == "implementation_plan":
+            if "implementation_plan" in artifact:
+                content_parts.append(artifact["implementation_plan"])
+                content_parts.append("")
+                
+            if "risks" in artifact:
+                content_parts.append("**Risks:**")
+                for r in artifact["risks"]:
+                    content_parts.append(f"- {r}")
+                content_parts.append("")
+                
+        elif state == "validation":
+            if "validation_summary" in artifact:
+                content_parts.append(artifact["validation_summary"])
+                content_parts.append("")
+                
+            if "ready_for_implementation" in artifact:
+                status = "✅ Ready" if artifact["ready_for_implementation"] else "❌ Not Ready"
+                content_parts.append(f"**Status:** {status}\n")
+    
+    # Keep for backward compatibility but mark as deprecated
+    def append_to_scratchpad(self, task_id: str, state_name: str = None, artifact: BaseModel = None, content: str = None):
+        """DEPRECATED: Use record_artifact instead.
+        
+        This method is kept for backward compatibility but should not be used.
+        """
+        logger.warning(
+            "append_to_scratchpad is deprecated. Use record_artifact instead."
+        )
+        # Try to maintain compatibility
+        if artifact is not None:
+            tool_name = "unknown"  # We don't have tool name in old API
+            self.record_artifact(
+                task_id=task_id,
+                state_name=state_name or "unknown",
+                tool_name=tool_name,
+                artifact_data=artifact
+            )
+        elif content is not None:
+            # Raw content - create a simple artifact
+            self.record_artifact(
+                task_id=task_id,
+                state_name=state_name or "raw_content",
+                tool_name="legacy",
+                artifact_data={"content": content}
+            )
 
     def archive_scratchpad(self, task_id: str, tool_name: str, workflow_step: int):
-        """Moves the current scratchpad to a versioned file in the archive and creates a new empty scratchpad."""
+        """Archives the current scratchpad view.
+        
+        With turn-based storage, this just copies the current scratchpad view
+        to the archive. The turns themselves are the source of truth.
+        """
         scratchpad_path = self._get_scratchpad_path(task_id)
         if not scratchpad_path.exists():
-            logger.warning(f"No scratchpad found for task {task_id} to archive.")
-            return
+            # Generate it first
+            self.generate_scratchpad(task_id)
+            if not scratchpad_path.exists():
+                logger.warning(f"Could not generate scratchpad for task {task_id}")
+                return
 
         archive_dir = self._get_archive_dir(task_id)
-        # Clean filename without _scratchpad suffix
         archive_filename = f"{workflow_step:02d}-{tool_name.replace('_', '-')}.md"
         archive_path = archive_dir / archive_filename
 
-        scratchpad_path.rename(archive_path)
-        scratchpad_path.touch()
-        logger.info(f"Archived scratchpad for tool '{tool_name}' to {archive_path}")
+        # Copy instead of rename since scratchpad is just a view
+        import shutil
+        shutil.copy2(scratchpad_path, archive_path)
+        logger.info(f"Archived scratchpad view for tool '{tool_name}' to {archive_path}")
 
     def write_json_artifact(self, task_id: str, filename: str, data: dict):
         """Writes a machine-readable JSON file to the archive."""
@@ -2045,7 +2686,7 @@ Centralized logging configuration for Alfred.
 
 import logging
 
-from src.alfred.config.settings import settings
+from alfred.config.settings import settings
 
 # A dictionary to hold task-specific handlers to avoid duplication
 _task_handlers = {}
@@ -2143,7 +2784,7 @@ class MarkdownTaskParser:
         """Parses the markdown content into a dictionary."""
         data = {}
         
-        # Extract the task_id from the first line, e.g., '# TASK: TS-01'
+        # Extract the task_id from the first line, e.g., '# TASK: TK-01'
         task_id_match = re.search(r"^#\s*TASK:\s*(\S+)", markdown_content, re.MULTILINE)
         if task_id_match:
             data['task_id'] = task_id_match.group(1).strip()
@@ -2225,7 +2866,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
-from src.alfred.config.settings import settings
+from alfred.config.settings import settings
 
 
 class StructuredFormatter(logging.Formatter):
@@ -2613,9 +3254,9 @@ def log_duration(logger: StructuredLogger, operation: str, level: int = logging.
 from pathlib import Path
 from typing import Optional
 
-from src.alfred.models.schemas import Task
-from src.alfred.lib.logger import get_logger
-from src.alfred.config.settings import settings
+from alfred.models.schemas import Task
+from alfred.lib.logger import get_logger
+from alfred.config.settings import settings
 
 logger = get_logger(__name__)
 
@@ -2638,7 +3279,7 @@ def load_task(task_id: str, root_dir: Optional[Path] = None) -> Task | None:
     """
     try:
         # Use the task provider factory to get the configured provider
-        from src.alfred.task_providers.factory import get_provider
+        from alfred.task_providers.factory import get_provider
         
         provider = get_provider()
         
@@ -2671,7 +3312,7 @@ def load_task_with_error_details(task_id: str, root_dir: Optional[Path] = None) 
     """
     try:
         # Use the task provider factory to get the configured provider
-        from src.alfred.task_providers.factory import get_provider
+        from alfred.task_providers.factory import get_provider
         
         provider = get_provider()
         
@@ -2772,8 +3413,8 @@ Logs MCP tool requests and responses for debugging and analysis.
 from datetime import datetime, timezone
 import json
 
-from src.alfred.config.settings import settings
-from src.alfred.models.schemas import ToolResponse
+from alfred.config.settings import settings
+from alfred.models.schemas import ToolResponse
 
 
 class TransactionLogger:
@@ -2822,6 +3463,1184 @@ class TransactionLogger:
 transaction_logger = TransactionLogger()
 
 ``````
+------ src/alfred/lib/turn_manager.py ------
+``````
+# src/alfred/lib/turn_manager.py
+"""Generic turn-based storage system for Alfred.
+
+This module implements an event-sourced, append-only storage pattern
+where each state transition is saved as an immutable turn file.
+No JSON-to-Markdown conversions, just pure data storage.
+"""
+import json
+import os
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
+from pydantic import BaseModel, Field
+
+from alfred.lib.logger import get_logger
+from alfred.models.schemas import TaskStatus
+
+logger = get_logger(__name__)
+
+
+class Turn(BaseModel):
+    """Represents a single turn in the task history.
+    
+    Generic and state-agnostic - works for any workflow phase.
+    """
+    turn_number: int = Field(..., ge=1, description="Sequential turn number")
+    state_name: str = Field(..., description="State/phase name when turn was created")
+    tool_name: str = Field(..., description="Tool that created this turn")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When turn was created")
+    artifact_data: Dict[str, Any] = Field(..., description="The actual artifact/data for this turn")
+    
+    # Optional metadata
+    revision_of: Optional[int] = Field(None, description="If this revises a previous turn")
+    revision_feedback: Optional[str] = Field(None, description="Feedback that prompted revision")
+
+
+class TaskManifest(BaseModel):
+    """Lightweight metadata for quick task access without loading all turns."""
+    task_id: str
+    created_at: datetime
+    last_updated: datetime
+    current_state: str
+    total_turns: int
+    latest_turns_by_state: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Maps state names to their latest turn numbers"
+    )
+
+
+class TurnManager:
+    """Manages turn-based storage for all Alfred workflows.
+    
+    Features:
+    - Append-only turn storage (no modifications)
+    - Atomic writes with tempfile + rename
+    - Generic - works with any state/tool/artifact
+    - No JSON-to-Markdown conversion
+    - Efficient manifest for quick lookups
+    """
+    
+    def __init__(self, workspace_root: Path):
+        self.workspace_root = workspace_root
+    
+    def _get_turns_dir(self, task_id: str) -> Path:
+        """Get the turns directory for a task."""
+        return self.workspace_root / task_id / "turns"
+    
+    def _get_manifest_path(self, task_id: str) -> Path:
+        """Get the manifest file path for a task."""
+        return self.workspace_root / task_id / "manifest.json"
+    
+    def _ensure_task_dir(self, task_id: str) -> None:
+        """Ensure task directory structure exists."""
+        turns_dir = self._get_turns_dir(task_id)
+        turns_dir.mkdir(parents=True, exist_ok=True)
+    
+    def append_turn(
+        self,
+        task_id: str,
+        state_name: str,
+        tool_name: str,
+        artifact_data: Dict[str, Any],
+        revision_of: Optional[int] = None,
+        revision_feedback: Optional[str] = None
+    ) -> Turn:
+        """Append a new turn to the task history.
+        
+        This is the ONLY way to add data to the system.
+        Completely generic - works with any artifact structure.
+        
+        Args:
+            task_id: Task identifier
+            state_name: Current state/phase name
+            tool_name: Tool creating this turn
+            artifact_data: The actual data (any JSON-serializable dict)
+            revision_of: If revising a previous turn, its number
+            revision_feedback: Feedback that prompted the revision
+            
+        Returns:
+            The created Turn object
+        """
+        self._ensure_task_dir(task_id)
+        turns_dir = self._get_turns_dir(task_id)
+        
+        # Get next turn number
+        existing_turns = sorted(turns_dir.glob("*.json"))
+        turn_number = len(existing_turns) + 1
+        
+        # Create turn object
+        turn = Turn(
+            turn_number=turn_number,
+            state_name=state_name,
+            tool_name=tool_name,
+            timestamp=datetime.utcnow(),
+            artifact_data=artifact_data,
+            revision_of=revision_of,
+            revision_feedback=revision_feedback
+        )
+        
+        # Save with atomic write
+        filename = f"{turn_number:03d}-{state_name}-{turn.timestamp.isoformat()}Z.json"
+        filepath = turns_dir / filename
+        
+        # Atomic write using tempfile + rename
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=turns_dir,
+            prefix=".tmp_turn_",
+            suffix=".json"
+        )
+        try:
+            with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
+                # Use model_dump with mode='json' to handle datetime serialization
+                json.dump(turn.model_dump(mode='json'), f, indent=2)
+            
+            # Atomic rename
+            os.replace(temp_path, filepath)
+            logger.info(
+                f"Appended turn {turn_number} for state '{state_name}' "
+                f"in task {task_id}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to append turn for {task_id}: {e}")
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise
+        
+        # Update manifest
+        self._update_manifest(task_id, state_name, turn_number)
+        
+        return turn
+    
+    def _update_manifest(self, task_id: str, state_name: str, turn_number: int) -> None:
+        """Update the task manifest with latest turn info."""
+        manifest_path = self._get_manifest_path(task_id)
+        
+        # Load or create manifest
+        if manifest_path.exists():
+            manifest_data = json.loads(manifest_path.read_text())
+            manifest = TaskManifest.model_validate(manifest_data)
+        else:
+            manifest = TaskManifest(
+                task_id=task_id,
+                created_at=datetime.utcnow(),
+                last_updated=datetime.utcnow(),
+                current_state=state_name,
+                total_turns=0
+            )
+        
+        # Update manifest
+        manifest.last_updated = datetime.utcnow()
+        manifest.current_state = state_name
+        manifest.total_turns = turn_number
+        manifest.latest_turns_by_state[state_name] = turn_number
+        
+        # Atomic write
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=manifest_path.parent,
+            prefix=".tmp_manifest_",
+            suffix=".json"
+        )
+        try:
+            with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
+                json.dump(manifest.model_dump(mode='json'), f, indent=2)
+            os.replace(temp_path, manifest_path)
+        except Exception:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise
+    
+    def load_all_turns(self, task_id: str) -> List[Turn]:
+        """Load all turns for a task in chronological order."""
+        turns_dir = self._get_turns_dir(task_id)
+        if not turns_dir.exists():
+            return []
+        
+        turns = []
+        for turn_file in sorted(turns_dir.glob("*.json")):
+            try:
+                data = json.loads(turn_file.read_text())
+                turn = Turn.model_validate(data)
+                turns.append(turn)
+            except Exception as e:
+                logger.warning(
+                    f"Skipping invalid turn file {turn_file}: {e}"
+                )
+                continue
+        
+        return turns
+    
+    def get_latest_artifacts_by_state(self, task_id: str) -> Dict[str, Dict[str, Any]]:
+        """Get the most recent artifact for each state.
+        
+        This handles revisions by taking the latest turn for each state.
+        Skips revision_request turns as they're not actual work artifacts.
+        
+        Returns:
+            Dict mapping state names to their latest artifact data
+        """
+        turns = self.load_all_turns(task_id)
+        latest_by_state = {}
+        
+        for turn in turns:
+            # Skip meta-turns like revision requests
+            if turn.state_name == "revision_request":
+                continue
+            
+            # Latest turn for each state wins
+            latest_by_state[turn.state_name] = turn.artifact_data
+        
+        return latest_by_state
+    
+    def get_manifest(self, task_id: str) -> Optional[TaskManifest]:
+        """Get the task manifest for quick metadata access."""
+        manifest_path = self._get_manifest_path(task_id)
+        if not manifest_path.exists():
+            return None
+        
+        try:
+            data = json.loads(manifest_path.read_text())
+            return TaskManifest.model_validate(data)
+        except Exception as e:
+            logger.error(f"Failed to load manifest for {task_id}: {e}")
+            return None
+    
+    def request_revision(
+        self,
+        task_id: str,
+        state_to_revise: str,
+        feedback: str,
+        requested_by: str = "human"
+    ) -> Turn:
+        """Record a revision request as a special turn.
+        
+        This creates a revision_request turn that documents why
+        a revision was needed, without modifying the original turn.
+        
+        Args:
+            task_id: Task identifier
+            state_to_revise: Which state needs revision
+            feedback: Detailed feedback about what needs changing
+            requested_by: Who requested the revision (human/ai)
+            
+        Returns:
+            The revision request Turn
+        """
+        revision_artifact = {
+            "state_to_revise": state_to_revise,
+            "feedback": feedback,
+            "requested_by": requested_by,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        return self.append_turn(
+            task_id=task_id,
+            state_name="revision_request",
+            tool_name="revision_system",
+            artifact_data=revision_artifact
+        )
+
+
+# Global instance for easy access
+turn_manager = TurnManager(Path(".alfred/workspace"))
+``````
+------ src/alfred/llm/__init__.py ------
+``````
+# AI Provider System for Alfred Task Manager
+``````
+------ src/alfred/llm/initialization.py ------
+``````
+"""
+AI Provider Initialization for Alfred Task Manager
+
+Following Alfred's principles:
+- IMMUTABILITY ABOVE ALL (configuration loaded once at startup)
+- ENVIRONMENT VARIABLES ARE SACRED (API keys from env)  
+- VALIDATION IS NON-NEGOTIABLE (fail fast on invalid config)
+"""
+
+from typing import List, Optional
+from alfred.config import ConfigManager
+from alfred.config.settings import settings
+from alfred.lib.logger import get_logger
+from alfred.models.alfred_config import AIProvider, AIProviderConfig
+
+from .registry import model_registry
+from .providers.openai_provider import OpenAIProvider
+from .providers.base import AuthenticationError, ProviderError
+
+logger = get_logger(__name__)
+
+
+async def initialize_ai_providers() -> None:
+    """
+    Initialize AI providers based on configuration.
+    
+    Following Alfred's configuration principles:
+    - Load configuration once at startup (immutable)
+    - Use environment variables for API keys
+    - Fail fast on invalid configuration
+    - Provide actionable error messages
+    """
+    try:
+        # Load configuration (immutable, loaded once)
+        config_manager = ConfigManager(settings.alfred_dir)
+        config = config_manager.load()
+        
+        ai_config = config.ai
+        if not ai_config.providers:
+            logger.warning("No AI providers configured")
+            return
+        
+        initialized_count = 0
+        
+        for provider_config in ai_config.providers:
+            if not provider_config.enabled:
+                logger.info(f"AI provider {provider_config.name} is disabled, skipping")
+                continue
+                
+            try:
+                await _initialize_single_provider(provider_config)
+                initialized_count += 1
+                logger.info(f"Successfully initialized AI provider: {provider_config.name}")
+                
+            except Exception as e:
+                logger.error(f"Failed to initialize AI provider {provider_config.name}: {e}")
+                # Continue with other providers rather than failing completely
+                continue
+        
+        if initialized_count == 0:
+            logger.warning("No AI providers were successfully initialized")
+        else:
+            logger.info(f"Initialized {initialized_count} AI provider(s)")
+            
+        # Log available models for debugging
+        available_models = model_registry.get_available_models()
+        model_names = [model.name for model in available_models]
+        logger.debug(f"Available AI models: {model_names}")
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize AI providers: {e}")
+        # Don't raise - let Alfred run without AI providers for now
+        # In the future, we might want to make this more strict
+
+
+async def _initialize_single_provider(provider_config: AIProviderConfig) -> None:
+    """Initialize a single AI provider instance."""
+    
+    # Get API key from environment variables (sacred principle)
+    api_key = _get_api_key_for_provider(provider_config.name)
+    
+    if not api_key:
+        raise AuthenticationError(
+            f"No API key found for {provider_config.name}. "
+            f"Set {provider_config.name.upper()}_API_KEY environment variable."
+        )
+    
+    # Create provider instance based on type with hardcoded sensible defaults
+    if provider_config.name == AIProvider.OPENAI:
+        provider = model_registry.create_provider(
+            "openai",
+            api_key=api_key,
+            base_url=None  # Use OpenAI's default API endpoint
+        )
+    elif provider_config.name == AIProvider.GOOGLE:
+        provider = model_registry.create_provider(
+            "google",
+            api_key=api_key
+        )
+    elif provider_config.name == AIProvider.ANTHROPIC:
+        provider = model_registry.create_provider(
+            "anthropic",
+            api_key=api_key
+        )
+    else:
+        raise ProviderError(f"Unsupported AI provider: {provider_config.name}")
+    
+    # Register the provider
+    model_registry.register_provider(provider_config.name.value, provider)
+
+
+def _get_api_key_for_provider(provider: AIProvider) -> Optional[str]:
+    """
+    Get API key for a provider from environment variables.
+    
+    Following Alfred's principle: ENVIRONMENT VARIABLES ARE SACRED
+    """
+    if provider == AIProvider.OPENAI:
+        return settings.openai_api_key
+    elif provider == AIProvider.GOOGLE:
+        return settings.google_api_key
+    elif provider == AIProvider.ANTHROPIC:
+        return settings.anthropic_api_key
+    else:
+        return None
+
+
+def get_provider_status() -> dict:
+    """Get status of all registered providers (for debugging)."""
+    return {
+        "registered_providers": model_registry.get_registered_providers(),
+        "total_models": len(model_registry.get_available_models()),
+        "models_by_provider": {
+            provider: [
+                model.name for model in model_registry.get_available_models()
+                if model.provider == provider
+            ]
+            for provider in model_registry.get_registered_providers()
+        }
+    }
+``````
+------ src/alfred/llm/providers/__init__.py ------
+``````
+# AI Provider implementations
+``````
+------ src/alfred/llm/providers/anthropic_provider.py ------
+``````
+"""
+Anthropic Claude Provider Implementation for Alfred Task Manager
+
+Following Alfred's principles:
+- Data normalization to standard ModelResponse
+- Uniform error mapping
+- No provider-specific extensions
+"""
+
+import anthropic
+from typing import List, Optional, Dict, Any
+
+from .base import (
+    BaseAIProvider, 
+    ModelResponse, 
+    ModelInfo, 
+    ModelCapability,
+    ProviderError,
+    ModelNotFoundError,
+    QuotaExceededError,
+    AuthenticationError
+)
+
+
+class AnthropicProvider(BaseAIProvider):
+    """Anthropic Claude API provider implementation."""
+    
+    def __init__(self, api_key: str):
+        try:
+            self.client = anthropic.Anthropic(api_key=api_key)
+        except Exception as e:
+            raise AuthenticationError(f"Failed to initialize Anthropic client: {e}")
+    
+    def generate_content(
+        self, 
+        prompt: str, 
+        model_name: str, 
+        temperature: float = 0.5,
+        max_tokens: Optional[int] = None
+    ) -> ModelResponse:
+        """Generate content using Anthropic Claude models."""
+        try:
+            # Claude uses a messages API format
+            response = self.client.messages.create(
+                model=model_name,
+                max_tokens=max_tokens or 4096,
+                temperature=temperature,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            content = response.content[0].text if response.content else ""
+            
+            # Normalize usage data
+            usage = {}
+            if response.usage:
+                usage = {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                    "total_tokens": response.usage.input_tokens + response.usage.output_tokens
+                }
+            
+            # Provider-specific metadata
+            metadata = {
+                "stop_reason": response.stop_reason,
+                "model": response.model,
+                "response_id": response.id
+            }
+            
+            return ModelResponse(
+                content=content,
+                model_name=model_name,
+                usage=usage,
+                metadata=metadata
+            )
+            
+        except anthropic.AuthenticationError as e:
+            raise AuthenticationError(f"Anthropic authentication failed: {e}")
+        except anthropic.NotFoundError as e:
+            raise ModelNotFoundError(f"Model {model_name} not found: {e}")
+        except anthropic.RateLimitError as e:
+            raise QuotaExceededError(f"Anthropic rate limit exceeded: {e}")
+        except anthropic.APIError as e:
+            raise ProviderError(f"Anthropic API error: {e}")
+        except Exception as e:
+            error_msg = str(e)
+            if "api_key" in error_msg.lower():
+                raise AuthenticationError(f"Anthropic API key error: {error_msg}")
+            else:
+                raise ProviderError(f"Anthropic error: {error_msg}")
+    
+    def count_tokens(self, text: str, model_name: str) -> int:
+        """Count tokens using Anthropic's token counting."""
+        try:
+            # Anthropic provides a count_tokens method
+            count = self.client.count_tokens(text)
+            return count
+            
+        except Exception as e:
+            # Fallback: rough estimation (Claude uses similar tokenization to GPT)
+            # This is approximate - about 4 characters per token
+            return len(text) // 4
+    
+    def get_available_models(self) -> List[ModelInfo]:
+        """Get available Anthropic Claude models."""
+        # Static model definitions based on Anthropic API
+        models = [
+            ModelInfo(
+                name="claude-3-5-sonnet-20241022",
+                provider="anthropic",
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
+                context_window=200000,
+                max_output_tokens=8192,
+                cost_per_input_token=0.003,   # Per 1K tokens
+                cost_per_output_token=0.015
+            ),
+            ModelInfo(
+                name="claude-3-opus-20240229",
+                provider="anthropic",
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
+                context_window=200000,
+                max_output_tokens=4096,
+                cost_per_input_token=0.015,   # Per 1K tokens
+                cost_per_output_token=0.075
+            ),
+            ModelInfo(
+                name="claude-3-sonnet-20240229",
+                provider="anthropic", 
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION],
+                context_window=200000,
+                max_output_tokens=4096,
+                cost_per_input_token=0.003,
+                cost_per_output_token=0.015
+            ),
+            ModelInfo(
+                name="claude-3-haiku-20240307",
+                provider="anthropic",
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.CODE_GENERATION],
+                context_window=200000,
+                max_output_tokens=4096,
+                cost_per_input_token=0.00025,
+                cost_per_output_token=0.00125
+            )
+        ]
+        
+        return models
+    
+    def validate_model(self, model_name: str) -> bool:
+        """Validate if model is available."""
+        try:
+            # Test with minimal request
+            self.client.messages.create(
+                model=model_name,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "test"}]
+            )
+            return True
+        except Exception:
+            return False
+``````
+------ src/alfred/llm/providers/base.py ------
+``````
+"""
+Base AI Provider Interface for Alfred Task Manager
+
+Following Alfred's Task Provider Principles:
+- ONE INTERFACE TO RULE THEM ALL
+- DATA NORMALIZATION IS SACRED 
+- NO PROVIDER LEAKAGE
+- ERROR HANDLING IS UNIFORM
+"""
+
+from abc import ABC, abstractmethod
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Optional, Dict, Any, List
+from pydantic import BaseModel, Field
+
+
+class ModelCapability(str, Enum):
+    """Model capabilities for routing decisions."""
+    TEXT_GENERATION = "text_generation"
+    CODE_GENERATION = "code_generation"
+    REASONING = "reasoning"
+    ANALYSIS = "analysis"
+
+
+class ModelResponse(BaseModel):
+    """Normalized response from any AI provider."""
+    content: str
+    model_name: str
+    usage: Dict[str, int] = Field(default_factory=dict)  # {input_tokens: int, output_tokens: int}
+    metadata: Dict[str, Any] = Field(default_factory=dict)  # Provider-specific data
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    model_config = {"frozen": True}  # Immutable value object
+
+
+class ModelInfo(BaseModel):
+    """Model information for registry."""
+    name: str
+    provider: str
+    capabilities: List[ModelCapability]
+    context_window: int
+    max_output_tokens: Optional[int] = None
+    cost_per_input_token: Optional[float] = None
+    cost_per_output_token: Optional[float] = None
+    
+    model_config = {"frozen": True}
+
+
+class BaseAIProvider(ABC):
+    """
+    Abstract base class for all AI model providers.
+    
+    Following Task Provider Principles:
+    - EXACTLY FOUR METHODS (like BaseTaskProvider)
+    - Uniform behavior across all implementations
+    - No provider-specific methods or extensions
+    """
+    
+    @abstractmethod
+    def generate_content(
+        self, 
+        prompt: str, 
+        model_name: str, 
+        temperature: float = 0.5,
+        max_tokens: Optional[int] = None
+    ) -> ModelResponse:
+        """Generate content using the specified model."""
+        pass
+    
+    @abstractmethod
+    def count_tokens(self, text: str, model_name: str) -> int:
+        """Count tokens for a given model."""
+        pass
+    
+    @abstractmethod
+    def get_available_models(self) -> List[ModelInfo]:
+        """Get list of available models from this provider."""
+        pass
+    
+    @abstractmethod
+    def validate_model(self, model_name: str) -> bool:
+        """Validate if model is available and accessible."""
+        pass
+
+
+class ProviderError(Exception):
+    """Standard error for all provider operations."""
+    pass
+
+
+class ModelNotFoundError(ProviderError):
+    """Model not found or not available."""
+    pass
+
+
+class QuotaExceededError(ProviderError):
+    """API quota or rate limit exceeded."""
+    pass
+
+
+class AuthenticationError(ProviderError):
+    """Provider authentication failed."""
+    pass
+``````
+------ src/alfred/llm/providers/google_provider.py ------
+``````
+"""
+Google Gemini Provider Implementation for Alfred Task Manager
+
+Following Alfred's principles:
+- Data normalization to standard ModelResponse
+- Uniform error mapping
+- No provider-specific extensions
+"""
+
+import google.generativeai as genai
+from typing import List, Optional, Dict, Any
+from google.api_core import exceptions as google_exceptions
+
+from .base import (
+    BaseAIProvider, 
+    ModelResponse, 
+    ModelInfo, 
+    ModelCapability,
+    ProviderError,
+    ModelNotFoundError,
+    QuotaExceededError,
+    AuthenticationError
+)
+
+
+class GoogleProvider(BaseAIProvider):
+    """Google Gemini API provider implementation."""
+    
+    def __init__(self, api_key: str):
+        try:
+            genai.configure(api_key=api_key)
+            self.api_key = api_key
+        except Exception as e:
+            raise AuthenticationError(f"Failed to initialize Google Gemini client: {e}")
+    
+    def generate_content(
+        self, 
+        prompt: str, 
+        model_name: str, 
+        temperature: float = 0.5,
+        max_tokens: Optional[int] = None
+    ) -> ModelResponse:
+        """Generate content using Google Gemini models."""
+        try:
+            # Initialize the model
+            model = genai.GenerativeModel(model_name)
+            
+            # Configure generation parameters
+            generation_config = genai.types.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+            
+            # Generate content
+            response = model.generate_content(
+                prompt,
+                generation_config=generation_config
+            )
+            
+            content = response.text if response.text else ""
+            
+            # Normalize usage data (Gemini doesn't always provide detailed usage)
+            usage = {}
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = {
+                    "input_tokens": getattr(response.usage_metadata, 'prompt_token_count', 0),
+                    "output_tokens": getattr(response.usage_metadata, 'candidates_token_count', 0),
+                    "total_tokens": getattr(response.usage_metadata, 'total_token_count', 0)
+                }
+            
+            # Provider-specific metadata
+            metadata = {
+                "finish_reason": getattr(response.candidates[0], 'finish_reason', None) if response.candidates else None,
+                "safety_ratings": [rating for candidate in response.candidates for rating in candidate.safety_ratings] if response.candidates else []
+            }
+            
+            return ModelResponse(
+                content=content,
+                model_name=model_name,
+                usage=usage,
+                metadata=metadata
+            )
+            
+        except google_exceptions.PermissionDenied as e:
+            raise AuthenticationError(f"Google API authentication failed: {e}")
+        except google_exceptions.NotFound as e:
+            raise ModelNotFoundError(f"Model {model_name} not found: {e}")
+        except google_exceptions.ResourceExhausted as e:
+            raise QuotaExceededError(f"Google API quota exceeded: {e}")
+        except Exception as e:
+            error_msg = str(e)
+            if "API_KEY" in error_msg.upper():
+                raise AuthenticationError(f"Google API key error: {error_msg}")
+            else:
+                raise ProviderError(f"Google API error: {error_msg}")
+    
+    def count_tokens(self, text: str, model_name: str) -> int:
+        """Count tokens using Google's token counting."""
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.count_tokens(text)
+            return response.total_tokens
+            
+        except Exception as e:
+            raise ProviderError(f"Token counting failed: {e}")
+    
+    def get_available_models(self) -> List[ModelInfo]:
+        """Get available Google Gemini models."""
+        # Static model definitions based on Gemini API
+        models = [
+            ModelInfo(
+                name="gemini-1.5-pro",
+                provider="google",
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
+                context_window=1048576,  # 1M tokens
+                max_output_tokens=8192,
+                cost_per_input_token=0.00125,  # Per 1K tokens
+                cost_per_output_token=0.005
+            ),
+            ModelInfo(
+                name="gemini-1.5-flash",
+                provider="google",
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION],
+                context_window=1048576,  # 1M tokens  
+                max_output_tokens=8192,
+                cost_per_input_token=0.000075,  # Per 1K tokens
+                cost_per_output_token=0.0003
+            ),
+            ModelInfo(
+                name="gemini-pro",
+                provider="google",
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING],
+                context_window=32768,
+                max_output_tokens=8192,
+                cost_per_input_token=0.0005,
+                cost_per_output_token=0.0015
+            ),
+            ModelInfo(
+                name="gemini-1.5-flash-8b",
+                provider="google",
+                capabilities=[ModelCapability.TEXT_GENERATION],
+                context_window=1048576,  # 1M tokens
+                max_output_tokens=8192,
+                cost_per_input_token=0.0000375,  # Per 1K tokens
+                cost_per_output_token=0.00015
+            )
+        ]
+        
+        return models
+    
+    def validate_model(self, model_name: str) -> bool:
+        """Validate if model is available."""
+        try:
+            model = genai.GenerativeModel(model_name)
+            # Test with minimal request
+            response = model.count_tokens("test")
+            return response.total_tokens > 0
+        except Exception:
+            return False
+``````
+------ src/alfred/llm/providers/openai_provider.py ------
+``````
+"""
+OpenAI Provider Implementation for Alfred Task Manager
+
+Following Alfred's principles:
+- Data normalization to standard ModelResponse
+- Uniform error mapping
+- No provider-specific extensions
+"""
+
+import tiktoken
+from typing import List, Optional, Dict, Any
+from openai import OpenAI, AsyncOpenAI
+from openai.types.chat import ChatCompletion
+
+from .base import (
+    BaseAIProvider, 
+    ModelResponse, 
+    ModelInfo, 
+    ModelCapability,
+    ProviderError,
+    ModelNotFoundError,
+    QuotaExceededError,
+    AuthenticationError
+)
+
+
+class OpenAIProvider(BaseAIProvider):
+    """OpenAI API provider implementation."""
+    
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
+        try:
+            self.client = OpenAI(api_key=api_key, base_url=base_url)
+            self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        except Exception as e:
+            raise AuthenticationError(f"Failed to initialize OpenAI client: {e}")
+    
+    def generate_content(
+        self, 
+        prompt: str, 
+        model_name: str, 
+        temperature: float = 0.5,
+        max_tokens: Optional[int] = None
+    ) -> ModelResponse:
+        """Generate content using OpenAI models."""
+        try:
+            response: ChatCompletion = self.client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            content = response.choices[0].message.content or ""
+            
+            # Normalize usage data
+            usage = {}
+            if response.usage:
+                usage = {
+                    "input_tokens": response.usage.prompt_tokens,
+                    "output_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens
+                }
+            
+            # Provider-specific metadata
+            metadata = {
+                "finish_reason": response.choices[0].finish_reason,
+                "response_id": response.id,
+                "created": response.created
+            }
+            
+            return ModelResponse(
+                content=content,
+                model_name=model_name,
+                usage=usage,
+                metadata=metadata
+            )
+            
+        except Exception as e:
+            # Map OpenAI errors to standard provider errors
+            error_msg = str(e)
+            if "model" in error_msg.lower() and "not found" in error_msg.lower():
+                raise ModelNotFoundError(f"Model {model_name} not found")
+            elif "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
+                raise QuotaExceededError(f"OpenAI quota exceeded: {error_msg}")
+            elif "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
+                raise AuthenticationError(f"OpenAI authentication failed: {error_msg}")
+            else:
+                raise ProviderError(f"OpenAI API error: {error_msg}")
+    
+    def count_tokens(self, text: str, model_name: str) -> int:
+        """Count tokens using tiktoken."""
+        try:
+            # Map model names to tiktoken encodings
+            encoding_map = {
+                "gpt-4": "cl100k_base",
+                "gpt-4-turbo": "cl100k_base", 
+                "gpt-3.5-turbo": "cl100k_base",
+                "o3": "cl100k_base",
+                "o3-mini": "cl100k_base",
+                "o4-mini": "cl100k_base"
+            }
+            
+            # Default to cl100k_base for unknown models
+            encoding_name = encoding_map.get(model_name, "cl100k_base")
+            encoding = tiktoken.get_encoding(encoding_name)
+            
+            return len(encoding.encode(text))
+            
+        except Exception as e:
+            raise ProviderError(f"Token counting failed: {e}")
+    
+    def get_available_models(self) -> List[ModelInfo]:
+        """Get available OpenAI models."""
+        # Static model definitions (can be extended to fetch from API)
+        models = [
+            ModelInfo(
+                name="gpt-4",
+                provider="openai",
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING],
+                context_window=8192,
+                max_output_tokens=4096,
+                cost_per_input_token=0.00003,
+                cost_per_output_token=0.00006
+            ),
+            ModelInfo(
+                name="gpt-4-turbo",
+                provider="openai", 
+                capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION],
+                context_window=128000,
+                max_output_tokens=4096,
+                cost_per_input_token=0.00001,
+                cost_per_output_token=0.00003
+            ),
+            ModelInfo(
+                name="gpt-3.5-turbo",
+                provider="openai",
+                capabilities=[ModelCapability.TEXT_GENERATION],
+                context_window=16385,
+                max_output_tokens=4096,
+                cost_per_input_token=0.0000005,
+                cost_per_output_token=0.0000015
+            ),
+            ModelInfo(
+                name="o3",
+                provider="openai",
+                capabilities=[ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
+                context_window=200000,
+                max_output_tokens=100000,
+                cost_per_input_token=0.0001,  # Placeholder pricing
+                cost_per_output_token=0.0002
+            ),
+            ModelInfo(
+                name="o3-mini",
+                provider="openai",
+                capabilities=[ModelCapability.REASONING, ModelCapability.CODE_GENERATION],
+                context_window=200000,
+                max_output_tokens=65536,
+                cost_per_input_token=0.00005,
+                cost_per_output_token=0.0001
+            ),
+            ModelInfo(
+                name="o4-mini",
+                provider="openai",
+                capabilities=[ModelCapability.REASONING, ModelCapability.TEXT_GENERATION],
+                context_window=200000,
+                max_output_tokens=65536,
+                cost_per_input_token=0.00005,
+                cost_per_output_token=0.0001
+            )
+        ]
+        
+        return models
+    
+    def validate_model(self, model_name: str) -> bool:
+        """Validate if model is available."""
+        try:
+            # Test with minimal request
+            self.client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=1
+            )
+            return True
+        except Exception:
+            return False
+``````
+------ src/alfred/llm/registry.py ------
+``````
+"""
+AI Provider Registry and Factory for Alfred Task Manager
+
+Following Alfred's principles:
+- PROVIDER FACTORY IS IMMUTABLE
+- ONE REGISTRY TO RULE THEM ALL  
+- NO PROVIDER LEAKAGE
+- CONFIGURATION-DRIVEN
+"""
+
+from typing import Dict, List, Optional, Type
+from functools import lru_cache
+
+from .providers.base import BaseAIProvider, ModelInfo, ModelNotFoundError, ProviderError
+from .providers.openai_provider import OpenAIProvider
+from .providers.google_provider import GoogleProvider
+from .providers.anthropic_provider import AnthropicProvider
+
+
+class ModelProviderRegistry:
+    """
+    Central registry for AI providers and models.
+    
+    Following Task Provider principles:
+    - Provider selection through configuration
+    - Uniform model routing
+    - No provider-specific logic exposed
+    """
+    
+    def __init__(self):
+        self._providers: Dict[str, BaseAIProvider] = {}
+        self._model_to_provider_map: Dict[str, str] = {}
+        self._provider_classes: Dict[str, Type[BaseAIProvider]] = {
+            "openai": OpenAIProvider,
+            "google": GoogleProvider,
+            "anthropic": AnthropicProvider,
+        }
+    
+    def register_provider(self, provider_name: str, provider_instance: BaseAIProvider) -> None:
+        """Register a provider instance."""
+        if provider_name in self._providers:
+            raise ValueError(f"Provider {provider_name} already registered")
+        
+        self._providers[provider_name] = provider_instance
+        
+        # Build model mapping
+        try:
+            models = provider_instance.get_available_models()
+            for model in models:
+                if model.name in self._model_to_provider_map:
+                    # Handle model name conflicts by prefixing with provider
+                    prefixed_name = f"{provider_name}:{model.name}"
+                    self._model_to_provider_map[prefixed_name] = provider_name
+                else:
+                    self._model_to_provider_map[model.name] = provider_name
+        except Exception as e:
+            # Don't fail registration if model enumeration fails
+            # Provider may still work for specific model requests
+            pass
+    
+    def create_provider(self, provider_name: str, **kwargs) -> BaseAIProvider:
+        """Factory method to create provider instances."""
+        if provider_name not in self._provider_classes:
+            raise ValueError(f"Unknown provider type: {provider_name}")
+        
+        provider_class = self._provider_classes[provider_name]
+        return provider_class(**kwargs)
+    
+    def get_provider_for_model(self, model_name: str) -> BaseAIProvider:
+        """Get the provider that handles a specific model."""
+        # Check direct model name mapping
+        if model_name in self._model_to_provider_map:
+            provider_name = self._model_to_provider_map[model_name]
+            return self._providers[provider_name]
+        
+        # Check prefixed model name (provider:model)
+        if ":" in model_name:
+            provider_name, _ = model_name.split(":", 1)
+            if provider_name in self._providers:
+                return self._providers[provider_name]
+        
+        # Fallback: try each provider to see if they support the model
+        for provider in self._providers.values():
+            if provider.validate_model(model_name):
+                return provider
+        
+        raise ModelNotFoundError(f"No provider found for model: {model_name}")
+    
+    def get_available_models(self) -> List[ModelInfo]:
+        """Get all available models across all providers."""
+        all_models = []
+        for provider in self._providers.values():
+            try:
+                models = provider.get_available_models()
+                all_models.extend(models)
+            except Exception:
+                # Skip providers that fail to enumerate models
+                continue
+        return all_models
+    
+    def get_registered_providers(self) -> List[str]:
+        """Get list of registered provider names."""
+        return list(self._providers.keys())
+    
+    def is_provider_registered(self, provider_name: str) -> bool:
+        """Check if a provider is registered."""
+        return provider_name in self._providers
+
+
+# Global registry instance (singleton)
+model_registry = ModelProviderRegistry()
+
+
+@lru_cache(maxsize=1)
+def get_model_registry() -> ModelProviderRegistry:
+    """Get the global model registry instance."""
+    return model_registry
+``````
 ------ src/alfred/models/__init__.py ------
 ``````
 
@@ -2831,6 +4650,7 @@ transaction_logger = TransactionLogger()
 """Configuration models for Alfred."""
 
 from enum import Enum
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -2842,11 +4662,26 @@ class TaskProvider(str, Enum):
     LOCAL = "local"
 
 
-class ProviderConfig(BaseModel):
-    """Configuration for task providers."""
+class AIProvider(str, Enum):
+    """Supported AI provider types."""
 
-    task_provider: TaskProvider = Field(default=TaskProvider.LOCAL, description="The task management system to use")
-    # Add provider-specific configs here if needed, e.g., jira_project_key
+    OPENAI = "openai"
+    GOOGLE = "google"
+    ANTHROPIC = "anthropic"
+    CUSTOM = "custom"
+
+
+class ToolConfig(BaseModel):
+    """Configuration for individual tools."""
+
+    enabled: bool = Field(default=True, description="Whether the tool is enabled")
+    description: str = Field(default="", description="Tool description")
+
+
+class ProviderConfig(BaseModel):
+    """Configuration for task provider."""
+
+    type: TaskProvider = Field(default=TaskProvider.LOCAL, description="The task management system to use")
 
 
 class FeaturesConfig(BaseModel):
@@ -2856,12 +4691,78 @@ class FeaturesConfig(BaseModel):
     autonomous_mode: bool = Field(default=False, description="Enable autonomous mode to bypass human review steps.")
 
 
+class WorkflowConfig(BaseModel):
+    """Workflow behavior configuration."""
+
+    require_human_approval: bool = Field(default=True, description="Whether to require human approval at review gates")
+    enable_ai_review: bool = Field(default=True, description="Whether to enable AI self-review steps")
+    max_thinking_time: int = Field(default=300, description="Maximum thinking time for AI in seconds")
+    auto_create_branches: bool = Field(default=True, description="Whether to create branches automatically")
+
+
+class AIProviderConfig(BaseModel):
+    """Configuration for individual AI providers."""
+
+    name: AIProvider = Field(description="AI provider type")
+    enabled: bool = Field(default=True, description="Whether this provider is enabled")
+
+
+class AIConfig(BaseModel):
+    """AI provider configuration."""
+
+    providers: List[AIProviderConfig] = Field(
+        default_factory=lambda: [
+            AIProviderConfig(name=AIProvider.OPENAI),
+            AIProviderConfig(name=AIProvider.GOOGLE),
+            AIProviderConfig(name=AIProvider.ANTHROPIC, enabled=False),
+        ],
+        description="List of configured AI providers"
+    )
+    default_provider: AIProvider = Field(default=AIProvider.OPENAI, description="Default provider to use")
+    enable_token_tracking: bool = Field(default=True, description="Whether to track token usage")
+    max_tokens_per_request: int = Field(default=8000, description="Maximum tokens per request")
+    default_temperature: float = Field(default=0.5, description="Default temperature for AI requests")
+    default_model: str = Field(default="gpt-4", description="Default model to use when not specified")
+
+
+class ProvidersConfig(BaseModel):
+    """Provider-specific workflow settings."""
+
+    jira: Dict[str, Any] = Field(default_factory=lambda: {"transition_on_start": True, "transition_on_complete": True})
+    linear: Dict[str, Any] = Field(default_factory=lambda: {"update_status": True})
+    local: Dict[str, Any] = Field(default_factory=lambda: {"task_file_pattern": "*.md"})
+
+
+class DebugConfig(BaseModel):
+    """Debug settings."""
+
+    save_debug_logs: bool = Field(default=True, description="Whether to save detailed debug logs")
+    save_state_snapshots: bool = Field(default=True, description="Whether to save state snapshots")
+    log_level: str = Field(default="INFO", description="Log level (DEBUG, INFO, WARNING, ERROR)")
+
+
 class AlfredConfig(BaseModel):
     """Main configuration model for Alfred."""
 
     version: str = Field(default="2.0.0", description="Configuration version")
-    providers: ProviderConfig = Field(default_factory=ProviderConfig, description="Task provider configuration")
-    features: FeaturesConfig = Field(default_factory=FeaturesConfig)
+    provider: ProviderConfig = Field(default_factory=ProviderConfig, description="Task provider configuration")
+    ai: AIConfig = Field(default_factory=AIConfig, description="AI provider configuration")
+    features: FeaturesConfig = Field(default_factory=FeaturesConfig, description="Feature flags")
+    tools: Dict[str, ToolConfig] = Field(
+        default_factory=lambda: {
+            "create_spec": ToolConfig(enabled=True, description="Create technical specification from PRD"),
+            "create_tasks_from_spec": ToolConfig(enabled=True, description="Break down engineering spec into actionable tasks"),
+            "plan_task": ToolConfig(enabled=True, description="Create detailed execution plan for a task"),
+            "implement_task": ToolConfig(enabled=True, description="Execute the planned implementation"),
+            "review_task": ToolConfig(enabled=True, description="Perform code review"),
+            "test_task": ToolConfig(enabled=True, description="Run and validate tests"),
+            "finalize_task": ToolConfig(enabled=True, description="Create commit and pull request"),
+        },
+        description="Tool configurations",
+    )
+    workflow: WorkflowConfig = Field(default_factory=WorkflowConfig, description="Workflow behavior settings")
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig, description="Provider-specific settings")
+    debug: DebugConfig = Field(default_factory=DebugConfig, description="Debug settings")
 
     model_config = {"validate_assignment": True, "extra": "forbid"}
 
@@ -2978,39 +4879,171 @@ class EngineeringSpec(BaseModel):
 ``````
 ------ src/alfred/models/planning_artifacts.py ------
 ``````
-# src/alfred/models/planning_artifacts.py
-from pydantic import BaseModel, Field
-from typing import List, Dict, Literal
-from .schemas import Subtask, Task
+"""Simplified discovery artifacts for reduced cognitive load."""
+
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, field_validator
+from enum import Enum
+
+from alfred.models.schemas import Task
 
 
-class ContextAnalysisArtifact(BaseModel):
-    context_summary: str
-    affected_files: List[str]
-    questions_for_developer: List[str]
+class ComplexityLevel(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
 
 
-class StrategyArtifact(BaseModel):
-    high_level_strategy: str
-    key_components: List[str]
-    new_dependencies: List[str] = Field(default_factory=list)
-    risk_analysis: str | None = None
+class ContextDiscoveryArtifact(BaseModel):
+    """Simplified discovery artifact focusing on essentials."""
+    
+    # What we found (markdown formatted for readability)
+    findings: str = Field(
+        description="Markdown-formatted discovery findings"
+    )
+    
+    # Questions that need answers
+    questions: List[str] = Field(
+        description="Simple list of questions for clarification",
+        default_factory=list
+    )
+    
+    # Files that will be touched
+    files_to_modify: List[str] = Field(
+        description="List of files that need changes",
+        default_factory=list
+    )
+    
+    # Complexity assessment
+    complexity: ComplexityLevel = Field(
+        description="Overall complexity: LOW, MEDIUM, or HIGH",
+        default=ComplexityLevel.MEDIUM
+    )
+    
+    # Context bundle for implementation (free-form)
+    implementation_context: Dict[str, Any] = Field(
+        description="Any context needed for implementation",
+        default_factory=dict
+    )
+    
+    @field_validator('questions')
+    @classmethod
+    def questions_end_with_questionmark(cls, v):
+        for q in v:
+            if not q.strip().endswith('?'):
+                raise ValueError(f'Question must end with "?": {q}')
+        return v
+    
+    @field_validator('findings')
+    @classmethod
+    def findings_not_empty(cls, v):
+        if not v.strip():
+            raise ValueError('Findings cannot be empty')
+        return v
 
 
-class FileChange(BaseModel):
-    file_path: str = Field(description="The full path to the file that will be created or modified.")
-    change_summary: str = Field(description="A detailed description of the new content or changes for this file.")
-    operation: Literal["CREATE", "MODIFY"] = Field(description="Whether the file will be created or modified.")
+class ClarificationArtifact(BaseModel):
+    """Simplified clarification results."""
+    
+    # Q&A in markdown format
+    clarification_dialogue: str = Field(
+        description="Markdown-formatted Q&A dialogue"
+    )
+    
+    # Key decisions made
+    decisions: List[str] = Field(
+        description="List of decisions made during clarification",
+        default_factory=list
+    )
+    
+    # Any new constraints discovered
+    additional_constraints: List[str] = Field(
+        description="New constraints or requirements discovered",
+        default_factory=list
+    )
 
 
-class DesignArtifact(BaseModel):
-    design_summary: str = Field(description="A high-level summary of the implementation design.")
-    file_breakdown: List[FileChange] = Field(description="A file-by-file breakdown of all required changes.")
+class ContractDesignArtifact(BaseModel):
+    """Simplified contracts/interface design."""
+    
+    # Interface design in markdown
+    interface_design: str = Field(
+        description="Markdown-formatted interface specifications"
+    )
+    
+    # Key APIs/contracts defined
+    contracts_defined: List[str] = Field(
+        description="List of main contracts/interfaces defined",
+        default_factory=list
+    )
+    
+    # Any additional notes
+    design_notes: List[str] = Field(
+        description="Important design decisions or notes",
+        default_factory=list
+    )
 
 
-# The Execution Plan is a collection of Subtasks
-class ExecutionPlanArtifact(BaseModel):
-    subtasks: List[Subtask] = Field(description="The ordered list of Subtasks that form the execution plan")
+class Subtask(BaseModel):
+    """Structured subtask with ID and description."""
+    
+    subtask_id: str = Field(
+        ..., 
+        description="Unique identifier for the subtask (e.g., 'subtask-1')"
+    )
+    description: str = Field(
+        ..., 
+        description="Clear, actionable description of what needs to be done"
+    )
+    # Future extensibility: status, dependencies, estimated_hours, etc.
+
+
+class ImplementationPlanArtifact(BaseModel):
+    """Implementation plan with structured subtasks."""
+    
+    # Implementation plan in markdown
+    implementation_plan: str = Field(
+        description="Markdown-formatted implementation steps"
+    )
+    
+    # List of structured subtasks
+    subtasks: List[Subtask] = Field(
+        description="List of structured subtasks with IDs",
+        default_factory=list
+    )
+    
+    # Any risks or concerns
+    risks: List[str] = Field(
+        description="Potential risks or concerns",
+        default_factory=list
+    )
+
+
+class ValidationArtifact(BaseModel):
+    """Simplified validation results."""
+    
+    # Validation summary in markdown
+    validation_summary: str = Field(
+        description="Markdown-formatted validation results"
+    )
+    
+    # Checklist of validations performed
+    validations_performed: List[str] = Field(
+        description="List of validations performed",
+        default_factory=list
+    )
+    
+    # Any issues found
+    issues_found: List[str] = Field(
+        description="List of issues or concerns found",
+        default_factory=list
+    )
+    
+    # Ready for implementation?
+    ready_for_implementation: bool = Field(
+        description="Whether the plan is ready for implementation",
+        default=True
+    )
 
 
 class GitStatusArtifact(BaseModel):
@@ -3111,7 +5144,7 @@ class OperationType(str, Enum):
 class Task(BaseModel):
     """Represents a single, well-defined unit of work (a user story or engineering task)."""
 
-    task_id: str = Field(description="The unique identifier, e.g., 'TS-01'.")
+    task_id: str = Field(description="The unique identifier, e.g., 'TK-01'.")
     title: str = Field(description="A short, human-readable title for the task.")
     context: str = Field(description="The background for this task, explaining the 'why'.")
     implementation_details: str = Field(description="A high-level overview of the proposed 'how'.")
@@ -3151,12 +5184,12 @@ Pydantic models for Alfred's state management.
 This module defines the single source of truth for task state.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from pydantic import BaseModel, Field
 
-from src.alfred.models.schemas import TaskStatus
+from alfred.models.schemas import TaskStatus
 
 
 class WorkflowState(BaseModel):
@@ -3170,8 +5203,8 @@ class WorkflowState(BaseModel):
     tool_name: str
     current_state: str  # String representation of the state enum
     context_store: Dict[str, Any] = Field(default_factory=dict)
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class TaskState(BaseModel):
@@ -3184,7 +5217,7 @@ class TaskState(BaseModel):
     task_status: TaskStatus = Field(default=TaskStatus.NEW)
     active_tool_state: Optional[WorkflowState] = Field(default=None)
     completed_tool_outputs: Dict[str, Any] = Field(default_factory=dict)
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 ``````
 ------ src/alfred/orchestration/__init__.py ------
@@ -3199,10 +5232,10 @@ A simplified, central session manager for Alfred's active workflow tools.
 """
 
 from typing import Dict
-from src.alfred.config import ConfigManager
-from src.alfred.config.settings import settings
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.lib.logger import get_logger
+from alfred.config import ConfigManager
+from alfred.config.settings import settings
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -3251,32 +5284,34 @@ from typing import AsyncIterator, Callable
 
 from fastmcp import FastMCP
 
-from src.alfred.config.settings import settings
-from src.alfred.core.prompter import prompt_library  # Import the prompt library
-from src.alfred.lib.logger import get_logger
-from src.alfred.lib.transaction_logger import transaction_logger
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.tools.approve_and_advance import approve_and_advance_impl
-from src.alfred.constants import ToolName
-from src.alfred.tools.registry import tool_registry
-from src.alfred.tools.create_spec import create_spec_impl
+from alfred.config.settings import settings
+from alfred.core.prompter import prompt_library  # Import the prompt library
+from alfred.lib.logger import get_logger
+from alfred.lib.transaction_logger import transaction_logger
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.tools.approve_and_advance import approve_and_advance_impl
+from alfred.constants import ToolName
+from alfred.tools.registry import tool_registry
+from alfred.tools.create_spec import create_spec_impl
 from alfred.tools.create_tasks_from_spec import create_tasks_from_spec_impl
-from src.alfred.tools.create_task import create_task_impl
-from src.alfred.tools.finalize_task import finalize_task_impl
-from src.alfred.tools.get_next_task import get_next_task_impl
-from src.alfred.tools.implement_task import implement_task_impl
-from src.alfred.tools.initialize import initialize_project as initialize_project_impl
-from src.alfred.tools.plan_task import plan_task_impl
-from src.alfred.tools.review_task import review_task_impl
-from src.alfred.tools.test_task import test_task_impl
-from src.alfred.core.workflow import PlanTaskTool, ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
-from src.alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
-from src.alfred.tools.approve_review import approve_review_impl
-from src.alfred.tools.request_revision import request_revision_impl
-from src.alfred.tools.submit_work import submit_work_handler
-from src.alfred.tools.work_on import work_on_impl
-from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS, get_tool_definition
-from src.alfred.tools.tool_factory import get_tool_handler
+from alfred.tools.create_task import create_task_impl
+from alfred.tools.finalize_task import finalize_task_impl
+from alfred.tools.get_next_task import get_next_task_impl
+from alfred.tools.implement_task import implement_task_impl
+from alfred.tools.initialize import initialize_project as initialize_project_impl
+from alfred.tools.plan_task import plan_task_impl
+from alfred.tools.review_task import review_task_impl
+from alfred.tools.test_task import test_task_impl
+from alfred.core.workflow import ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
+from alfred.core.discovery_workflow import PlanTaskTool
+from alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
+from alfred.tools.approve_review import approve_review_impl
+from alfred.tools.request_revision import request_revision_impl
+from alfred.tools.submit_work import submit_work_handler
+from alfred.tools.work_on import work_on_impl
+from alfred.tools.tool_definitions import TOOL_DEFINITIONS, get_tool_definition
+from alfred.tools.tool_factory import get_tool_handler
+from alfred.llm.initialization import initialize_ai_providers
 
 logger = get_logger(__name__)
 
@@ -3299,6 +5334,9 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
     """Lifespan context manager for FastMCP server."""
     # Startup
     logger.info(f"Starting Alfred server with {len(prompt_library._cache)} prompts loaded")
+    
+    # Initialize AI providers (following Alfred's immutable startup principle)
+    await initialize_ai_providers()
 
     yield
 
@@ -3418,14 +5456,14 @@ async def work_on_task(task_id: str) -> ToolResponse:
     - COMPLETED: Informs user the task is complete
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains routing guidance to the appropriate specialized tool
 
     Example:
-        work_on_task("TS-01") -> Guides to plan_task if task is new
-        work_on_task("TS-02") -> Guides to implement_task if planning is complete
+        work_on_task("TK-01") -> Guides to plan_task if task is new
+        work_on_task("TK-02") -> Guides to implement_task if planning is complete
     """
     pass  # Implementation handled by decorator
 
@@ -3599,17 +5637,18 @@ async def plan_task(task_id: str) -> ToolResponse:
     into a concrete, machine-executable 'Execution Plan' composed of Subtasks.
     A Subtask (based on LOST framework) is an atomic unit of work.
 
-    This tool manages a multi-step, interactive planning process:
-    1. **Contextualize**: Deep analysis of the task requirements and codebase context
-    2. **Strategize**: High-level technical approach and architecture decisions
-    3. **Design**: Detailed technical design and component specifications
-    4. **Generate Subtasks**: Break down into atomic, executable work units
+    This tool manages a multi-step, interactive discovery planning process:
+    1. **Discovery**: Deep context discovery and codebase exploration
+    2. **Clarification**: Conversational human-AI clarification
+    3. **Contracts**: Interface-first design and contracts
+    4. **Implementation Plan**: Self-contained subtask creation
+    5. **Validation**: Final plan validation and coherence check
 
     Each step includes AI self-review followed by human approval gates to ensure quality.
     The final output is a validated execution plan ready for implementation.
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains success/error status and the next prompt to guide planning
@@ -3637,47 +5676,40 @@ async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     """
     Submits a structured work artifact for the current step of a workflow tool.
 
-    - Generic state-advancing tool for any active workflow (plan, implement, review, test)
-    - Automatically determines correct state transition based on current state
-    - Validates artifact structure against expected schema for current state
-    - Advances the tool's state machine to next step or review phase
-    - Works with all workflow tools: plan_task, implement_task, review_task, test_task
+    This tool advances any active workflow (plan, implement, review, test) by submitting
+    the completed work for the current state. It automatically validates the artifact
+    structure and transitions to the next appropriate state in the workflow.
 
-    The artifact structure varies by tool and state:
-    - **Planning states**: context_analysis, strategy, design, subtasks
+    The artifact structure varies by workflow tool and current state:
+    - **Planning states**: context_discovery, clarification, contract_design, implementation_plan, validation
     - **Implementation**: progress updates, completion status
-    - **Review**: findings, issues, recommendations
+    - **Review**: findings, issues, recommendations  
     - **Testing**: test results, coverage, validation status
 
-    Parameters:
-        task_id (str): The unique identifier for the task (e.g., "AL-01", "TS-123")
-        artifact (dict): Structured data matching the current state's expected schema
+    ## Parameters
+    - **task_id** `[string]`: The unique identifier for the task (e.g., "AL-01", "TK-123")
+    - **artifact** `[object]`: Structured data matching the current state's expected schema
 
-    Returns:
-        ToolResponse: Contains:
-            - success: Whether submission was accepted
-            - data.next_action: The next tool/action to take
-            - data.state: New state after transition
-            - data.prompt: Next prompt for user interaction
+    ## Examples
+    ```
+    # Planning context submission
+    submit_work("AL-01", {
+        "understanding": "Task requires refactoring auth module...",
+        "constraints": ["Must maintain backward compatibility"],
+        "risks": ["Potential breaking changes to API"]
+    })
 
-    Examples:
-        # Planning context submission
-        submit_work("AL-01", {
-            "understanding": "Task requires refactoring auth module...",
-            "constraints": ["Must maintain backward compatibility"],
-            "risks": ["Potential breaking changes to API"]
-        })
+    # Implementation progress
+    submit_work("AL-02", {
+        "progress": "Completed authentication refactor", 
+        "subtasks_completed": ["subtask-1", "subtask-2"]
+    })
+    ```
 
-        # Implementation progress
-        submit_work("AL-02", {
-            "progress": "Completed authentication refactor",
-            "subtasks_completed": ["subtask-1", "subtask-2"]
-        })
-
-    Next Actions:
-        - If in review state: Use approve_review or request_revision
-        - If advancing to new phase: Tool will indicate next tool to use
-        - If complete: No further action needed
+    ## Next Actions
+    - If in review state: Use approve_review or request_revision
+    - If advancing to new phase: Tool will indicate next tool to use
+    - If complete: No further action needed
     """
     return await submit_work_handler.execute(task_id, artifact=artifact)
 
@@ -3694,7 +5726,7 @@ async def approve_review(task_id: str) -> ToolResponse:
     - Automatically determines next state based on current workflow phase
 
     Applicable States:
-    - **Planning**: review_context, review_strategy, review_design, review_plan
+    - **Planning**: discovery_awaiting_ai_review, clarification_awaiting_ai_review, contracts_awaiting_ai_review, implementation_plan_awaiting_ai_review, validation_awaiting_ai_review
     - **Implementation**: awaiting_human_review after completion
     - **Review**: awaiting_ai_review, awaiting_human_review
     - **Testing**: awaiting_ai_review, awaiting_human_review
@@ -3807,7 +5839,7 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
     - The state is properly persisted after marking completion
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
         subtask_id (str): The subtask identifier to mark as complete (e.g., "subtask-1")
 
     Returns:
@@ -3817,7 +5849,7 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
             - List of remaining subtasks
 
     Example:
-        mark_subtask_complete("TS-01", "subtask-1")
+        mark_subtask_complete("TK-01", "subtask-1")
         # Returns progress update showing 1/5 subtasks complete (20%)
     """
     pass  # Implementation handled by decorator
@@ -3842,13 +5874,13 @@ async def implement_task(task_id: str) -> ToolResponse:
     - Maintaining implementation state across sessions
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains success/error status and implementation guidance
 
     Example:
-        implement_task("TS-01") -> Starts implementation of planned task
+        implement_task("TK-01") -> Starts implementation of planned task
     """
     handler = get_tool_handler(ToolName.IMPLEMENT_TASK)
     return await handler.execute(task_id)
@@ -4146,8 +6178,8 @@ This module provides persistence and recovery capabilities for workflow tools,
 ensuring that task progress survives crashes and restarts.
 """
 
-from src.alfred.state.manager import StateManager, state_manager
-from src.alfred.state.recovery import ToolRecovery
+from alfred.state.manager import StateManager, state_manager
+from alfred.state.recovery import ToolRecovery
 
 __all__ = ["StateManager", "state_manager", "ToolRecovery"]
 
@@ -4159,15 +6191,15 @@ import json
 import os
 import tempfile
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any, Dict
 
-from src.alfred.lib.fs_utils import file_lock
-from src.alfred.lib.logger import get_logger
-from src.alfred.models.state import TaskState, WorkflowState
-from src.alfred.models.schemas import TaskStatus
-from src.alfred.config.settings import settings
+from alfred.lib.fs_utils import file_lock
+from alfred.lib.logger import get_logger
+from alfred.models.state import TaskState, WorkflowState
+from alfred.models.schemas import TaskStatus
+from alfred.config.settings import settings
 from pydantic import BaseModel
 
 logger = get_logger(__name__)
@@ -4192,7 +6224,7 @@ class StateManager:
     def _atomic_write(self, state: TaskState) -> None:
         """Atomically write state to disk. Assumes lock is already held."""
         state_file = self._get_task_state_file(state.task_id)
-        state.updated_at = datetime.utcnow().isoformat()
+        state.updated_at = datetime.now(timezone.utc).isoformat()
 
         # Ensure directory structure exists
         task_dir = state_file.parent
@@ -4328,7 +6360,7 @@ class StateManager:
 
     def get_archive_path(self, task_id: str) -> Path:
         """Get the archive directory path for a task."""
-        from src.alfred.constants import Paths
+        from alfred.constants import Paths
 
         archive_path = self._get_task_dir(task_id) / Paths.ARCHIVE_DIR
         archive_path.mkdir(parents=True, exist_ok=True)
@@ -4336,7 +6368,7 @@ class StateManager:
 
     def register_tool(self, task_id: str, tool: "BaseWorkflowTool") -> None:
         """Register a tool with the orchestrator and update state."""
-        from src.alfred.orchestration.orchestrator import orchestrator
+        from alfred.orchestration.orchestrator import orchestrator
 
         orchestrator.active_tools[task_id] = tool
         self.update_tool_state(task_id, tool)
@@ -4357,11 +6389,11 @@ Handles reconstruction of workflow tools from persisted state.
 
 from typing import Dict, Optional, Type
 
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.lib.logger import get_logger
-from src.alfred.state.manager import state_manager
-from src.alfred.constants import ToolName
-from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.logger import get_logger
+from alfred.state.manager import state_manager
+from alfred.constants import ToolName
+from alfred.tools.tool_definitions import TOOL_DEFINITIONS
 
 logger = get_logger(__name__)
 
@@ -4422,7 +6454,7 @@ def recover_tool_from_state(task_id: str, tool_name: str) -> BaseWorkflowTool:
     Helper function to recover or create a tool for the given task and tool name.
     This is used by the individual tool implementations.
     """
-    from src.alfred.orchestration.orchestrator import orchestrator
+    from alfred.orchestration.orchestrator import orchestrator
 
     # Check if tool is already active
     if task_id in orchestrator.active_tools:
@@ -4464,7 +6496,7 @@ def recover_tool_from_state(task_id: str, tool_name: str) -> BaseWorkflowTool:
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from src.alfred.models.schemas import Task, ToolResponse
+from alfred.models.schemas import Task, ToolResponse
 
 
 class BaseTaskProvider(ABC):
@@ -4522,8 +6554,8 @@ class BaseTaskProvider(ABC):
 ``````
 """Task provider factory for instantiating the correct provider based on configuration."""
 
-from src.alfred.models.alfred_config import TaskProvider as ProviderType
-from src.alfred.lib.logger import get_logger
+from alfred.models.alfred_config import TaskProvider as ProviderType
+from alfred.lib.logger import get_logger
 from .base import BaseTaskProvider
 from .local_provider import LocalTaskProvider
 from .jira_provider import JiraTaskProvider
@@ -4545,12 +6577,12 @@ def get_provider() -> BaseTaskProvider:
         NotImplementedError: If the configured provider is not yet implemented
     """
     # Import here to avoid circular dependency
-    from src.alfred.orchestration.orchestrator import orchestrator
+    from alfred.orchestration.orchestrator import orchestrator
 
     try:
         # Load the current configuration
         config = orchestrator.config_manager.load()
-        provider_type = config.providers.task_provider
+        provider_type = config.provider.type
 
         logger.info(f"Instantiating task provider: {provider_type}")
 
@@ -4578,8 +6610,8 @@ def get_provider() -> BaseTaskProvider:
 from typing import List, Optional
 from datetime import datetime
 
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.lib.logger import get_logger
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.lib.logger import get_logger
 from .base import BaseTaskProvider
 
 logger = get_logger(__name__)
@@ -4603,16 +6635,16 @@ class JiraTaskProvider(BaseTaskProvider):
         In production, this will call MCP Atlassian tools.
 
         Args:
-            task_id: The Jira issue key (e.g., "TS-01")
+            task_id: The Jira issue key (e.g., "TK-01")
 
         Returns:
             Task object if found, None otherwise
         """
         # Placeholder implementation - return hardcoded task for testing
-        if task_id == "TS-01":
+        if task_id == "TK-01":
             logger.info(f"Returning placeholder Jira task for {task_id}")
             return Task(
-                task_id="TS-01",
+                task_id="TK-01",
                 title="Implement user authentication",
                 description="""As a user, I want to be able to log in to the application
 so that I can access my personalized content and features.
@@ -4685,11 +6717,11 @@ from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.lib.md_parser import MarkdownTaskParser
-from src.alfred.lib.logger import get_logger
-from src.alfred.config.settings import settings
-from src.alfred.state.manager import state_manager
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.lib.md_parser import MarkdownTaskParser
+from alfred.lib.logger import get_logger
+from alfred.config.settings import settings
+from alfred.state.manager import state_manager
 from .base import BaseTaskProvider
 
 logger = get_logger(__name__)
@@ -5148,6 +7180,38 @@ Never:
 ``````
 
 ``````
+------ src/alfred/templates/artifacts/clarification.md ------
+``````
+# Clarification Results
+
+## Resolved Ambiguities
+{% if resolved_ambiguities %}
+{% for resolution in resolved_ambiguities %}
+### Q: {{ resolution.question }}
+**A**: {{ resolution.resolution }}
+{% endfor %}
+{% else %}
+No ambiguities were resolved.
+{% endif %}
+
+## Updated Requirements
+{% if updated_requirements %}
+{% for key, value in updated_requirements.items() %}
+- **{{ key }}**: {{ value }}
+{% endfor %}
+{% else %}
+No requirements updates.
+{% endif %}
+
+## Domain Knowledge Gained
+{% if domain_knowledge_gained %}
+{% for knowledge in domain_knowledge_gained %}
+- {{ knowledge }}
+{% endfor %}
+{% else %}
+No additional domain knowledge gained.
+{% endif %}
+``````
 ------ src/alfred/templates/artifacts/context_analysis.md ------
 ``````
 ## {{ state_description }}
@@ -5166,6 +7230,144 @@ Never:
 {% for question in artifact.questions_for_developer -%}
 - {{ question }}
 {% endfor %}
+``````
+------ src/alfred/templates/artifacts/context_discovery.md ------
+``````
+# Context Discovery Results
+
+## Codebase Understanding
+{{ codebase_understanding | default("No codebase analysis performed") }}
+
+## Code Patterns
+{% if code_patterns %}
+{% for pattern in code_patterns %}
+- **{{ pattern.pattern_type }}**: {{ pattern.usage_context }}
+  ```
+  {{ pattern.example_code }}
+  ```
+  Found in: {{ pattern.file_locations | join(", ") }}
+{% endfor %}
+{% else %}
+No code patterns identified.
+{% endif %}
+
+## Integration Points
+{% if integration_points %}
+{% for point in integration_points %}
+- **{{ point.component_name }}** ({{ point.integration_type }})
+  - Interface: `{{ point.interface_signature }}`
+  - Dependencies: {{ point.dependencies | join(", ") }}
+  {% if point.examples %}
+  - Example: {{ point.examples }}
+  {% endif %}
+{% endfor %}
+{% else %}
+No integration points identified.
+{% endif %}
+
+## Relevant Files
+{% if relevant_files %}
+{% for file in relevant_files %}
+- {{ file }}
+{% endfor %}
+{% else %}
+No relevant files identified.
+{% endif %}
+
+## Existing Components
+{% if existing_components %}
+{% for component, purpose in existing_components.items() %}
+- **{{ component }}**: {{ purpose }}
+{% endfor %}
+{% else %}
+No existing components identified.
+{% endif %}
+
+## Ambiguities Discovered
+{% if ambiguities_discovered %}
+{% for ambiguity in ambiguities_discovered %}
+### {{ ambiguity.question }}
+- **Context**: {{ ambiguity.context }}
+- **Impact if Wrong**: {{ ambiguity.impact_if_wrong }}
+- **Discovery Source**: {{ ambiguity.discovery_source }}
+{% endfor %}
+{% else %}
+No ambiguities identified during discovery.
+{% endif %}
+
+## Extracted Context
+{{ extracted_context | default("No context extracted") }}
+
+## Complexity Assessment
+**{{ complexity_assessment | default("UNKNOWN") }}**
+
+## Discovery Notes
+{% if discovery_notes %}
+{% for note in discovery_notes %}
+- {{ note }}
+{% endfor %}
+{% else %}
+No additional discovery notes.
+{% endif %}
+``````
+------ src/alfred/templates/artifacts/contract_design.md ------
+``````
+# Contract Design
+
+## Method Contracts
+{% if method_contracts %}
+{% for contract in method_contracts %}
+### {{ contract.name }}
+- **Parameters**: {{ contract.params | join(", ") }}
+- **Returns**: {{ contract.returns }}
+- **Description**: {{ contract.description | default("No description provided") }}
+{% endfor %}
+{% else %}
+No method contracts defined.
+{% endif %}
+
+## Data Models
+{% if data_models %}
+{% for model in data_models %}
+### {{ model.name }}
+{% if model.fields %}
+**Fields**:
+{% for field, type in model.fields.items() %}
+- `{{ field }}`: {{ type }}
+{% endfor %}
+{% endif %}
+{% if model.description %}
+**Description**: {{ model.description }}
+{% endif %}
+{% endfor %}
+{% else %}
+No data models defined.
+{% endif %}
+
+## API Contracts
+{% if api_contracts %}
+{% for api in api_contracts %}
+### {{ api.name }}
+- **Method**: {{ api.method | default("GET") }}
+- **Path**: {{ api.path }}
+- **Request**: {{ api.request | default("None") }}
+- **Response**: {{ api.response | default("None") }}
+{% endfor %}
+{% else %}
+No API contracts defined.
+{% endif %}
+
+## Integration Contracts
+{% if integration_contracts %}
+{% for integration in integration_contracts %}
+### {{ integration.service }}
+- **Method**: {{ integration.method }}
+- **Interface**: {{ integration.interface | default("Not specified") }}
+- **Dependencies**: {{ integration.dependencies | default("None") }}
+{% endfor %}
+{% else %}
+No integration contracts defined.
+{% endif %}
 ``````
 ------ src/alfred/templates/artifacts/design.md ------
 ``````
@@ -5268,6 +7470,21 @@ Test:
 {%- endfor %}
 
 {% endfor %}
+``````
+------ src/alfred/templates/artifacts/finalize.md ------
+``````
+## {{ state_description }}
+
+**Task:** {{ task.task_id }} - {{ task.title }}
+
+### Git Finalization Summary
+
+The task has been successfully committed and a pull request has been created.
+
+- **Commit Hash:** `{{ artifact.commit_hash }}`
+- **Pull Request URL:** [{{ artifact.pr_url }}]({{ artifact.pr_url }})
+
+The work is now ready for peer review in the repository.
 ``````
 ------ src/alfred/templates/artifacts/implementation_manifest.md ------
 ``````
@@ -5772,10 +7989,10 @@ Your final output MUST be a single, valid JSON object. It must be an array of `T
 ```json
 [
   {
-    "task_id": "TS-XX", // You will generate this, starting from the next available number.
+    "task_id": "TK-XX", // You will generate this, starting from the next available number.
     "title": "Clear, concise title for the task.",
     "priority": "critical | high | medium | low",
-    "dependencies": ["TS-YY", "TS-ZZ"], // List of task_ids this task depends on.
+    "dependencies": ["TK-YY", "TK-ZZ"], // List of task_ids this task depends on.
     "context": "A 1-2 sentence explanation of how this task fits into the larger project, referencing the spec.",
     "implementation_details": "Specific, actionable instructions for the developer. Reference file paths, function names, or design patterns from the spec.",
     "dev_notes": "Optional notes, hints, or warnings for the developer.",
@@ -6073,293 +8290,310 @@ When all subtasks are complete, create an ImplementationManifestArtifact with:
 
 **Required Action:** Call `alfred.submit_work` with your `ImplementationManifestArtifact`
 ``````
------- src/alfred/templates/prompts/plan_task/contextualize.md ------
+------ src/alfred/templates/prompts/plan_task/clarification.md ------
 ``````
+<!--
+Template: plan_task.clarification
+Purpose: Get answers to discovery questions
+Variables:
+  - task_id: The task identifier
+  - tool_name: Current tool name
+  - current_state: Current workflow state
+  - task_title: Task title
+  - discovery_artifact: Results from discovery phase
+  - discovery_findings: Flattened findings from discovery
+  - discovery_questions: Flattened questions from discovery
+-->
+
 # CONTEXT
-Task: ${task_id}
-Tool: ${tool_name}
+Task: ${task_id} - ${task_title}
 State: ${current_state}
-Title: ${task_title}
 
 # OBJECTIVE
-Analyze the existing codebase and identify any ambiguities or questions that need clarification before planning can begin.
+Get answers to the questions discovered during exploration.
 
-# BACKGROUND
-You are beginning the planning process for a new task. Before creating a technical strategy, you must understand:
-- The current codebase structure and relevant components
-- Any existing patterns or conventions to follow
-- Potential areas of ambiguity that need clarification
+# DISCOVERY SUMMARY
+${discovery_findings}
 
-**Task Requirements:**
-- Goal: ${task_context}
-- Implementation Overview: ${implementation_details}
-- Acceptance Criteria:
-${acceptance_criteria}
-
-${feedback_section}
+# QUESTIONS TO CLARIFY
+${discovery_questions}
 
 # INSTRUCTIONS
-1. Analyze the codebase starting from the project root
-2. Identify all files and components relevant to this task
-3. Note any existing patterns or conventions that should be followed
-4. Create a list of specific questions about any ambiguities or unclear requirements
-5. Prepare a comprehensive context analysis
-
-# CONSTRAINTS
-- Focus only on understanding, not designing solutions yet
-- Questions should be specific and actionable
-- Identify actual ambiguities, not hypothetical issues
-- Consider both technical and business context
-
-# OUTPUT
-Create a ContextAnalysisArtifact with:
-- `context_summary`: Your understanding of the existing code and how the new feature will integrate
-- `affected_files`: List of files that will likely need modification
-- `questions_for_developer`: Specific questions that need answers before proceeding
-
-**Required Action:** Call `alfred.submit_work` with a `ContextAnalysisArtifact`
-
-# EXAMPLES
-Good question: "Should the new authentication system integrate with the existing UserService or create a separate AuthService?"
-Bad question: "How should I implement this?" (too vague)
-``````
------- src/alfred/templates/prompts/plan_task/design.md ------
-``````
-# CONTEXT
-Task: ${task_id}
-Tool: ${tool_name}
-State: ${current_state}
-Title: ${task_title}
-
-# OBJECTIVE
-Translate the approved technical strategy into a detailed, file-level implementation design.
-
-# BACKGROUND
-The technical strategy has been approved and provides the high-level approach. You must now create a comprehensive design that:
-- Breaks down the strategy into specific file changes
-- Provides clear implementation guidance for each component
-- Ensures all acceptance criteria can be met
-- Maintains consistency with the existing codebase
-
-**Task Requirements:**
-- Goal: ${task_context}
-- Implementation Overview: ${implementation_details}
-- Acceptance Criteria:
-${acceptance_criteria}
-
-${feedback_section}
-
-# INSTRUCTIONS
-1. Review the approved strategy and task requirements
-2. For each component in the strategy, determine the specific files that need to be created or modified
-3. For each file, provide a clear summary of the required changes
-4. Ensure the design covers all acceptance criteria
-5. Consider the order of implementation and any dependencies between changes
-6. Create a comprehensive design document
-
-# CONSTRAINTS
-- Be specific about file paths and change details
-- Ensure consistency with existing code patterns
-- Consider backward compatibility where applicable
-- Design should be implementable without ambiguity
+1. Present each question with its full context from discovery
+2. Have a natural, multi-turn conversation with the human
+3. **IMPORTANT: Track your progress internally** - humans may answer only some questions at a time:
+   - Keep a mental list of which questions have been answered
+   - Which questions remain unanswered
+   - If human skips questions or only partially answers, acknowledge what you learned and continue asking the remaining questions
+   - Do NOT submit work until ALL questions are resolved
+4. Be conversational - ask follow-ups, seek clarification, ensure you truly understand
+5. Document the entire dialogue in markdown format
+6. Extract key decisions and new constraints discovered
 
 # OUTPUT
-Create a DesignArtifact with:
-- `design_summary`: Overview of the implementation approach
-- `file_breakdown`: Array of file changes, each containing:
-  - `file_path`: Full path to the file
-  - `change_summary`: Description of changes needed
-  - `operation`: Either "create" or "modify"
+Submit a simple artifact with:
+- **clarification_dialogue**: Markdown Q&A conversation
+- **decisions**: List of key decisions
+- **additional_constraints**: Any new requirements discovered
 
-**Required Action:** Call `alfred.submit_work` with a `DesignArtifact`
-``````
------- src/alfred/templates/prompts/plan_task/generate_subtasks.md ------
-``````
-# CONTEXT
-Task: ${task_id}
-Tool: ${tool_name}
-State: ${current_state}
-Title: ${task_title}
-
-# OBJECTIVE
-Transform the approved design into precision-engineered subtasks that can be executed independently by different agents without ambiguity.
-
-# BACKGROUND
-You are creating an execution plan where each subtask must be so precise, complete, and independent that any developer or AI agent could execute it in complete isolation without questions or ambiguity.
-
-**Critical Mindset - The Isolation Principle:**
-Imagine each subtask will be executed by a different agent who:
-- Has NEVER seen the other subtasks
-- Has NO access to project context beyond what you provide
-- Cannot ask questions or seek clarification
-- Must produce code that integrates perfectly with others' work
-
-## The Deep LOST Philosophy
-
-LOST is a methodology for eliminating ambiguity through systematic precision:
-
-### L - Location (The Context Anchor)
-- **Activates Language Context**: `src/models/user.py` tells the agent "Python, likely SQLAlchemy/Django"
-- **Implies Conventions**: `src/components/UserAvatar.tsx` signals "React, TypeScript, component patterns"
-- **Defines Boundaries**: Precise paths prevent accidental modifications to wrong files
-- **Creates Namespace**: Helps avoid naming conflicts between parallel implementations
-
-### O - Operation (The Precision Verb)
-**Foundation Operations** (Create structure):
-- `CREATE` - Generate new file/class/module from scratch
-- `DEFINE` - Establish interfaces, types, schemas
-- `ESTABLISH` - Set up configuration, constants
-
-**Implementation Operations** (Add logic):
-- `IMPLEMENT` - Fill in method/function body
-- `INTEGRATE` - Connect components
-- `EXTEND` - Add capabilities to existing code
-
-**Modification Operations** (Change existing):
-- `MODIFY` - Alter existing code behavior
-- `REFACTOR` - Restructure without changing behavior
-- `ENHANCE` - Add features to existing functionality
-
-### S - Specification (The Contract)
-Must include:
-1. **Exact Signatures**: "Define method authenticate(email: str, password: str) -> Union[User, None]"
-2. **Precise Types**: "Accept config: Dict[str, Union[str, int, bool]] with keys: 'timeout' (int), 'retry' (bool)"
-3. **Explicit Contracts**: "Returns User object with populated 'id', 'email', 'role' fields on success, None on failure"
-4. **Clear Dependencies**: "Imports: from src.models.user import User; from src.utils.crypto import hash_password"
-5. **Exact Integration Points**: "Registers route POST /api/auth/login with AuthRouter instance from src/routes/auth.py"
-
-### T - Test (The Proof)
-Must be executable commands or verifiable conditions:
-1. **Concrete Execution**: "Run: python -m pytest tests/test_auth.py::test_authenticate_valid -xvs"
-2. **Specific Validation**: "Verify: curl -X POST http://localhost:8000/api/auth/login -d '{"email":"test@example.com","password":"123"}' returns 401"
-3. **Integration Verification**: "Confirm: from src.auth.handler import authenticate; result = authenticate('test@example.com', 'password'); assert result is None"
-
-**Task Requirements:**
-- Goal: ${task_context}
-- Implementation Overview: ${implementation_details}
-- Acceptance Criteria:
-${acceptance_criteria}
-
-${feedback_section}
-
-# INSTRUCTIONS
-1. Review the approved design and break it down into atomic units of work
-2. Order subtasks by dependency (interfaces before implementations)
-3. For each subtask, create a LOST-formatted specification with:
-   - Precise location (exact file path)
-   - Specific operation verb
-   - Detailed specification with all imports, signatures, types
-   - Executable test commands
-4. Ensure each subtask ends with: "Call alfred.mark_subtask_complete with task_id='${task_id}' and subtask_id='ST-X'"
-5. Use subtask IDs in format: ST-1, ST-2, etc.
-
-# CONSTRAINTS
-- Each subtask must be executable in complete isolation
-- No assumptions about context beyond what's explicitly stated
-- All types, imports, and dependencies must be specified
-- Tests must be runnable commands, not descriptions
-- Avoid circular dependencies between subtasks
-
-# OUTPUT
-Create an ExecutionPlan artifact with an array of subtasks, each containing:
-- `subtask_id`: Format "ST-X" 
-- `title`: Precise description of atomic work
-- `summary`: Optional extended description
-- `location`: Exact file path
-- `operation`: Specific verb from LOST framework
-- `specification`: Array of precise implementation steps
-- `test`: Array of executable verification commands
-
-**Required Action:** Call `alfred.submit_work` with an `ExecutionPlan` artifact
-
-# EXAMPLES
-
-## ✅ GOOD Example - Define Interface First:
+## Example
 ```json
 {
-  "subtask_id": "ST-1",
-  "title": "Define IAuthService interface with method signatures",
-  "location": "src/interfaces/auth.interface.ts",
-  "operation": "CREATE",
-  "specification": [
-    "Create new file src/interfaces/auth.interface.ts",
-    "Define TypeScript interface IAuthService with methods:",
-    "- authenticate(email: string, password: string): Promise<AuthResult>",
-    "- validateToken(token: string): Promise<TokenValidation>",
-    "Define type AuthResult = { success: boolean; user?: User; tokens?: AuthTokens; error?: string }",
-    "Export all interfaces and types",
-    "Call alfred.mark_subtask_complete with task_id='${task_id}' and subtask_id='ST-1'"
+  "clarification_dialogue": "## Clarification Discussion\n\n**AI**: I found 3 ambiguities during discovery. Let me ask about each:\n\n1. Should priority be required or optional with default?\n2. Where does priority rank in the task selection algorithm?\n3. Should we migrate existing tasks or handle missing priority?\n\n**Human**: Make it optional with MEDIUM default. We have existing tasks.\n\n**AI**: Thank you! That answers questions 1 and 3. For question 2, where should priority rank in the selection algorithm?\n\n**Human**: After in-progress status but before ready status.\n\n**AI**: Perfect! All questions are now answered. Let me summarize what I've learned...",
+  
+  "decisions": [
+    "Priority will be optional with default=MEDIUM",
+    "Priority ranks second in algorithm after in-progress"
   ],
-  "test": [
-    "File src/interfaces/auth.interface.ts exists",
-    "Run: npx tsc src/interfaces/auth.interface.ts --noEmit",
-    "Verify interface has all methods with correct signatures"
+  
+  "additional_constraints": [
+    "Must maintain backward compatibility",
+    "No migration needed for existing tasks"
   ]
 }
 ```
 
-## ❌ BAD Example - Vague and Interdependent:
+**CRITICAL**: Only call `alfred.submit_work` when ALL questions have been answered. If any questions remain, continue the conversation.
+
+``````
+------ src/alfred/templates/prompts/plan_task/clarification_complex.md ------
+``````
+<!--
+Template: plan_task.clarification
+Purpose: Conversational clarification of discovered ambiguities
+Variables:
+  - task_id: The task identifier
+  - tool_name: Current tool name
+  - current_state: Current workflow state
+  - task_title: Task title
+  - task_context: Task goal/context
+  - implementation_details: Implementation overview
+  - acceptance_criteria: Formatted AC list
+  - context_discovery_artifact: Results from discovery phase
+  - feedback_section: Review feedback (if any)
+-->
+
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
+
+# OBJECTIVE
+Engage in conversational clarification with the human to resolve all discovered ambiguities and gain domain knowledge not available in training data.
+
+# BACKGROUND
+Context discovery has been completed and ambiguities have been identified. Now you must engage in real conversation with the human to:
+- Resolve all discovered ambiguities with their domain expertise
+- Understand business context and decisions not captured in code
+- Clarify requirements and expectations
+- Gain domain knowledge that will inform the design
+
+**Note**: After clarification, the workflow will automatically determine if this task is simple enough to skip the CONTRACTS phase and proceed directly to implementation planning. This is based on complexity assessment from discovery.
+
+This is a CONVERSATIONAL phase - engage in natural dialogue, ask follow-up questions, and seek clarification until all ambiguities are resolved.
+
+**Discovery Results:**
+- Complexity: ${context_discovery_artifact.complexity_assessment}
+- Files Affected: ${context_discovery_artifact.relevant_files}
+- Ambiguities Found: ${context_discovery_artifact.ambiguities_discovered}
+
+${feedback_section}
+
+# INSTRUCTIONS
+1. **Present Ambiguities**: Show each discovered ambiguity with full context from your exploration
+2. **Conversational Dialogue**: Engage in natural conversation - ask follow-ups, seek examples, clarify nuances
+3. **Domain Knowledge Transfer**: Learn from human expertise about business logic, edge cases, and decisions
+4. **Requirement Refinement**: Update and clarify requirements based on conversation
+5. **Question Everything Unclear**: Don't make assumptions - if something is unclear, ask
+6. **Document Conversation**: Keep track of what you learn for future reference
+
+# CONSTRAINTS
+- This is conversational, not just Q&A - engage naturally
+- Focus on resolving ambiguities that impact design decisions
+- Don't ask implementation details - focus on requirements and approach
+- Seek domain knowledge that's not available in the codebase
+- Be specific with your questions and provide context
+
+# OUTPUT
+Create a ClarificationArtifact with the following structure:
+
+## Schema Documentation
+
+### ResolvedAmbiguity Object
 ```json
 {
-  "subtask_id": "subtask-1",
-  "title": "Create user authentication",
-  "location": "src/auth/",
-  "operation": "CREATE",
-  "specification": [
-    "Create authentication system",
-    "Add login and registration",
-    "Handle tokens and sessions"
+  "original_question": "string",      // The question from discovery phase
+  "human_response": "string",         // What the human answered
+  "clarification": "string",          // Your understanding of the resolution
+  "follow_up_questions": ["string"],  // Any follow-up questions you asked
+  "final_decision": "string"          // The actionable decision (min 10 chars)
+}
+```
+
+### RequirementUpdate Object
+```json
+{
+  "original_requirement": "string",   // What the requirement was before
+  "updated_requirement": "string",    // What it is now after clarification
+  "reason_for_change": "string"       // Why this change was needed
+}
+```
+
+### ConversationEntry Object
+```json
+{
+  "speaker": "enum",                  // MUST be "AI" or "Human"
+  "message": "string",                // The message content
+  "timestamp": "string"               // Optional timestamp
+}
+```
+
+### Complete ClarificationArtifact Structure
+```json
+{
+  "resolved_ambiguities": [           // List of ResolvedAmbiguity objects
+    // See ResolvedAmbiguity schema above
   ],
-  "test": [
-    "Test that users can log in"
+  "updated_requirements": [           // List of RequirementUpdate objects
+    // See RequirementUpdate schema above
+  ],
+  "domain_knowledge_gained": [        // List of key insights (strings)
+    "Business rule: Orders over $1000 require manager approval",
+    "Edge case: Cancelled orders must retain audit trail for 7 years"
+  ],
+  "conversation_log": [               // List of ConversationEntry objects
+    // See ConversationEntry schema above
+  ],
+  "business_context": {               // Dict of business decisions
+    "key": "Business context that impacts technical approach"
+  },
+  "additional_constraints": [         // List of new constraints discovered
+    "Must integrate with legacy billing system",
+    "Response time must be under 200ms"
   ]
 }
 ```
-Problems: Wrong ID format, vague location, multiple operations, no precise contracts
+
+**Required Action:** Call `alfred.submit_work` with a `ClarificationArtifact`
+
+# EXAMPLES
+
+## Complete Example: Resolving Priority Implementation Ambiguity
+
+### Good ResolvedAmbiguity Example
+```json
+{
+  "original_question": "Should priority be a required field or optional with a default value?",
+  "human_response": "Make it optional with MEDIUM as default. We have hundreds of existing tasks.",
+  "clarification": "Priority will be an optional field defaulting to MEDIUM to maintain backward compatibility with existing tasks",
+  "follow_up_questions": [
+    "Should existing tasks display as MEDIUM priority or show 'No priority set'?",
+    "Do you want a migration script to set all existing tasks to MEDIUM explicitly?"
+  ],
+  "final_decision": "Priority field will be Optional[TaskPriority] with default=TaskPriority.MEDIUM. Existing tasks will transparently show as MEDIUM priority without migration."
+}
+```
+
+### Good ConversationEntry Example
+```json
+{
+  "speaker": "AI",
+  "message": "I found that the ranking algorithm currently considers: 1) in-progress status, 2) ready status, 3) task age. Where should priority fit in this hierarchy?",
+  "timestamp": "2024-01-15T10:30:00Z"
+}
+```
+
+### Good RequirementUpdate Example
+```json
+{
+  "original_requirement": "Have the system consider priority when recommending next tasks",
+  "updated_requirement": "Priority should be the second factor after in-progress status but before ready status in task recommendations",
+  "reason_for_change": "Human clarified that we shouldn't interrupt in-progress work but should respect priority for new task selection"
+}
+```
+
+### Example Conversation Flow
+1. AI: "I discovered two auth systems. Which one needs updating?"
+2. Human: "Focus on OAuth2Service, that's our main auth now."
+3. AI: "Got it. Should we deprecate LegacyAuthService as part of this?"
+4. Human: "No, keep it for now. Some internal tools still use it."
+5. AI: "Understood. I'll only modify OAuth2Service and ensure no breaking changes to legacy system."
 ``````
------- src/alfred/templates/prompts/plan_task/review_context.md ------
+------ src/alfred/templates/prompts/plan_task/contracts.md ------
 ``````
+<!--
+Template: plan_task.contracts
+Purpose: Design interfaces and contracts
+Variables:
+  - task_id: The task identifier
+  - tool_name: Current tool name
+  - current_state: Current workflow state
+  - task_title: Task title
+  - discovery_artifact: Results from discovery phase
+  - clarification_artifact: Results from clarification phase
+-->
+
 # CONTEXT
-Task: ${task_id}
-Tool: ${tool_name}
+Task: ${task_id} - ${task_title}
 State: ${current_state}
-Title: ${task_title}
 
 # OBJECTIVE
-Manage a clarification dialogue with the human developer to get answers to all questions identified during context analysis.
+Design the interfaces and contracts for this task.
 
 # BACKGROUND
-The initial context analysis has generated a list of questions that must be answered before planning can proceed. You need to:
-- Present these questions clearly to the human developer
-- Track which questions have been answered
-- Continue prompting for missing information until all questions are resolved
-
-**Questions to be answered:**
-${artifact_summary}
+We've discovered the codebase structure and clarified requirements. Now design the interfaces before implementation.
 
 # INSTRUCTIONS
-1. Maintain a checklist of the questions in your context
-2. Present the unanswered questions to the human developer in a clear, conversational manner
-3. Receive their response (they may not answer all questions at once)
-4. Check your list - if any questions remain unanswered, re-prompt the user for only the missing information
-5. Repeat until all questions are answered
-6. Once all questions are answered, compile a complete summary of questions and answers
-
-# CONSTRAINTS
-- Be patient and persistent in getting all questions answered
-- Keep track of which questions have been answered
-- Only ask for missing information, don't repeat answered questions
-- Be clear and conversational in your communication
+1. Define key interfaces/APIs in markdown
+2. List the main contracts being created
+3. Note any important design decisions
 
 # OUTPUT
-Once all questions have been answered, approve the context review with a complete summary.
+Submit a simple artifact with:
+- **interface_design**: Markdown describing interfaces
+- **contracts_defined**: List of main contracts
+- **design_notes**: Any important notes
 
-**Required Action:** When all questions are answered, call `alfred.provide_review` with:
-- `is_approved=true`
-- `feedback_notes` containing a complete summary of all questions and their final, confirmed answers
+## Example
+```json
+{
+  "interface_design": "## Interface Design\n\n### TaskPriority Enum\n- HIGH = 'high'\n- MEDIUM = 'medium'\n- LOW = 'low'\n\n### Task Model\n- priority: Optional[TaskPriority] = MEDIUM\n\n### Parser Updates\n- Parse '## Priority' section\n- Case-insensitive\n\n### Ranking Algorithm\n- New tuple: (in_progress, priority, ready, age)",
+  
+  "contracts_defined": [
+    "TaskPriority enum with 3 levels",
+    "Task.priority optional field",
+    "Parser handles Priority section",
+    "Ranking considers priority score"
+  ],
+  
+  "design_notes": [
+    "Backward compatible via default value",
+    "No migration needed"
+  ]
+}
+```
+
+**Action**: Call `alfred.submit_work` with interface design
 ``````
------- src/alfred/templates/prompts/plan_task/strategize.md ------
+------ src/alfred/templates/prompts/plan_task/contracts_complex.md ------
 ``````
+<!--
+Template: plan_task.contracts
+Purpose: Interface-first design of all APIs and contracts
+Variables:
+  - task_id: The task identifier
+  - tool_name: Current tool name
+  - current_state: Current workflow state
+  - task_title: Task title
+  - task_context: Task goal/context
+  - implementation_details: Implementation overview
+  - acceptance_criteria: Formatted AC list
+  - context_discovery_artifact: Results from discovery phase
+  - clarification_artifact: Results from clarification phase
+  - feedback_section: Review feedback (if any)
+-->
+
 # CONTEXT
 Task: ${task_id}
 Tool: ${tool_name}
@@ -6367,14 +8601,177 @@ State: ${current_state}
 Title: ${task_title}
 
 # OBJECTIVE
-Create a high-level technical strategy that will guide the detailed design and implementation of the task.
+Design all interfaces, method signatures, data models, and contracts before any implementation details. This is contract-first design.
 
 # BACKGROUND
-Context has been verified and any necessary clarifications have been provided. You must now develop a technical strategy that:
-- Defines the overall approach to solving the problem
-- Identifies key components that need to be created or modified
-- Considers dependencies and potential risks
-- Serves as the foundation for detailed design
+Context has been discovered and ambiguities resolved. Now you must design the complete interface layer:
+- Method signatures with exact parameters and return types
+- Data models with validation and relationships
+- API contracts for external interfaces
+- Integration contracts for component interactions
+- Error handling strategies and exception types
+
+This is ARCHITECTURAL design - focus on WHAT interfaces exist and HOW they interact, not implementation details.
+
+**Previous Phase Results:**
+- Discovery: ${context_discovery_artifact}
+- Clarifications: ${clarification_artifact}
+
+${feedback_section}
+
+# INSTRUCTIONS
+1. **Method Contract Design**: Define all new methods with exact signatures, parameters, return types, and error conditions
+2. **Data Model Specification**: Create or update data structures, validation rules, and relationships
+3. **API Contract Definition**: Specify external interfaces, request/response schemas, and error responses
+4. **Integration Contracts**: Define how components will interact, dependencies, and communication patterns
+5. **Error Handling Strategy**: Design exception types, error codes, and recovery patterns
+6. **Testing Interface Design**: Consider how each contract will be tested and validated
+
+# CONSTRAINTS
+- Focus on interfaces and contracts, not implementation
+- Follow existing patterns discovered in codebase exploration
+- Ensure all contracts are testable and verifiable
+- Consider error cases and edge conditions
+- Design for the requirements clarified in previous phase
+
+# OUTPUT
+Create a ContractDesignArtifact with:
+- `method_contracts`: All method signatures with specifications
+- `data_models`: Data structure definitions and validation rules
+- `api_contracts`: External interface specifications
+- `integration_contracts`: Component interaction specifications
+- `error_handling_strategy`: Exception types and error patterns
+
+**Required Action:** Call `alfred.submit_work` with a `ContractDesignArtifact`
+
+# EXAMPLES
+Good method contract:
+```
+class_name: "UserAuthService"
+method_name: "authenticate"
+signature: "authenticate(email: str, password: str) -> AuthResult"
+purpose: "Authenticate user credentials and return auth result"
+error_handling: ["ValidationError for invalid input", "AuthenticationError for failed auth"]
+test_approach: "Unit tests with mock credentials, integration tests with test users"
+```
+
+Good data model:
+```
+name: "AuthResult"
+fields: [{"name": "user", "type": "User", "required": true}, {"name": "token", "type": "str", "required": true}]
+validation_rules: [{"field": "token", "rule": "JWT format validation"}]
+relationships: [{"field": "user", "references": "User model"}]
+```
+``````
+------ src/alfred/templates/prompts/plan_task/discovery.md ------
+``````
+<!--
+Template: plan_task.discovery
+Purpose: Explore codebase and discover what needs to be done
+Variables:
+  - task_id: The task identifier
+  - tool_name: Current tool name
+  - current_state: Current workflow state
+  - task_title: Task title
+  - task_context: Task goal/context
+  - implementation_details: Implementation overview
+  - acceptance_criteria: Formatted AC list
+-->
+
+# CONTEXT
+Task: ${task_id} - ${task_title}
+State: ${current_state}
+
+# OBJECTIVE
+Explore the codebase to understand what needs to be done for this task.
+
+# TASK REQUIREMENTS
+**Goal**: ${task_context}
+
+**Implementation Notes**: ${implementation_details}
+
+**Success Criteria**:
+${acceptance_criteria}
+
+# INSTRUCTIONS
+1. Use Glob/Grep/Read tools to explore relevant code
+2. Document what you find in markdown
+3. Note any questions you need answered
+4. List files that need changes
+5. Assess complexity (LOW/MEDIUM/HIGH)
+
+# OUTPUT
+Submit a simple artifact with:
+- **findings**: Your discoveries in markdown format
+- **questions**: List of questions (must end with ?)
+- **files_to_modify**: List of file paths
+- **complexity**: LOW, MEDIUM, or HIGH
+- **implementation_context**: Any code/patterns for later use
+
+## Example
+```json
+{
+  "findings": "## Discovery Results\n\n### Current State\n- Task model is in `schemas.py` with Pydantic\n- Uses string-based enums for JSON compatibility\n- No priority field exists currently\n\n### Patterns Found\n- All enums inherit from (str, Enum)\n- Models use Field() for validation\n- Error handling returns ToolResponse",
+  
+  "questions": [
+    "Should priority be required or optional with default?",
+    "Where should priority rank in the recommendation algorithm?"
+  ],
+  
+  "files_to_modify": [
+    "src/alfred/models/schemas.py",
+    "src/alfred/lib/md_parser.py",
+    "src/alfred/task_providers/local_provider.py"
+  ],
+  
+  "complexity": "MEDIUM",
+  
+  "implementation_context": {
+    "enum_pattern": "class TaskStatus(str, Enum):\n    NEW = \"new\"",
+    "validation_example": "Field(default=TaskStatus.NEW)"
+  }
+}
+```
+
+**Action**: Call `alfred.submit_work` with your discovery results
+
+``````
+------ src/alfred/templates/prompts/plan_task/discovery_complex.md ------
+``````
+<!--
+Template: plan_task.discovery
+Purpose: Deep context discovery and codebase exploration
+Variables:
+  - task_id: The task identifier
+  - tool_name: Current tool name
+  - current_state: Current workflow state
+  - task_title: Task title
+  - task_context: Task goal/context
+  - implementation_details: Implementation overview
+  - acceptance_criteria: Formatted AC list
+  - restart_context: Re-planning context (if any)
+  - autonomous_mode: Whether running in autonomous mode
+  - autonomous_note: Note about autonomous mode behavior
+  - feedback_section: Review feedback (if any)
+-->
+
+# CONTEXT
+Task: ${task_id}
+Tool: ${tool_name}
+State: ${current_state}
+Title: ${task_title}
+
+# OBJECTIVE
+Perform comprehensive context discovery by exploring the codebase in parallel using all available tools to build deep understanding before planning begins.
+
+# BACKGROUND
+You are beginning the discovery phase of planning. This is the foundation phase where you must:
+- Use multiple tools simultaneously (Glob, Grep, Read, Task) for parallel exploration
+- Understand existing patterns, architectures, and conventions
+- Identify all files and components that will be affected
+- Discover integration points and dependencies
+- Collect ambiguities for later clarification (don't ask questions yet)
+- Extract code snippets and context that will be needed for self-contained subtasks
 
 **Task Requirements:**
 - Goal: ${task_context}
@@ -6384,28 +8781,290 @@ ${acceptance_criteria}
 
 ${feedback_section}
 
+${autonomous_note}
+
 # INSTRUCTIONS
-1. Review the verified context and requirements
-2. Define the overall technical approach (e.g., "Create a new microservice," "Refactor the existing UserService," "Add a new middleware layer")
-3. List the major components, classes, or modules that will be created or modified
-4. Identify any new third-party libraries or dependencies required
-5. Analyze potential risks or important architectural trade-offs
-6. Create a concise technical strategy document
+1. **Parallel Exploration**: Use Glob, Grep, Read, and Task tools simultaneously to explore the codebase
+   - **If tool unavailable/fails**: Use available alternatives or provide best-effort analysis based on context
+   - **Fallback strategy**: Document what exploration was attempted vs. what succeeded
+2. **Pattern Recognition**: Identify existing coding patterns, architectural decisions, and conventions to follow
+3. **Impact Analysis**: Map out all files, classes, and methods that will be affected by this task
+4. **Dependency Mapping**: Understand how the new functionality will integrate with existing code
+5. **Context Extraction**: Gather code snippets, method signatures, and examples that subtasks will need
+6. **Ambiguity Collection**: Note questions and unclear requirements (don't ask yet - just collect)
+7. **Complexity Assessment**: Determine if this is LOW/MEDIUM/HIGH complexity based on scope
+8. **Tool Error Handling**: If exploration tools fail, document limitations and proceed with available information
 
 # CONSTRAINTS
-- Focus on high-level approach, not implementation details
-- Ensure the strategy aligns with existing architecture patterns
-- Consider scalability, maintainability, and performance
-- Be realistic about risks and trade-offs
+- Use multiple tools in parallel for maximum efficiency
+- Focus on understanding, not designing solutions yet
+- Collect ambiguities for later clarification phase
+- Extract sufficient context for completely self-contained subtasks
+- Follow existing codebase patterns and conventions
 
 # OUTPUT
-Create a StrategyArtifact with:
-- `high_level_strategy`: Overall technical approach description
-- `key_components`: List of major new or modified components
-- `new_dependencies`: Optional list of new third-party libraries
-- `risk_analysis`: Optional analysis of potential risks or trade-offs
+Create a ContextDiscoveryArtifact with the following structure:
 
-**Required Action:** Call `alfred.submit_work` with a `StrategyArtifact`
+## Schema Documentation
+
+### CodePattern Object
+```json
+{
+  "pattern_type": "string",        // e.g., "error_handling", "validation", "service_pattern"
+  "example_code": "string",        // Actual code snippet showing the pattern
+  "usage_context": "string",       // When/how this pattern is used
+  "file_locations": ["string"]     // List of file paths where pattern is found
+}
+```
+
+### IntegrationPoint Object
+```json
+{
+  "component_name": "string",      // Name of component to integrate with
+  "integration_type": "enum",      // MUST be one of the following values:
+    // External integrations:
+    // - "API_ENDPOINT"           // For REST API endpoints
+    // - "DATABASE"               // For database operations
+    // - "SERVICE_CALL"           // For service-to-service calls
+    // - "FILE_SYSTEM"            // For file system operations
+    // - "EXTERNAL_API"           // For third-party API calls
+    
+    // Code structure integrations:
+    // - "DATA_MODEL_EXTENSION"   // Adding fields to existing models
+    // - "PARSER_EXTENSION"       // Extending parser functionality
+    // - "ALGORITHM_MODIFICATION" // Modifying existing algorithms
+    // - "TEMPLATE_ADDITION"      // Adding new templates
+    // - "CLASS_INHERITANCE"      // Inheriting from existing classes
+    // - "INTERFACE_IMPLEMENTATION" // Implementing interfaces
+    // - "METHOD_OVERRIDE"        // Overriding existing methods
+    // - "CONFIGURATION_UPDATE"   // Updating configuration
+    // - "WORKFLOW_EXTENSION"     // Extending workflow states
+    // - "STATE_MACHINE_UPDATE"   // Updating state machines
+    
+  "interface_signature": "string", // Method signature or API endpoint
+  "dependencies": ["string"],      // List of required dependencies
+  "examples": ["string"]          // List of usage examples (MUST be array!)
+}
+```
+
+### AmbiguityItem Object
+```json
+{
+  "question": "string",           // MUST end with "?" and be specific
+  "context": "string",            // Code/context related to ambiguity
+  "impact_if_wrong": "string",    // Consequences of wrong assumption
+  "discovery_source": "string"    // Where this was discovered
+}
+```
+
+### Complete ContextDiscoveryArtifact Structure
+```json
+{
+  "codebase_understanding": {     // Free-form dict with your findings
+    "any_key": "any_value"        // Document what you discovered
+  },
+  "code_patterns": [              // List of CodePattern objects
+    // See CodePattern schema above
+  ],
+  "integration_points": [         // List of IntegrationPoint objects
+    // See IntegrationPoint schema above - USE VALID ENUM VALUES!
+  ],
+  "relevant_files": [             // Simple list of file paths
+    "src/file1.py",
+    "src/file2.py"
+  ],
+  "existing_components": {        // Dict mapping names to purposes
+    "ComponentName": "What it does"
+  },
+  "ambiguities_discovered": [     // List of AmbiguityItem objects
+    // See AmbiguityItem schema above
+  ],
+  "extracted_context": {          // Free-form dict with code snippets
+    "any_key": "any_value"        // Include reusable code/patterns
+  },
+  "complexity_assessment": "enum", // MUST be: "LOW", "MEDIUM", or "HIGH"
+  "discovery_notes": [            // List of strings
+    "Note about what was discovered",
+    "Note about tool limitations"
+  ]
+}
+```
+
+**Required Action:** Call `alfred.submit_work` with a `ContextDiscoveryArtifact`
+
+# EXAMPLES
+
+## Complete Example: Adding Priority Field to Task Model
+
+### Good IntegrationPoint Example (CORRECT)
+```json
+{
+  "component_name": "Task Model",
+  "integration_type": "DATA_MODEL_EXTENSION",  // Valid enum value!
+  "interface_signature": "Task(**task_data)",
+  "dependencies": ["pydantic.BaseModel", "TaskPriority enum"],
+  "examples": [                                // Array format required!
+    "Add priority field with TaskPriority type",
+    "Set default value to TaskPriority.MEDIUM"
+  ]
+}
+```
+
+### Bad IntegrationPoint Example (WRONG)
+```json
+{
+  "component_name": "Task Model",
+  "integration_type": "data_model",            // WRONG: Not a valid enum
+  "interface_signature": "Task(**task_data)",
+  "dependencies": ["pydantic.BaseModel"],
+  "examples": "Add priority field"             // WRONG: Must be array!
+}
+```
+
+### Good CodePattern Example
+```json
+{
+  "pattern_type": "enum_definition",
+  "example_code": "class TaskStatus(str, Enum):\n    NEW = \"new\"\n    PLANNING = \"planning\"\n    DONE = \"done\"",
+  "usage_context": "String-based enums for JSON serialization compatibility",
+  "file_locations": ["src/alfred/models/schemas.py:20-39"]
+}
+```
+
+### Good AmbiguityItem Example
+```json
+{
+  "question": "Should priority be required or optional with a default value?",
+  "context": "Task model could enforce priority as required, but this breaks existing tasks. Optional with default=MEDIUM maintains compatibility.",
+  "impact_if_wrong": "If required: All existing tasks fail to load. If optional: Smooth migration.",
+  "discovery_source": "Analysis of Task model and existing task files"
+}
+```
+
+### Common Integration Types by Use Case
+- Extending a parser? Use `"PARSER_EXTENSION"`
+- Adding model fields? Use `"DATA_MODEL_EXTENSION"`
+- Modifying algorithms? Use `"ALGORITHM_MODIFICATION"`
+- Overriding methods? Use `"METHOD_OVERRIDE"`
+- Adding templates? Use `"TEMPLATE_ADDITION"`
+- Updating configs? Use `"CONFIGURATION_UPDATE"`
+``````
+------ src/alfred/templates/prompts/plan_task/implementation_plan.md ------
+``````
+<!--
+Template: plan_task.implementation_plan
+Purpose: Create implementation plan
+Variables:
+  - task_id: The task identifier
+  - tool_name: Current tool name
+  - current_state: Current workflow state
+  - task_title: Task title
+  - discovery_artifact: Results from discovery phase
+  - clarification_artifact: Results from clarification phase
+  - contracts_artifact: Results from contracts phase (if available)
+-->
+
+# CONTEXT
+Task: ${task_id} - ${task_title}
+State: ${current_state}
+
+# OBJECTIVE
+Create a detailed implementation plan with clear subtasks.
+
+# BACKGROUND
+We've explored the codebase, clarified requirements, and designed interfaces. Now create the implementation roadmap.
+
+# INSTRUCTIONS
+1. Break down the work into clear subtasks
+2. Write implementation steps in markdown
+3. Identify any risks or concerns
+
+# OUTPUT
+Submit a simple artifact with:
+- **implementation_plan**: Markdown with detailed steps
+- **subtasks**: List of subtask objects with `subtask_id` and `description` fields
+- **risks**: Potential risks or concerns
+
+## Example
+```json
+{
+  "implementation_plan": "## Implementation Plan\n\n### Phase 1: Add Priority Field\n1. Update Task model with priority field\n2. Add validation for priority values\n3. Set default to MEDIUM\n\n### Phase 2: Update Parser\n1. Add Priority section parsing\n2. Handle case-insensitive values\n3. Map to TaskPriority enum\n\n### Phase 3: Update Ranking\n1. Modify get_next_task algorithm\n2. Add priority to ranking tuple\n3. Test ranking order",
+  
+  "subtasks": [
+    {"subtask_id": "subtask-1", "description": "Add priority field to Task model"},
+    {"subtask_id": "subtask-2", "description": "Implement Priority section parser"},
+    {"subtask_id": "subtask-3", "description": "Update ranking algorithm in get_next_task"},
+    {"subtask_id": "subtask-4", "description": "Add unit tests for priority handling"},
+    {"subtask_id": "subtask-5", "description": "Update documentation"}
+  ],
+  
+  "risks": [
+    "Existing tasks need default priority value",
+    "Parser must handle missing Priority section gracefully"
+  ]
+}
+```
+
+**Action**: Call `alfred.submit_work` with implementation plan
+``````
+------ src/alfred/templates/prompts/plan_task/validation.md ------
+``````
+<!--
+Template: plan_task.validation
+Purpose: Final plan validation
+Variables:
+  - task_id: The task identifier
+  - tool_name: Current tool name
+  - current_state: Current workflow state
+  - task_title: Task title
+  - discovery_artifact: Results from discovery phase
+  - clarification_artifact: Results from clarification phase
+  - contracts_artifact: Results from contracts phase (if available)
+  - implementation_artifact: Results from implementation planning phase
+-->
+
+# CONTEXT
+Task: ${task_id} - ${task_title}
+State: ${current_state}
+
+# OBJECTIVE
+Validate the complete plan before implementation.
+
+# BACKGROUND
+All planning phases are complete. Review the plan end-to-end to ensure it's ready for implementation.
+
+# INSTRUCTIONS
+1. Summarize the complete plan
+2. Check what validations were performed
+3. Identify any remaining issues
+4. Confirm if ready for implementation
+
+# OUTPUT
+Submit a simple artifact with:
+- **validation_summary**: Markdown summary of validation results
+- **validations_performed**: List of checks performed
+- **issues_found**: Any issues or concerns found
+- **ready_for_implementation**: Boolean (true/false)
+
+## Example
+```json
+{
+  "validation_summary": "## Validation Complete\n\nThe plan for adding task priority is comprehensive and ready:\n- Task model changes are backward compatible\n- Parser handles missing Priority section gracefully\n- Ranking algorithm integration is well-designed\n- Test coverage is adequate",
+  
+  "validations_performed": [
+    "Verified all acceptance criteria are covered",
+    "Checked backward compatibility approach",
+    "Validated interface consistency",
+    "Reviewed risk mitigation strategies"
+  ],
+  
+  "issues_found": [],
+  
+  "ready_for_implementation": true
+}
+```
+
+**Action**: Call `alfred.submit_work` with validation results
 ``````
 ------ src/alfred/templates/prompts/review/ai_review.md ------
 ``````
@@ -6767,11 +9426,13 @@ This file serves as both documentation and a working example. When creating new 
 ``````
 ------ src/alfred/tools/approve_and_advance.py ------
 ``````
-from src.alfred.state.manager import state_manager
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.core.workflow_config import WorkflowConfiguration
-from src.alfred.lib.artifact_manager import artifact_manager
-from src.alfred.lib.logger import get_logger
+from alfred.state.manager import state_manager
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.core.workflow_config import WorkflowConfiguration
+from alfred.lib.artifact_manager import artifact_manager
+from alfred.lib.logger import get_logger
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.recovery import ToolRecovery
 
 logger = get_logger(__name__)
 
@@ -6780,6 +9441,62 @@ def approve_and_advance_impl(task_id: str) -> ToolResponse:
     """Approve current phase and advance to next using centralized workflow config."""
     task_state = state_manager.load_or_create(task_id)
     current_status = task_state.task_status
+
+    # Check if there's an active workflow tool with sub-states
+    active_tool = orchestrator.active_tools.get(task_id)
+    if not active_tool:
+        # Try to recover the tool
+        active_tool = ToolRecovery.recover_tool(task_id)
+    
+    if active_tool:
+        # Check if the tool has internal states that haven't completed
+        tool_state = getattr(active_tool, 'state', None)
+        if tool_state:
+            # Check if we're in a sub-state (not a main workflow phase)
+            if hasattr(tool_state, 'value'):
+                state_value = tool_state.value
+            else:
+                state_value = str(tool_state)
+            
+            # If the state contains underscores or special suffixes, it's likely a sub-state
+            if '_' in state_value or state_value.endswith('awaiting_ai_review') or state_value.endswith('awaiting_human_review'):
+                return ToolResponse(
+                    status="error", 
+                    message=f"Cannot use approve_and_advance while in sub-state '{state_value}'. "
+                           f"The workflow tool '{active_tool.tool_name}' has internal states that must be completed first. "
+                           f"Use 'approve_review' to advance through the current workflow's sub-states, "
+                           f"or complete the workflow before advancing to the next major phase."
+                )
+            
+            # Check if the tool has a method to determine if it's complete
+            if hasattr(active_tool, 'get_final_work_state'):
+                final_state = active_tool.get_final_work_state()
+                if state_value != final_state:
+                    return ToolResponse(
+                        status="error",
+                        message=f"The workflow tool '{active_tool.tool_name}' is not complete. "
+                               f"Current state: '{state_value}', but needs to reach '{final_state}' before advancing phases. "
+                               f"Use 'approve_review' or 'submit_work' to continue through the workflow."
+                    )
+            
+            # Additional check for specific workflow tools with known sub-states
+            if active_tool.tool_name == 'plan_task' and state_value not in ['verified', 'validation']:
+                states_remaining = []
+                if state_value == 'discovery':
+                    states_remaining = ['clarification', 'contracts', 'implementation_plan', 'validation']
+                elif state_value == 'clarification':
+                    states_remaining = ['contracts', 'implementation_plan', 'validation']
+                elif state_value == 'contracts':
+                    states_remaining = ['implementation_plan', 'validation']
+                elif state_value == 'implementation_plan':
+                    states_remaining = ['validation']
+                
+                if states_remaining:
+                    return ToolResponse(
+                        status="error",
+                        message=f"Cannot skip planning sub-states. Currently in '{state_value}' but still need to complete: {', '.join(states_remaining)}. "
+                               f"Use 'submit_work' to submit artifacts and 'approve_review' to advance through each planning phase."
+                    )
 
     # Get current phase from workflow config
     current_phase = WorkflowConfiguration.get_phase(current_status)
@@ -6829,8 +9546,8 @@ def approve_and_advance_impl(task_id: str) -> ToolResponse:
 ------ src/alfred/tools/approve_review.py ------
 ``````
 # src/alfred/tools/approve_review.py
-from src.alfred.tools.provide_review_logic import provide_review_logic
-from src.alfred.models.schemas import ToolResponse
+from alfred.tools.provide_review_logic import provide_review_logic
+from alfred.models.schemas import ToolResponse
 
 
 async def approve_review_impl(task_id: str) -> ToolResponse:
@@ -6844,15 +9561,15 @@ async def approve_review_impl(task_id: str) -> ToolResponse:
 from abc import ABC, abstractmethod
 from typing import Optional, Type, Any
 
-from src.alfred.core.prompter import generate_prompt
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.lib.logger import get_logger, setup_task_logging
-from src.alfred.lib.task_utils import load_task, load_task_with_error_details
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
-from src.alfred.tools.registry import tool_registry
+from alfred.core.prompter import generate_prompt
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.logger import get_logger, setup_task_logging
+from alfred.lib.task_utils import load_task, load_task_with_error_details
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.manager import state_manager
+from alfred.state.recovery import ToolRecovery
+from alfred.tools.registry import tool_registry
 
 logger = get_logger(__name__)
 
@@ -6955,12 +9672,12 @@ class BaseToolHandler(ABC):
 ------ src/alfred/tools/create_spec.py ------
 ``````
 # src/alfred/tools/create_spec.py
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.constants import ToolName
-from src.alfred.core.workflow import CreateSpecTool
-from src.alfred.models.planning_artifacts import PRDInputArtifact
-from src.alfred.models.engineering_spec import EngineeringSpec
-from src.alfred.state.manager import state_manager
+from alfred.models.schemas import ToolResponse
+from alfred.constants import ToolName
+from alfred.core.workflow import CreateSpecTool
+from alfred.models.planning_artifacts import PRDInputArtifact
+from alfred.models.engineering_spec import EngineeringSpec
+from alfred.state.manager import state_manager
 
 
 async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
@@ -6982,7 +9699,7 @@ async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
     task_state = state_manager.load_or_create_task_state(task_id)
 
     # Update status to creating_spec
-    from src.alfred.models.schemas import TaskStatus
+    from alfred.models.schemas import TaskStatus
 
     state_manager.update_task_status(task_id, TaskStatus.CREATING_SPEC)
 
@@ -7001,13 +9718,13 @@ async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
     state_manager.update_tool_state(task_id, tool)
 
     # Load the drafting prompt
-    from src.alfred.core.prompter import generate_prompt
-    from src.alfred.lib.task_utils import load_task
+    from alfred.core.prompter import generate_prompt
+    from alfred.lib.task_utils import load_task
 
     task = load_task(task_id)
     if not task:
         # Create a basic task object for the spec creation phase
-        from src.alfred.models.schemas import Task
+        from alfred.models.schemas import Task
 
         task = Task(
             task_id=task_id,
@@ -7039,10 +9756,10 @@ Create Task Tool - Standardized task creation within Alfred
 import os
 from pathlib import Path
 from typing import Dict, Any
-from src.alfred.lib.logger import get_logger
-from src.alfred.lib.md_parser import MarkdownTaskParser
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.config.settings import settings
+from alfred.lib.logger import get_logger
+from alfred.lib.md_parser import MarkdownTaskParser
+from alfred.models.schemas import ToolResponse
+from alfred.config.settings import settings
 
 logger = get_logger(__name__)
 
@@ -7153,12 +9870,12 @@ def create_task_impl(task_content: str) -> ToolResponse:
 ------ src/alfred/tools/create_tasks_from_spec.py ------
 ``````
 # src/alfred/tools/create_tasks_from_spec.py
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.constants import ToolName
-from src.alfred.core.workflow import CreateTasksTool
-from src.alfred.models.engineering_spec import EngineeringSpec
-from src.alfred.lib.logger import get_logger
-from src.alfred.state.manager import state_manager
+from alfred.models.schemas import ToolResponse
+from alfred.constants import ToolName
+from alfred.core.workflow import CreateTasksTool
+from alfred.models.engineering_spec import EngineeringSpec
+from alfred.lib.logger import get_logger
+from alfred.state.manager import state_manager
 
 logger = get_logger(__name__)
 
@@ -7190,7 +9907,7 @@ async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
     # Load the task state
     task_state = state_manager.load_or_create_task_state(task_id)
 
-    from src.alfred.models.schemas import TaskStatus
+    from alfred.models.schemas import TaskStatus
 
     # Check if we have a completed technical spec
     if task_state.task_status != TaskStatus.SPEC_COMPLETED:
@@ -7230,13 +9947,13 @@ async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
     state_manager.update_tool_state(task_id, tool)
 
     # Load the drafting prompt with the technical spec
-    from src.alfred.core.prompter import generate_prompt
-    from src.alfred.lib.task_utils import load_task
+    from alfred.core.prompter import generate_prompt
+    from alfred.lib.task_utils import load_task
 
     task = load_task(task_id)
     if not task:
         # Create a basic task object for the task creation phase
-        from src.alfred.models.schemas import Task
+        from alfred.models.schemas import Task
 
         task = Task(
             task_id=task_id,
@@ -7263,9 +9980,9 @@ async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
 ``````
 """Finalize task implementation."""
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.tools.tool_factory import get_tool_handler
-from src.alfred.constants import ToolName
+from alfred.models.schemas import ToolResponse
+from alfred.tools.tool_factory import get_tool_handler
+from alfred.constants import ToolName
 
 # Get the handler from factory
 finalize_task_handler = get_tool_handler(ToolName.FINALIZE_TASK)
@@ -7284,12 +10001,12 @@ Generic workflow handler that replaces all individual tool handlers.
 
 from typing import Optional, Any
 
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.tools.base_tool_handler import BaseToolHandler
-from src.alfred.tools.workflow_config import WorkflowToolConfig
-from src.alfred.state.manager import state_manager
-from src.alfred.lib.logger import get_logger
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.tools.base_tool_handler import BaseToolHandler
+from alfred.tools.workflow_config import WorkflowToolConfig
+from alfred.state.manager import state_manager
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -7333,23 +10050,25 @@ class GenericWorkflowHandler(BaseToolHandler):
                     message=f"Task '{task.task_id}' has status '{task.task_status.value}'. Planning can only start on a 'new' or resume a 'planning' task.",
                 )
 
-        # Check if we should dispatch on initialization
-        if self.config.dispatch_on_init and tool_instance.state == self.config.dispatch_state_attr:
+        # Load context if configured (for both dispatching and non-dispatching tools)
+        if self.config.context_loader:
             # Load task state for context
             task_state = state_manager.load_or_create(task.task_id)
+            
+            try:
+                context = self.config.context_loader(task, task_state)
+                # Update context_store with context loader values, allowing overrides for proper variable mapping
+                for key, value in context.items():
+                    tool_instance.context_store[key] = value
+            except ValueError as e:
+                # Context loader can raise ValueError for missing dependencies
+                return ToolResponse(status="error", message=str(e))
+            except Exception as e:
+                logger.error(f"Context loader failed for {self.config.tool_name}: {e}")
+                return ToolResponse(status="error", message=f"Failed to load required context for {self.config.tool_name}: {str(e)}")
 
-            # Load context using configured loader
-            if self.config.context_loader:
-                try:
-                    context = self.config.context_loader(task, task_state)
-                    tool_instance.context_store.update(context)
-                except ValueError as e:
-                    # Context loader can raise ValueError for missing dependencies
-                    return ToolResponse(status="error", message=str(e))
-                except Exception as e:
-                    logger.error(f"Context loader failed for {self.config.tool_name}: {e}")
-                    return ToolResponse(status="error", message=f"Failed to load required context for {self.config.tool_name}: {str(e)}")
-
+        # Check if we should dispatch on initialization
+        if self.config.dispatch_on_init and tool_instance.state == self.config.dispatch_state_attr:
             # Dispatch to next state
             dispatch_method = getattr(tool_instance, self.config.target_state_method)
             dispatch_method()
@@ -7366,9 +10085,9 @@ class GenericWorkflowHandler(BaseToolHandler):
 ``````
 """Get next task implementation using the task provider factory."""
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.task_providers.factory import get_provider
-from src.alfred.lib.logger import get_logger
+from alfred.models.schemas import ToolResponse
+from alfred.task_providers.factory import get_provider
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -7408,9 +10127,9 @@ async def get_next_task_impl() -> ToolResponse:
 ``````
 """Implement task implementation."""
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.tools.tool_factory import get_tool_handler
-from src.alfred.constants import ToolName
+from alfred.models.schemas import ToolResponse
+from alfred.tools.tool_factory import get_tool_handler
+from alfred.constants import ToolName
 
 # Get the handler from factory
 implement_task_handler = get_tool_handler(ToolName.IMPLEMENT_TASK)
@@ -7434,11 +10153,11 @@ import logging
 from pathlib import Path
 import shutil
 
-from src.alfred.config.manager import ConfigManager
-from src.alfred.config.settings import settings
-from src.alfred.constants import ResponseStatus
-from src.alfred.models.alfred_config import TaskProvider
-from src.alfred.models.schemas import ToolResponse
+from alfred.config.manager import ConfigManager
+from alfred.config.settings import settings
+from alfred.constants import ResponseStatus
+from alfred.models.alfred_config import TaskProvider
+from alfred.models.schemas import ToolResponse
 
 logger = logging.getLogger(__name__)
 
@@ -7479,7 +10198,7 @@ def initialize_project(provider: str | None = None, test_dir: Path | None = None
 
 def _is_already_initialized(alfred_dir: Path) -> bool:
     """Check if project is already initialized."""
-    return alfred_dir.exists() and (alfred_dir / "workflow.yml").exists()
+    return alfred_dir.exists() and (alfred_dir / "config.yml").exists()
 
 
 def _create_already_initialized_response(alfred_dir: Path) -> ToolResponse:
@@ -7533,11 +10252,8 @@ def _perform_initialization(provider_choice: str, alfred_dir: Path) -> ToolRespo
     # Create directories
     _create_project_directories(alfred_dir)
 
-    # Copy default workflow file
-    _copy_workflow_file(alfred_dir)
-
-    # Copy default templates to user workspace
-    _copy_default_templates(alfred_dir)
+    # Copy default config file
+    _copy_config_file(alfred_dir)
 
     # Setup provider-specific configuration
     result = _setup_provider_configuration(provider_choice, alfred_dir)
@@ -7559,21 +10275,11 @@ def _create_project_directories(alfred_dir: Path) -> None:
     logger.info(f"Created project directories at {alfred_dir}")
 
 
-def _copy_workflow_file(alfred_dir: Path) -> None:
-    """Copy the default workflow file."""
-    workflow_file = alfred_dir / settings.workflow_filename
-    shutil.copyfile(settings.packaged_workflow_file, workflow_file)
-    logger.info(f"Copied workflow file to {workflow_file}")
-
-
-def _copy_default_templates(alfred_dir: Path) -> None:
-    """Copy default templates to user workspace for customization."""
-    try:
-        shutil.copytree(settings.packaged_templates_dir, alfred_dir / "templates", dirs_exist_ok=True)
-        logger.info(f"Copied templates to {alfred_dir / 'templates'}")
-    except (OSError, shutil.Error) as e:
-        msg = f"Failed to copy templates: {e}"
-        raise OSError(msg) from e
+def _copy_config_file(alfred_dir: Path) -> None:
+    """Copy the default config file."""
+    config_file = alfred_dir / settings.config_filename
+    shutil.copyfile(settings.packaged_config_file, config_file)
+    logger.info(f"Copied config file to {config_file}")
 
 
 def _setup_provider_configuration(provider_choice: str, alfred_dir: Path) -> dict:
@@ -7594,7 +10300,7 @@ def _setup_jira_provider(config_manager: ConfigManager, alfred_dir: Path) -> dic
     """Setup Jira provider with MCP connectivity check."""
     if _validate_mcp_connectivity("jira"):
         config = config_manager.create_default()
-        config.providers.task_provider = TaskProvider.JIRA
+        config.provider.type = TaskProvider.JIRA
         config_manager.save(config)
         _setup_provider_resources("jira", alfred_dir)
         logger.info("Configured Jira provider")
@@ -7609,7 +10315,7 @@ def _setup_linear_provider(config_manager: ConfigManager, alfred_dir: Path) -> d
     """Setup Linear provider with MCP connectivity check."""
     if _validate_mcp_connectivity("linear"):
         config = config_manager.create_default()
-        config.providers.task_provider = TaskProvider.LINEAR
+        config.provider.type = TaskProvider.LINEAR
         config_manager.save(config)
         _setup_provider_resources("linear", alfred_dir)
         logger.info("Configured Linear provider")
@@ -7624,7 +10330,7 @@ def _setup_local_provider(config_manager: ConfigManager, alfred_dir: Path) -> di
     """Setup local provider with tasks inbox and README."""
     # Create configuration
     config = config_manager.create_default()
-    config.providers.task_provider = TaskProvider.LOCAL
+    config.provider.type = TaskProvider.LOCAL
     config_manager.save(config)
 
     # Setup provider resources
@@ -7718,19 +10424,32 @@ def _validate_mcp_connectivity(provider: str) -> bool:
 ``````
 ------ src/alfred/tools/plan_task.py ------
 ``````
-"""Plan task implementation."""
+"""Discovery planning tool implementation."""
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.tools.tool_factory import get_tool_handler
-from src.alfred.constants import ToolName
-
-# Get the handler from factory
-plan_task_handler = get_tool_handler(ToolName.PLAN_TASK)
+from typing import Optional, Dict, Any
+from alfred.models.schemas import ToolResponse
+from alfred.tools.tool_factory import get_tool_handler
+from alfred.constants import ToolName
 
 
-async def plan_task_impl(task_id: str) -> ToolResponse:
-    """Implementation logic for the plan_task tool."""
-    return await plan_task_handler.execute(task_id)
+async def plan_task_impl(task_id: str, restart_context: Optional[Dict[str, Any]] = None) -> ToolResponse:
+    """Implementation logic for the discovery planning tool.
+    
+    Args:
+        task_id: The unique identifier for the task to plan
+        restart_context: Optional context for re-planning scenarios
+        
+    Returns:
+        ToolResponse with next action guidance
+    """
+    # Get the handler from factory (uses GenericWorkflowHandler)
+    handler = get_tool_handler(ToolName.PLAN_TASK)
+    
+    # Execute with restart context if provided
+    if restart_context:
+        return await handler.execute(task_id=task_id, restart_context=restart_context)
+    else:
+        return await handler.execute(task_id=task_id)
 
 ``````
 ------ src/alfred/tools/progress.py ------
@@ -7738,14 +10457,14 @@ async def plan_task_impl(task_id: str) -> ToolResponse:
 # src/alfred/tools/progress.py
 from typing import Optional, Any
 
-from src.alfred.core.workflow import BaseWorkflowTool, ImplementTaskTool
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.tools.base_tool_handler import BaseToolHandler
-from src.alfred.constants import ToolName
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
-from src.alfred.lib.logger import get_logger
-from src.alfred.orchestration.orchestrator import orchestrator
+from alfred.core.workflow import BaseWorkflowTool, ImplementTaskTool
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.tools.base_tool_handler import BaseToolHandler
+from alfred.constants import ToolName
+from alfred.state.manager import state_manager
+from alfred.state.recovery import ToolRecovery
+from alfred.lib.logger import get_logger
+from alfred.orchestration.orchestrator import orchestrator
 
 logger = get_logger(__name__)
 
@@ -7837,23 +10556,24 @@ def mark_subtask_complete_impl(task_id: str, subtask_id: str) -> ToolResponse:
 ------ src/alfred/tools/provide_review_logic.py ------
 ``````
 # src/alfred/tools/provide_review_logic.py
-from src.alfred.core.prompter import generate_prompt
-from src.alfred.lib.logger import get_logger, cleanup_task_logging
-from src.alfred.lib.task_utils import load_task
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.constants import Triggers
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.state.manager import state_manager
-from src.alfred.constants import ArtifactKeys
-from src.alfred.config.manager import ConfigManager
-from src.alfred.config.settings import settings
+from alfred.core.prompter import generate_prompt
+from alfred.lib.logger import get_logger, cleanup_task_logging
+from alfred.lib.task_utils import load_task
+from alfred.lib.turn_manager import turn_manager
+from alfred.models.schemas import ToolResponse
+from alfred.constants import Triggers
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.manager import state_manager
+from alfred.constants import ArtifactKeys
+from alfred.config.manager import ConfigManager
+from alfred.config.settings import settings
 
 logger = get_logger(__name__)
 
 
 async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
     if task_id not in orchestrator.active_tools:
-        from src.alfred.state.recovery import ToolRecovery
+        from alfred.state.recovery import ToolRecovery
 
         recovered_tool = ToolRecovery.recover_tool(task_id)
         if not recovered_tool:
@@ -7869,6 +10589,18 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
     logger.info(f"Processing review for task {task_id} in state '{current_state}', approved={is_approved}")
 
     if not is_approved:
+        # Record revision request as a turn
+        if feedback_notes:
+            state_to_revise = current_state.replace('_awaiting_ai_review', '').replace('_awaiting_human_review', '')
+            revision_turn = turn_manager.request_revision(
+                task_id=task_id,
+                state_to_revise=state_to_revise,
+                feedback=feedback_notes,
+                requested_by="human"
+            )
+            # Store the revision turn number in context for next submission
+            active_tool.context_store["revision_turn_number"] = revision_turn.turn_number
+        
         active_tool.trigger(Triggers.REQUEST_REVISION)
         message = "Revision requested. Returning to previous step."
     else:
@@ -7944,13 +10676,13 @@ from typing import Dict, Optional, Type, Callable, Coroutine, Any, List, TYPE_CH
 from dataclasses import dataclass
 import inspect
 
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.lib.logger import get_logger
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.lib.logger import get_logger
 
 # THIS IS THE FIX for Blocker #3
 if TYPE_CHECKING:
-    from src.alfred.tools.base_tool_handler import BaseToolHandler
+    from alfred.tools.base_tool_handler import BaseToolHandler
 
 logger = get_logger(__name__)
 
@@ -8018,8 +10750,8 @@ tool_registry = ToolRegistry()
 ------ src/alfred/tools/request_revision.py ------
 ``````
 # src/alfred/tools/request_revision.py
-from src.alfred.tools.provide_review_logic import provide_review_logic
-from src.alfred.models.schemas import ToolResponse
+from alfred.tools.provide_review_logic import provide_review_logic
+from alfred.models.schemas import ToolResponse
 
 
 async def request_revision_impl(task_id: str, feedback_notes: str) -> ToolResponse:
@@ -8031,9 +10763,9 @@ async def request_revision_impl(task_id: str, feedback_notes: str) -> ToolRespon
 ``````
 """Review task implementation."""
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.tools.tool_factory import get_tool_handler
-from src.alfred.constants import ToolName
+from alfred.models.schemas import ToolResponse
+from alfred.tools.tool_factory import get_tool_handler
+from alfred.constants import ToolName
 
 # Get the handler from factory
 review_task_handler = get_tool_handler(ToolName.REVIEW_TASK)
@@ -8051,14 +10783,14 @@ async def review_task_impl(task_id: str) -> ToolResponse:
 The start_task tool, re-architected as a stateful workflow tool.
 """
 
-from src.alfred.core.prompter import generate_prompt
-from src.alfred.core.workflow import StartTaskTool
-from src.alfred.lib.logger import get_logger, setup_task_logging
-from src.alfred.lib.task_utils import load_task
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
+from alfred.core.prompter import generate_prompt
+from alfred.core.workflow import StartTaskTool
+from alfred.lib.logger import get_logger, setup_task_logging
+from alfred.lib.task_utils import load_task
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.manager import state_manager
+from alfred.state.recovery import ToolRecovery
 
 logger = get_logger(__name__)
 
@@ -8108,17 +10840,17 @@ def start_task_impl(task_id: str) -> ToolResponse:
 from typing import Optional, Any
 from pydantic import ValidationError
 
-from src.alfred.core.prompter import generate_prompt
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.lib.artifact_manager import artifact_manager
-from src.alfred.lib.logger import get_logger
-from src.alfred.lib.task_utils import load_task
-from src.alfred.models.schemas import Task, ToolResponse
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
-from src.alfred.tools.base_tool_handler import BaseToolHandler
-from src.alfred.constants import ArtifactKeys, Triggers, ResponseStatus, LogMessages, ErrorMessages
+from alfred.core.prompter import generate_prompt
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.artifact_manager import artifact_manager
+from alfred.lib.logger import get_logger
+from alfred.lib.task_utils import load_task
+from alfred.models.schemas import Task, ToolResponse
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.manager import state_manager
+from alfred.state.recovery import ToolRecovery
+from alfred.tools.base_tool_handler import BaseToolHandler
+from alfred.constants import ArtifactKeys, Triggers, ResponseStatus, LogMessages, ErrorMessages
 
 logger = get_logger(__name__)
 
@@ -8170,14 +10902,30 @@ class SubmitWorkHandler(BaseToolHandler):
         else:
             validated_artifact = normalized_artifact  # No model to validate against
 
-        # 2. Store artifact and update scratchpad
+        # 2. Store artifact and update turn-based storage
         artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
         tool_instance.context_store[artifact_key] = validated_artifact
         # For review states, we need the artifact as an object, not a string
         tool_instance.context_store[ArtifactKeys.ARTIFACT_CONTENT_KEY] = validated_artifact
         # Store the last state for generic templates
         tool_instance.context_store["last_state"] = current_state_val
-        artifact_manager.append_to_scratchpad(task.task_id, current_state_val, validated_artifact)
+        
+        # Use the new turn-based storage instead of scratchpad
+        tool_name = tool_instance.__class__.__name__
+        
+        # Check if this is a revision (has revision_turn_number in context)
+        revision_of = tool_instance.context_store.get("revision_turn_number")
+        if revision_of:
+            # Clear it after use so it doesn't persist to next submissions
+            del tool_instance.context_store["revision_turn_number"]
+            
+        artifact_manager.record_artifact(
+            task_id=task.task_id,
+            state_name=current_state_val,
+            tool_name=tool_name,
+            artifact_data=validated_artifact,
+            revision_of=revision_of
+        )
 
         # 3. Determine the correct trigger and fire it
         trigger_name = Triggers.submit_trigger(current_state_val)
@@ -8205,14 +10953,14 @@ class SubmitWorkHandler(BaseToolHandler):
 
         normalized = artifact.copy()
 
-        # Normalize file_breakdown operations (for DesignArtifact)
+        # Normalize file_breakdown operations (for ContractDesignArtifact and ImplementationPlanArtifact from discovery planning)
         if "file_breakdown" in normalized and isinstance(normalized["file_breakdown"], list):
             for file_change in normalized["file_breakdown"]:
                 if isinstance(file_change, dict) and "operation" in file_change:
                     # Normalize operation to uppercase
                     file_change["operation"] = file_change["operation"].upper()
 
-        # Normalize subtasks operations (for ExecutionPlanArtifact)
+        # Normalize subtasks operations (for ImplementationPlanArtifact)
         if "subtasks" in normalized and isinstance(normalized["subtasks"], list):
             for subtask in normalized["subtasks"]:
                 if isinstance(subtask, dict) and "operation" in subtask:
@@ -8237,9 +10985,9 @@ def submit_work_impl(task_id: str, artifact: dict) -> ToolResponse:
 ``````
 """Test task implementation."""
 
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.tools.tool_factory import get_tool_handler
-from src.alfred.constants import ToolName
+from alfred.models.schemas import ToolResponse
+from alfred.tools.tool_factory import get_tool_handler
+from alfred.constants import ToolName
 
 # Get the handler from factory
 test_task_handler = get_tool_handler(ToolName.TEST_TASK)
@@ -8258,8 +11006,8 @@ Utility commands for tool management.
 
 from typing import List, Dict, Any
 
-from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS
-from src.alfred.tools.tool_factory import ToolFactory
+from alfred.tools.tool_definitions import TOOL_DEFINITIONS
+from alfred.tools.tool_factory import ToolFactory
 
 
 def list_tools() -> List[Dict[str, Any]]:
@@ -8328,10 +11076,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Type, Optional, Callable, Any
 from enum import Enum
 
-from src.alfred.core.workflow import (
+from alfred.core.workflow import (
     BaseWorkflowTool,
-    PlanTaskTool,
-    PlanTaskState,
     StartTaskTool,
     StartTaskState,
     ImplementTaskTool,
@@ -8347,8 +11093,10 @@ from src.alfred.core.workflow import (
     CreateTasksTool,
     CreateTasksState,
 )
-from src.alfred.models.schemas import TaskStatus
-from src.alfred.constants import ToolName
+from alfred.core.discovery_workflow import PlanTaskTool, PlanTaskState
+from alfred.core.discovery_context import load_plan_task_context
+from alfred.models.schemas import TaskStatus
+from alfred.constants import ToolName
 
 
 @dataclass
@@ -8467,18 +11215,39 @@ TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
     ToolName.PLAN_TASK: ToolDefinition(
         name=ToolName.PLAN_TASK,
         tool_class=PlanTaskTool,
-        description="Create detailed execution plan for a task",
+        description="""
+        Interactive planning with deep context discovery and conversational clarification.
+        
+        This tool implements a comprehensive planning workflow that mirrors how expert developers 
+        actually approach complex tasks:
+        
+        1. DISCOVERY: Deep context gathering using all available tools in parallel
+        2. CLARIFICATION: Conversational Q&A to resolve ambiguities  
+        3. CONTRACTS: Interface-first design of all APIs and data models
+        4. IMPLEMENTATION_PLAN: Self-contained subtask creation with full context
+        5. VALIDATION: Final coherence check and human approval
+        
+        Features:
+        - Context saturation before planning begins
+        - Real human-AI conversation for ambiguity resolution
+        - Contract-first design approach
+        - Self-contained subtasks with no rediscovery needed
+        - Re-planning support for changing requirements
+        - Complexity adaptation (can skip contracts for simple tasks)
+        """,
         work_states=[
-            PlanTaskState.CONTEXTUALIZE,
-            PlanTaskState.STRATEGIZE,
-            PlanTaskState.DESIGN,
-            PlanTaskState.GENERATE_SUBTASKS,
+            PlanTaskState.DISCOVERY,
+            PlanTaskState.CLARIFICATION,
+            PlanTaskState.CONTRACTS,
+            PlanTaskState.IMPLEMENTATION_PLAN,
+            PlanTaskState.VALIDATION,
         ],
         terminal_state=PlanTaskState.VERIFIED,
-        initial_state=PlanTaskState.CONTEXTUALIZE,
+        initial_state=PlanTaskState.DISCOVERY,
         entry_statuses=[TaskStatus.NEW, TaskStatus.PLANNING, TaskStatus.TASKS_CREATED],
         exit_status=TaskStatus.PLANNING,
         dispatch_on_init=False,
+        context_loader=load_plan_task_context,
         custom_validator=validate_plan_task_status,
     ),
     ToolName.START_TASK: ToolDefinition(
@@ -8606,11 +11375,11 @@ Factory for creating tools from definitions.
 
 from typing import Dict, Any, Optional
 
-from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS, ToolDefinition
-from src.alfred.tools.generic_handler import GenericWorkflowHandler
-from src.alfred.tools.workflow_config import WorkflowToolConfig
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.lib.logger import get_logger
+from alfred.tools.tool_definitions import TOOL_DEFINITIONS, ToolDefinition
+from alfred.tools.generic_handler import GenericWorkflowHandler
+from alfred.tools.workflow_config import WorkflowToolConfig
+from alfred.models.schemas import ToolResponse
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -8680,12 +11449,12 @@ def get_tool_handler(tool_name: str) -> GenericWorkflowHandler:
 ``````
 ------ src/alfred/tools/work_on.py ------
 ``````
-from src.alfred.state.manager import state_manager
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.core.workflow_config import WorkflowConfiguration
-from src.alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
-from src.alfred.task_providers.factory import get_provider
-from src.alfred.lib.logger import get_logger
+from alfred.state.manager import state_manager
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.core.workflow_config import WorkflowConfiguration
+from alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
+from alfred.task_providers.factory import get_provider
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -8758,8 +11527,8 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Type, Callable, Any
 from enum import Enum
 
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.models.schemas import TaskStatus
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.models.schemas import TaskStatus
 
 
 @dataclass
@@ -8796,180 +11565,5 @@ class WorkflowToolConfig:
 
 # NOTE: Individual tool configurations have been moved to tool_definitions.py
 # This file now only contains the WorkflowToolConfig class for backward compatibility.
-
-``````
------- src/alfred/workflow.yml ------
-``````
-# Default Alfred Workflow Configuration
-# This file can be customized per project by editing .alfred/workflow.yml
-
-# Tool enable/disable settings
-tools:
-  # Core workflow tools
-  create_spec:
-    enabled: true
-    description: "Create technical specification from PRD"
-  
-  create_tasks_from_spec:
-    enabled: true
-    description: "Break down engineering spec into actionable tasks"
-  
-  plan_task:
-    enabled: true
-    description: "Create detailed execution plan for a task"
-    
-  implement_task:
-    enabled: true
-    description: "Execute the planned implementation"
-    
-  review_task:
-    enabled: true
-    description: "Perform code review"
-    
-  test_task:
-    enabled: true
-    description: "Run and validate tests"
-    
-  finalize_task:
-    enabled: true
-    description: "Create commit and pull request"
-
-# Workflow configuration
-workflow:
-  # Whether to require human approval at review gates
-  require_human_approval: true
-  
-  # Whether to enable AI self-review steps
-  enable_ai_review: true
-  
-  # Maximum thinking time for AI in seconds
-  max_thinking_time: 300
-  
-  # Whether to create branches automatically
-  auto_create_branches: true
-
-# Provider-specific settings (overridden by .alfred/config.json)
-providers:
-  jira:
-    # Jira-specific workflow settings
-    transition_on_start: true
-    transition_on_complete: true
-    
-  linear:
-    # Linear-specific workflow settings
-    update_status: true
-    
-  local:
-    # Local provider settings
-    task_file_pattern: "*.md"
-
-# Debug settings
-debug:
-  # Whether to save detailed debug logs
-  save_debug_logs: true
-  
-  # Whether to save state snapshots
-  save_state_snapshots: true
-  
-  # Log level (DEBUG, INFO, WARNING, ERROR)
-  log_level: INFO
-``````
------- src/alfred_task_manager.egg-info/SOURCES.txt ------
-``````
-README.md
-pyproject.toml
-src/alfred/__init__.py
-src/alfred/constants.py
-src/alfred/server.py
-src/alfred/config/__init__.py
-src/alfred/config/manager.py
-src/alfred/config/settings.py
-src/alfred/core/__init__.py
-src/alfred/core/prompter.py
-src/alfred/core/state_machine_builder.py
-src/alfred/core/workflow.py
-src/alfred/lib/artifact_manager.py
-src/alfred/lib/fs_utils.py
-src/alfred/lib/logger.py
-src/alfred/lib/md_parser.py
-src/alfred/lib/structured_logger.py
-src/alfred/lib/task_utils.py
-src/alfred/lib/transaction_logger.py
-src/alfred/models/__init__.py
-src/alfred/models/alfred_config.py
-src/alfred/models/config.py
-src/alfred/models/engineering_spec.py
-src/alfred/models/planning_artifacts.py
-src/alfred/models/schemas.py
-src/alfred/models/state.py
-src/alfred/orchestration/__init__.py
-src/alfred/orchestration/orchestrator.py
-src/alfred/state/__init__.py
-src/alfred/state/manager.py
-src/alfred/state/recovery.py
-src/alfred/task_providers/__init__.py
-src/alfred/task_providers/base.py
-src/alfred/task_providers/factory.py
-src/alfred/task_providers/jira_provider.py
-src/alfred/task_providers/local_provider.py
-src/alfred/templates/__init__.py
-src/alfred/templates/prompts/__init__.py
-src/alfred/tools/__init__.py
-src/alfred/tools/approve_and_advance.py
-src/alfred/tools/approve_review.py
-src/alfred/tools/base_tool_handler.py
-src/alfred/tools/create_spec.py
-src/alfred/tools/create_tasks.py
-src/alfred/tools/finalize_task.py
-src/alfred/tools/generic_handler.py
-src/alfred/tools/get_next_task.py
-src/alfred/tools/implement_task.py
-src/alfred/tools/initialize.py
-src/alfred/tools/plan_task.py
-src/alfred/tools/progress.py
-src/alfred/tools/provide_review_logic.py
-src/alfred/tools/registry.py
-src/alfred/tools/request_revision.py
-src/alfred/tools/review_task.py
-src/alfred/tools/start_task.py
-src/alfred/tools/submit_work.py
-src/alfred/tools/test_task.py
-src/alfred/tools/work_on.py
-src/alfred/tools/workflow_config.py
-src/alfred_task_manager.egg-info/PKG-INFO
-src/alfred_task_manager.egg-info/SOURCES.txt
-src/alfred_task_manager.egg-info/dependency_links.txt
-src/alfred_task_manager.egg-info/requires.txt
-src/alfred_task_manager.egg-info/top_level.txt
-``````
------- src/alfred_task_manager.egg-info/dependency_links.txt ------
-``````
-
-
-``````
------- src/alfred_task_manager.egg-info/requires.txt ------
-``````
-fastmcp>=2.0.0
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-transitions>=0.9.0
-python-dateutil>=2.8.0
-aiofiles>=23.0.0
-jira>=3.5.0
-python-dotenv>=1.1.0
-PyYAML>=6.0.0
-Jinja2>=3.0.0
-tabulate>=0.9.0
-
-[dev]
-pytest>=7.0.0
-pytest-asyncio>=0.21.0
-ruff>=0.1.0
-pre-commit>=3.0.0
-
-``````
------- src/alfred_task_manager.egg-info/top_level.txt ------
-``````
-alfred
 
 ``````

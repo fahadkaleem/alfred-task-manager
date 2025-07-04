@@ -22,11 +22,11 @@ The system implements a sophisticated state machine that tracks each development
 
 At the heart of the system lies a robust state management architecture built on DuckDB for persistence. The state tracking maintains two parallel status systems - the internal MCP workflow phases and the external Jira ticket statuses. This dual-tracking ensures that the development workflow aligns with project management requirements while maintaining the flexibility needed for effective development.
 
-The persistence layer stores all tasks in a single `.epictaskmanager/state.json` file, enabling quick retrieval of the current active task based on the most recent timestamp. This approach supports natural task switching while maintaining a clear audit trail of all phase transitions and review cycles. Context for each task is preserved in dedicated markdown files that serve as living documentation of the development journey, including all review feedback and iteration cycles.
+The persistence layer stores all tasks in a single `.alfred/state.json` file, enabling quick retrieval of the current active task based on the most recent timestamp. This approach supports natural task switching while maintaining a clear audit trail of all phase transitions and review cycles. Context for each task is preserved in dedicated markdown files that serve as living documentation of the development journey, including all review feedback and iteration cycles.
 
 ### Workflow Orchestration Tools
 
-The system exposes eleven comprehensive MCP tools that orchestrate the development workflow. The initialize_epic_task_manager tool creates the necessary directory structure and prepares the system for use. The start_new_task tool begins work on a new task, creating the initial context file and setting up the workflow state. The continue_current_task tool enables developers to resume work after interruptions by automatically identifying the most recent active task.
+The system exposes eleven comprehensive MCP tools that orchestrate the development workflow. The initialize_alfred tool creates the necessary directory structure and prepares the system for use. The start_new_task tool begins work on a new task, creating the initial context file and setting up the workflow state. The continue_current_task tool enables developers to resume work after interruptions by automatically identifying the most recent active task.
 
 Phase progression is managed through specialized tools including approve_and_advance for standard transitions and mark_task_ready_for_pr for final preparation. The system includes a comprehensive review-feedback system with four dedicated tools: request_phase_review for requesting developer verification, provide_feedback for submitting review feedback, address_feedback for resolving review concerns, and get_review_status for tracking review cycles.
 
@@ -87,7 +87,7 @@ Epic Task Manager represents a significant advancement in AI-assisted software d
 - Maintains synchronization points between MCP and Jira workflows
 
 #### 1.2 Persistence Layer
-- **State File**: `.epictaskmanager/state.json` - Single file tracking all tasks and review cycles
+- **State File**: `.alfred/state.json` - Single file tracking all tasks and review cycles
 - **Storage Format**: JSON with task IDs as keys, includes review state and feedback history
 - **Current Task Detection**: Automatically determined by most recent `last_updated` timestamp
 - **Database**: JSON-based persistence (DuckDB planned for future analytics)
@@ -113,7 +113,7 @@ ReviewCycleData:
 
 ### 2. MCP Tools (API Endpoints)
 
-#### 2.1 initialize_epic_task_manager()
+#### 2.1 initialize_alfred()
 - **Purpose**: Set up directory structure
 - **Creates**:
   - `.epic/` directory
@@ -202,7 +202,7 @@ ReviewCycleData:
 ### 3. Context Management
 
 #### 3.1 Context Files
-- **Location**: `.epictaskmanager/contexts/[TASK-ID].md`
+- **Location**: `.alfred/contexts/[TASK-ID].md`
 - **Format**: Markdown with timestamp sections
 - **Contents**:
   - Jira ticket details
@@ -336,7 +336,7 @@ project_root/
 │   └── contexts/               # Task documentation with review history
 │       ├── TASK-123.md
 │       └── TASK-456.md
-├── src/epic_task_manager/
+├── src/alfred/
 │   ├── config/
 │   │   └── settings.py         # Configuration with EPIC_ env vars
 │   ├── models/
@@ -373,7 +373,7 @@ project_root/
 
 ### Environment Variables
 - `EPIC_PROJECT_ROOT`: Override project directory (default: current working directory)
-- `EPIC_TASK_MANAGER_DIR_NAME`: Change .epictaskmanager directory name (default: ".epictaskmanager")
+- `EPIC_TASK_MANAGER_DIR_NAME`: Change .alfred directory name (default: ".alfred")
 - `LOG_LEVEL`: Set logging level (default: "INFO")
 
 ### Workflow Phases (settings.py)
@@ -399,11 +399,11 @@ workflow_phases = [
 ```json
 {
   "mcpServers": {
-    "epic-task-manager": {
+    "alfred": {
       "command": "uv",
       "args": [
         "--directory",
-        "/Users/mohammedfahadkaleem/Documents/Workspace/epic-task-manager",
+        "/Users/mohammedfahadkaleem/Documents/Workspace/alfred",
         "run",
         "python",
         "main.py"

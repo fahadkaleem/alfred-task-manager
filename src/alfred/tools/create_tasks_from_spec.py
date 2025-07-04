@@ -1,10 +1,10 @@
 # src/alfred/tools/create_tasks_from_spec.py
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.constants import ToolName
-from src.alfred.core.workflow import CreateTasksTool
-from src.alfred.models.engineering_spec import EngineeringSpec
-from src.alfred.lib.logger import get_logger
-from src.alfred.state.manager import state_manager
+from alfred.models.schemas import ToolResponse
+from alfred.constants import ToolName
+from alfred.core.workflow import CreateTasksTool
+from alfred.models.engineering_spec import EngineeringSpec
+from alfred.lib.logger import get_logger
+from alfred.state.manager import state_manager
 
 logger = get_logger(__name__)
 
@@ -36,7 +36,7 @@ async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
     # Load the task state
     task_state = state_manager.load_or_create_task_state(task_id)
 
-    from src.alfred.models.schemas import TaskStatus
+    from alfred.models.schemas import TaskStatus
 
     # Check if we have a completed technical spec
     if task_state.task_status != TaskStatus.SPEC_COMPLETED:
@@ -76,13 +76,13 @@ async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
     state_manager.update_tool_state(task_id, tool)
 
     # Load the drafting prompt with the technical spec
-    from src.alfred.core.prompter import generate_prompt
-    from src.alfred.lib.task_utils import load_task
+    from alfred.core.prompter import generate_prompt
+    from alfred.lib.task_utils import load_task
 
     task = load_task(task_id)
     if not task:
         # Create a basic task object for the task creation phase
-        from src.alfred.models.schemas import Task
+        from alfred.models.schemas import Task
 
         task = Task(
             task_id=task_id,

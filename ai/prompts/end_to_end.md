@@ -45,8 +45,7 @@ Await further instructions after reporting the failure.
     - The directory must contain `config.json` and `tasks/`.
 
 ### **Phase 2: Task Creation**
-1.  **Action:** Create a new task file at `.alfred/tasks/AL-DRY-RUN-01.md`.
-2.  **Content:**
+1.  **Action:** Call `alfred.create_task(task_content="...")` with proper task template format:
     ```markdown
     # TASK: AL-DRY-RUN-01
     
@@ -60,86 +59,263 @@ Await further instructions after reporting the failure.
     The AI agent executing this task must simulate all actions without performing any actual file I/O or git operations.
     
     ## Acceptance Criteria
-    - The task successfully transitions through all workflow states from NEW to READY_FOR_FINALIZATION.
-    - All tools (`start_task`, `plan_task`, `implement_task`, `review_task`, `test_task`) execute without error.
-    - All required artifacts are generated and archived correctly.
+    - The task successfully transitions through all workflow states from NEW to COMPLETED
+    - All tools (plan_task, implement_task, review_task, test_task, finalize_task) execute without error
+    - All required artifacts are generated and archived correctly
+    - Scratchpad formatting is clean and professional
     
     ## AC Verification
-    - Inspect the `task_state.json` file after each `approve_and_advance` call to confirm the `task_status` has advanced correctly.
-    - Inspect the `archive` directory to confirm artifacts are being saved.
+    - Inspect the `scratchpad.md` file after each phase to confirm proper formatting
+    - Verify all subtasks are properly displayed with clean section headers
+    - Confirm validation logic prevents incomplete implementations
     ```
-3.  **Verification:** Confirm the file exists with the correct content.
+2.  **Verification:** 
+    - Tool must succeed and return task_id (e.g., "TS-01")
+    - File `.alfred/tasks/{task_id}.md` must exist with correct content
 
 ### **Phase 3: The Workflow Loop**
 
-#### **Step 3.1: Start Task**
-1.  **Action:** Call `alfred.work_on_task(task_id="AL-DRY-RUN-01")`.
-2.  **Verify:** The `next_prompt` must instruct you to call `start_task`.
-3.  **Action:** Call `alfred.start_task(task_id="AL-DRY-RUN-01")`.
-4.  **Verify:** The `next_prompt` should be for the `awaiting_acquisition` state. A new directory `.alfred/workspace/AL-DRY-RUN-01/` should exist.
-5.  **Action:** `submit_work` with the `TaskAcquisitionArtifact`.
-6.  **Action:** `approve_review` (AI) -> `approve_review` (Human).
-7.  **Verify:** `scratchpad.md` should contain a formatted "Task Acquisition" artifact. The tool's state should be `awaiting_git_setup`.
-8.  **Action:** `submit_work` with the `GitStatusArtifact`.
-9.  **Action:** `approve_review` (AI) -> `approve_review` (Human).
-10. **Verify:** `scratchpad.md` should now also contain a formatted "Git Status" artifact. The tool is now `verified`. The `next_prompt` must instruct you to call `approve_and_advance`.
-11. **Action:** Call `alfred.approve_and_advance(task_id="AL-DRY-RUN-01")`.
-12. **Verify Final State:**
-    - `task_state.json` -> `task_status` must be `"planning"`. `active_tool_state` must be `null`.
-    - `.alfred/workspace/AL-DRY-RUN-01/archive/` must contain `01-start-task.md`.
-    - `scratchpad.md` must be empty.
+#### **Step 3.1: Task Routing**
+1.  **Action:** Call `alfred.work_on_task(task_id="{task_id}")`.
+2.  **Verify:** The response should indicate the task is NEW and route to planning.
+3.  **Expected:** Next action should be to call `plan_task`.
 
-#### **Step 3.2: Plan Task**
-1.  **Action:** Call `work_on_task` -> `plan_task`.
-2.  **Action (Loop):** For each planning state (`contextualize`, `strategize`, `design`, `generate_subtasks`):
-    - `submit_work` with a simple, valid artifact. Use the `ExecutionPlan` from our `TEST-006` example for the final step.
-    - `approve_review` (AI) -> `approve_review` (Human).
-3.  **Verify (Intermediate):** After each step, check that `scratchpad.md` has the new section appended.
-4.  **Verify (Final):** The final `next_prompt` must instruct you to call `approve_and_advance`.
-5.  **Action:** Call `alfred.approve_and_advance(task_id="AL-DRY-RUN-01")`.
-6.  **Verify Final State:**
-    - `task_state.json` -> `task_status` must be `"ready_for_development"`.
-    - `archive/` must now contain `02-plan-task.md` and `planning_execution_plan.json`.
-    - `scratchpad.md` must be empty.
+#### **Step 3.2: Plan Task (5-Phase Discovery Planning)**
+1.  **Action:** Call `alfred.plan_task(task_id="{task_id}")`.
+2.  **Verify:** Tool creates planning workflow and enters "discovery" state.
+
+##### **Discovery Phase**
+3.  **Action:** `submit_work` with discovery artifact:
+    ```json
+    {
+      "findings": "## Discovery Results\n\n### Current State\n- Test task for validation\n- Simple implementation needed\n\n### Patterns Found\n- Standard validation patterns available",
+      "questions": ["Should we create 2 or 3 subtasks?", "What validation scenarios to test?"],
+      "files_to_modify": ["src/alfred/validation_utils.py", "tests/test_validation.py"],
+      "complexity": "LOW",
+      "implementation_context": {"pattern": "Simple utility validation"}
+    }
+    ```
+4.  **Action:** `approve_review` (AI self-review) → `approve_review` (Human review).
+5.  **Verify:** Scratchpad shows formatted discovery section.
+
+##### **Clarification Phase**
+6.  **Action:** `submit_work` with clarification artifact:
+    ```json
+    {
+      "clarification_dialogue": "## Clarification Discussion\n\n**AI**: Need clarification on validation requirements:\n1. Should we create 2 or 3 subtasks?\n2. What validation scenarios to test?\n\n**Human**: Create 3 subtasks for thorough testing. Focus on edge case validation.\n\n**AI**: Perfect! Clear requirements established.",
+      "decisions": ["Create 3 subtasks for testing", "Focus on edge case validation", "Keep implementation simple"],
+      "additional_constraints": ["Maintain backward compatibility", "Follow existing patterns"]
+    }
+    ```
+7.  **Action:** `approve_review` (AI) → `approve_review` (Human).
+8.  **Verify:** Scratchpad shows clarification section.
+
+##### **Contracts Phase**
+9.  **Action:** `submit_work` with contracts artifact:
+    ```json
+    {
+      "interface_design": "## Interface Design\n\n### ValidationUtils Class\n```python\nclass ValidationUtils:\n    def validate_input(data: Dict) -> bool\n    def check_constraints(item: Any) -> ValidationResult\n```",
+      "contracts_defined": ["ValidationUtils class interface", "ValidationResult data model", "Input validation methods"],
+      "design_notes": ["Keep interfaces simple", "Return clear validation results"]
+    }
+    ```
+10. **Action:** `approve_review` (AI) → `approve_review` (Human).
+11. **Verify:** Scratchpad shows contracts section.
+
+##### **Implementation Plan Phase**  
+12. **Action:** `submit_work` with implementation plan artifact containing **properly formatted subtasks**:
+    ```json
+    {
+      "implementation_plan": "## Implementation Plan\n\n### Overview\nCreate validation utilities in three phases:\n1. Core validation class\n2. Input validation methods\n3. Constraint checking logic",
+      "subtasks": [
+        {
+          "subtask_id": "ST-001",
+          "description": "**Goal**: Create ValidationUtils core class\n\n**Location**: `src/alfred/validation_utils.py` → `ValidationUtils` class\n\n**Approach**:\n- Create class with validation methods\n- Follow existing utility patterns\n- Per decision: \"Keep implementation simple\" [CLARIFICATION]\n\n**Verify**: Class loads and methods are callable"
+        },
+        {
+          "subtask_id": "ST-002", 
+          "description": "**Goal**: Implement input validation methods\n\n**Location**: `src/alfred/validation_utils.py` → validation methods\n\n**Approach**:\n- Add validate_input method\n- Handle edge cases properly\n- Return clear validation results\n\n**Verify**: Input validation works with valid/invalid data"
+        },
+        {
+          "subtask_id": "ST-003",
+          "description": "**Goal**: Add constraint checking logic\n\n**Location**: `src/alfred/validation_utils.py` → constraint methods\n\n**Approach**:\n- Implement check_constraints method\n- Support multiple constraint types\n- Per decision: \"Focus on edge case validation\" [CLARIFICATION]\n\n**Verify**: Constraint checking handles all edge cases"
+        }
+      ],
+      "risks": ["Edge case handling complexity", "Backward compatibility requirements"]
+    }
+    ```
+13. **Action:** `approve_review` (AI) → `approve_review` (Human).
+14. **Verify:** **CRITICAL FORMATTING CHECK** - Scratchpad must show:
+    ```markdown
+    ## Subtasks
+    
+    ### ST-001 - Create ValidationUtils core class
+    
+    **Goal**: Create ValidationUtils core class
+    
+    **Location**: `src/alfred/validation_utils.py` → `ValidationUtils` class
+    ```
+    - **NO** messy `- [ST-001] ## ST-001` format
+    - **YES** clean `### ST-001 - Title` section headers
+
+##### **Validation Phase**
+15. **Action:** `submit_work` with validation artifact:
+    ```json
+    {
+      "validation_summary": "## Validation Complete\n\nThe plan is comprehensive and ready:\n- All 3 subtasks are well-defined\n- Interfaces are consistent\n- Edge case handling addressed\n- Implementation follows project patterns",
+      "validations_performed": ["Checked all subtasks cover requirements", "Verified interface consistency", "Validated edge case coverage"],
+      "issues_found": [],
+      "ready_for_implementation": true
+    }
+    ```
+16. **Action:** `approve_review` (AI) → `approve_review` (Human).
+17. **Action:** `approve_and_advance`.
+18. **Verify Final State:**
+    - Task status must be `"ready_for_development"`
+    - Scratchpad should be cleared
+    - Archive should contain planning artifacts
 
 #### **Step 3.3: Implement Task**
-1.  **Action:** Call `work_on_task` -> `implement_task`.
-2.  **Action:** For each `Subtask` in the `ExecutionPlan`, call `mark_subtask_complete`.
-3.  **Verify (Intermediate):** After each call, the `ToolResponse` should show incrementing progress. `task_state.json`'s `context_store.completed_subtasks` should update.
-4.  **Action:** After all subtasks are marked, `submit_work` with the `ImplementationManifestArtifact`.
-5.  **Action:** `approve_review` (AI) -> `approve_review` (Human).
-6.  **Action:** `approve_and_advance`.
-7.  **Verify Final State:**
-    - `task_state.json` -> `task_status` must be `"ready_for_review"`.
-    - `archive/` must now contain `03-implement-task.md` and `implement_task_final_artifact.json`.
-    - `scratchpad.md` must be empty.
+1.  **Action:** Call `alfred.work_on_task(task_id="{task_id}")` → routes to `implement_task`.
+2.  **Action:** Call `alfred.implement_task(task_id="{task_id}")`.
+3.  **Verify:** Implementation workflow starts, shows subtasks and progress.
+
+##### **Mark Subtasks Complete**
+4.  **Action:** For each subtask: `alfred.mark_subtask_complete(task_id="{task_id}", subtask_id="ST-001")`.
+5.  **Verify:** Progress updates correctly (e.g., "1/3 subtasks complete (33%)").
+6.  **Action:** Mark remaining subtasks complete: "ST-002", "ST-003".
+
+##### **Submit Implementation**
+7.  **Action:** Try submitting **incomplete** implementation to test validation:
+    ```json
+    {
+      "summary": "Partial implementation completed",
+      "completed_subtasks": ["ST-001", "ST-002"],
+      "testing_notes": "Only completed first two subtasks"
+    }
+    ```
+8.  **Verify:** **VALIDATION SHOULD FAIL** with clear error:
+    ```
+    "Implementation validation failed: Implementation incomplete. 
+    Missing subtasks: ['ST-003']. Expected all subtasks to be completed."
+    ```
+
+9.  **Action:** Submit **complete** implementation:
+    ```json
+    {
+      "summary": "All validation utilities implemented successfully",
+      "completed_subtasks": ["ST-001", "ST-002", "ST-003"],
+      "testing_notes": "All subtasks completed. Validation logic working correctly.",
+      "implementation_details": "Created ValidationUtils class with all required methods"
+    }
+    ```
+10. **Action:** `approve_review` (AI) → `approve_review` (Human).
+11. **Action:** `approve_and_advance`.
+12. **Verify Final State:**
+    - Task status must be `"ready_for_review"`
+    - Scratchpad cleared
+    - Archive contains implementation artifacts
 
 #### **Step 3.4: Review Task**
-1.  **Action:** Call `work_on_task` -> `review_task`.
-2.  **Action:** `submit_work` with the `ReviewArtifact` (`"approved": true`).
-3.  **Action:** `approve_review` (AI) -> `approve_review` (Human).
-4.  **Action:** `approve_and_advance`.
-5.  **Verify Final State:**
-    - `task_state.json` -> `task_status` must be `"ready_for_testing"`.
-    - `archive/` must now contain `04-review-task.md`.
+1.  **Action:** Call `alfred.work_on_task(task_id="{task_id}")` → routes to `review_task`.
+2.  **Action:** Call `alfred.review_task(task_id="{task_id}")`.
+3.  **Action:** Submit review findings:
+    ```json
+    {
+      "review_summary": "Code review completed successfully",
+      "functionality_review": {"complete": true, "meets_requirements": true},
+      "code_quality_review": {"follows_patterns": true, "proper_error_handling": true},
+      "test_coverage_review": {"adequate_coverage": true, "edge_cases_tested": true},
+      "security_review": {"no_vulnerabilities": true},
+      "issues_found": [],
+      "approval_status": "approved"
+    }
+    ```
+4.  **Action:** `approve_review` (AI) → `approve_review` (Human).
+5.  **Action:** `approve_and_advance`.
+6.  **Verify Final State:**
+    - Task status must be `"ready_for_testing"`
 
 #### **Step 3.5: Test Task**
-1.  **Action:** Call `work_on_task` -> `test_task`.
-2.  **Action:** `submit_work` with the `TestResultArtifact` (`"exit_code": 0`).
-3.  **Action:** `approve_review` (AI) -> `approve_review` (Human).
-4.  **Action:** `approve_and_advance`.
-5.  **Verify Final State:**
-    - `task_state.json` -> `task_status` must be `"ready_for_finalization"`.
-    - `archive/` must now contain `05-test-task.md`.
+1.  **Action:** Call `alfred.work_on_task(task_id="{task_id}")` → routes to `test_task`.
+2.  **Action:** Call `alfred.test_task(task_id="{task_id}")`.
+3.  **Action:** Submit test results:
+    ```json
+    {
+      "test_summary": "All tests passing successfully",
+      "unit_tests": {"passed": 15, "failed": 0, "coverage": "95%"},
+      "integration_tests": {"passed": 8, "failed": 0},
+      "manual_tests": ["Validation logic works correctly", "Edge cases handled properly"],
+      "issues_found": [],
+      "overall_status": "passed"
+    }
+    ```
+4.  **Action:** `approve_review` (AI) → `approve_review` (Human).
+5.  **Action:** `approve_and_advance`.
+6.  **Verify Final State:**
+    - Task status must be `"ready_for_finalization"`
 
-### **Phase 4: Final Validation**
-- At this point, the task `AL-DRY-RUN-01` has successfully traversed the entire workflow.
-- Report success and the final state of the `task_state.json`.
+#### **Step 3.6: Finalize Task**
+1.  **Action:** Call `alfred.work_on_task(task_id="{task_id}")` → routes to `finalize_task`.
+2.  **Action:** Call `alfred.finalize_task(task_id="{task_id}")`.
+3.  **Verify:** Task creates commit and pull request (simulated).
+4.  **Verify Final State:**
+    - Task status must be `"completed"`
+    - All artifacts archived properly
+
+### **Phase 4: Error Message Testing**
+Test improved error messages by trying to mark subtasks complete after workflow completion:
+
+1.  **Action:** Try `alfred.mark_subtask_complete(task_id="{task_id}", subtask_id="ST-001")`.
+2.  **Verify:** Should receive **helpful error message**:
+    ```
+    No active implementation workflow found for task '{task_id}'. 
+
+    **Current Status**: completed
+
+    **Possible Reasons**:
+    - Implementation phase has already completed
+    - Task is in a different phase (planning, review, testing, etc.)
+
+    **What to do**:
+    - Task is already complete - no further action needed
+    - To see current status: Use `alfred.work_on_task('{task_id}')`
+    ```
+
+### **Phase 5: Final Validation**
+- **Scratchpad Formatting:** Verify clean formatting throughout:
+  - ✅ Section headers use `### ST-001 - Title` format
+  - ✅ No messy `- [ST-001] ## ST-001` mixing
+  - ✅ Professional, readable layout
+- **Validation Logic:** Confirmed prevents incomplete implementations
+- **Error Messages:** Clear, actionable feedback provided
+- **Workflow Integrity:** All phases transition correctly
+- **Artifact Archival:** All artifacts properly saved
+
+### **Phase 6: Success Criteria**
+✅ **Task Creation:** Template validation working  
+✅ **Planning Phases:** All 5 discovery phases complete correctly  
+✅ **Subtask Formatting:** Clean section headers, no redundant prefixes  
+✅ **Implementation Validation:** Blocks incomplete submissions  
+✅ **Error Messages:** Helpful, actionable feedback  
+✅ **Workflow Transitions:** All phases advance correctly  
+✅ **Final Completion:** Task reaches completed status  
+
+Report success with final task state and any observations about system behavior.
 ```
 
 ## Acceptance Criteria
 - A new file `TESTING_PROTOCOL.md` exists in the project root.
 - The file contains the complete, detailed, step-by-step instructions as specified above.
+- The protocol reflects the current Alfred workflow structure including:
+  - 5-phase discovery planning (discovery, clarification, contracts, implementation_plan, validation)
+  - Proper artifact types for each phase  
+  - AI and human review processes
+  - Clean subtask formatting verification
+  - Implementation validation logic testing
+  - Improved error message verification
 
 ## AC Verification
 1.  **Code Review:** Manually review the generated `TESTING_PROTOCOL.md` file against this task's specification to ensure all details, verification steps, and failure handling instructions are present.
+2.  **Workflow Accuracy:** Verify the protocol matches the actual Alfred workflow behavior as demonstrated in recent testing.
+3.  **Formatting Validation:** Confirm the protocol includes specific checks for the improved subtask formatting.

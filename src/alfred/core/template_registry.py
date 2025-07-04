@@ -6,8 +6,8 @@ This maintains the explicit path principle - each state maps to one template.
 
 from typing import Dict, Type, Optional
 
-from src.alfred.core.template_base import BasePromptTemplate
-from src.alfred.core.prompt_templates import PlanTaskContextualizeTemplate, PlanTaskStrategizeTemplate, AIReviewTemplate, HumanReviewTemplate, SimpleDispatchingTemplate
+from alfred.core.template_base import BasePromptTemplate
+from alfred.core.prompt_templates import PlanTaskContextualizeTemplate, PlanTaskStrategizeTemplate, AIReviewTemplate, HumanReviewTemplate, SimpleDispatchingTemplate
 
 
 class TemplateRegistry:

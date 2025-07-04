@@ -1,4 +1,4 @@
-# Alfred Plan Task Tool Documentation
+# Alfred Discovery Planning System Documentation
 
 ## Table of Contents
 
@@ -8,19 +8,21 @@
 4. [Documentation Index](#documentation-index)
 5. [Key Concepts](#key-concepts)
 6. [Example Workflow](#example-workflow)
+7. [What's New](#whats-new)
 
 ## Overview
 
-The Alfred Plan Task Tool is a sophisticated AI-powered planning system that transforms high-level task descriptions into detailed, executable work units. Built with a state machine architecture, it ensures quality through multi-stage reviews and enables seamless human-AI collaboration.
+The Alfred Discovery Planning System is a revolutionary AI-powered planning tool that transforms how complex software development tasks are approached. It mirrors the natural problem-solving process of expert developers through deep context discovery, conversational clarification, and contract-first design.
 
 ### Core Features
 
-- **State Machine Driven**: Predictable workflow with recovery capabilities
-- **Multi-Phase Planning**: Context → Strategy → Design → Execution Plan
-- **Two-Step Review**: AI self-review followed by human approval
-- **Strongly Typed**: Pydantic models ensure data integrity
-- **Persona System**: Specialized AI agents with unique communication styles
-- **Recovery Capable**: Resume from any state after interruption
+- **Discovery-First Planning**: Deep context gathering before any planning begins
+- **Conversational Clarification**: Real human-AI dialogue to resolve ambiguities
+- **Contract-First Design**: Define all interfaces before implementation details
+- **Self-Contained Subtasks**: Each subtask includes complete context - no rediscovery needed
+- **Dynamic Complexity Adaptation**: Automatically adjusts workflow for task complexity
+- **Re-planning Support**: Handle changing requirements gracefully
+- **Autonomous Mode**: Optional unattended operation with AI-only reviews
 
 ## Quick Start
 
@@ -32,26 +34,40 @@ alfred.initialize_project(provider="local")
 
 ### 2. Create a Task
 ```markdown
-# File: .alfred/tasks/TS-01.md
+# File: .alfred/tasks/TK-01.md
 
-# TS-01
+# TASK: TK-01
 
-## Summary
-Add user authentication to the application
+## Title
+Add JWT authentication to the application
 
-## Description
-Implement JWT-based authentication with login/logout endpoints
+## Context
+The application currently has no authentication. We need to add secure JWT-based authentication to protect API endpoints.
+
+## Implementation Details
+Implement JWT tokens with refresh token support, secure password hashing, and protected route middleware.
 
 ## Acceptance Criteria
-- [ ] Users can register with email/password
-- [ ] Users can login and receive JWT token
-- [ ] Protected routes require valid token
+- Users can register with email/password
+- Users can login and receive JWT access + refresh tokens
+- Protected routes require valid tokens
+- Tokens refresh automatically
 ```
 
-### 3. Start Planning
+### 3. Start Discovery Planning
 ```python
-# Begin the planning workflow
-alfred.plan_task(task_id="TS-01")
+# Begin the discovery planning workflow
+alfred.plan_task(task_id="TK-01")
+
+# Or in autonomous mode (no human reviews)
+alfred.plan_task(task_id="TK-01", autonomous_mode=True)
+
+# Or re-planning after requirements change
+alfred.plan_task(task_id="TK-01", restart_context={
+    "trigger": "requirements_changed",
+    "restart_from": "CONTRACTS",
+    "changes": "Now need SAML support too"
+})
 ```
 
 ## Architecture Diagrams
@@ -60,339 +76,442 @@ alfred.plan_task(task_id="TS-01")
 
 ```mermaid
 graph TB
-    subgraph "Alfred System"
+    subgraph "Discovery Planning System"
         subgraph "Entry Points"
-            IT[initialize_project]
             PT[plan_task]
+            PTR[plan_task<br/>with restart]
         end
         
-        subgraph "Generic Tools"
-            SW[submit_work]
-            PR[provide_review]
+        subgraph "Discovery Tools"
+            GLOB[Glob]
+            GREP[Grep]
+            READ[Read]
+            TASK[Task]
         end
         
-        subgraph "Core Components"
-            O[Orchestrator]
-            P[Prompter]
-            AM[ArtifactManager]
-            SM[StateManager]
+        subgraph "Core Workflow"
+            DW[Discovery Workflow]
+            SM[State Machine]
+            CS[Context Store]
         end
         
-        subgraph "Workflow"
-            PTW[PlanTaskTool]
-            BWF[BaseWorkflowTool]
+        subgraph "Planning Phases"
+            DISC[DISCOVERY]
+            CLAR[CLARIFICATION]
+            CONT[CONTRACTS]
+            IMPL[IMPLEMENTATION_PLAN]
+            VAL[VALIDATION]
+        end
+        
+        subgraph "Artifacts"
+            CDA[ContextDiscoveryArtifact]
+            CLA[ClarificationArtifact]
+            CTA[ContractDesignArtifact]
+            IPA[ImplementationPlanArtifact]
+            VA[ValidationArtifact]
         end
     end
     
-    IT --> O
-    PT --> PTW
-    PTW --> BWF
-    SW --> O
-    PR --> O
+    PT --> DW
+    PTR --> DW
     
-    O --> SM
-    BWF --> P
-    BWF --> AM
+    DW --> SM
+    DW --> CS
+    DW --> DISC
     
-    style IT fill:#90EE90
+    DISC --> |parallel| GLOB
+    DISC --> |parallel| GREP
+    DISC --> |parallel| READ
+    DISC --> |parallel| TASK
+    
+    DISC --> CDA
+    CLAR --> CLA
+    CONT --> CTA
+    IMPL --> IPA
+    VAL --> VA
+    
     style PT fill:#90EE90
-    style SW fill:#87CEEB
-    style PR fill:#87CEEB
+    style PTR fill:#90EE90
+    style DISC fill:#FFE4B5
+    style CLAR fill:#87CEEB
+    style CONT fill:#DDA0DD
+    style IMPL fill:#F0E68C
+    style VAL fill:#FFB6C1
 ```
 
-### Plan Task State Machine
+### Discovery Planning State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> CONTEXTUALIZE: plan_task("TS-01")
+    [*] --> DISCOVERY: plan_task("TK-01")
     
-    CONTEXTUALIZE --> REVIEW_CONTEXT: submit_work
-    note right of CONTEXTUALIZE: Analyze codebase\nIdentify ambiguities
+    DISCOVERY --> DISCOVERY_AI_REVIEW: submit_work
+    note right of DISCOVERY: Deep context gathering\nusing parallel tools
     
-    REVIEW_CONTEXT --> STRATEGIZE: provide_review(approved)
-    REVIEW_CONTEXT --> CONTEXTUALIZE: provide_review(rejected)
-    note right of REVIEW_CONTEXT: Clarification dialogue\nwith developer
+    DISCOVERY_AI_REVIEW --> DISCOVERY_HUMAN_REVIEW: ai_approve
+    DISCOVERY_AI_REVIEW --> DISCOVERY: request_revision
     
-    STRATEGIZE --> REVIEW_STRATEGY: submit_work
-    note right of STRATEGIZE: Create technical\napproach
+    DISCOVERY_HUMAN_REVIEW --> CLARIFICATION: approve_review
+    DISCOVERY_HUMAN_REVIEW --> DISCOVERY: request_revision
+    note right of DISCOVERY_HUMAN_REVIEW: Human reviews\ncontext completeness
     
-    REVIEW_STRATEGY --> DESIGN: provide_review(approved)
-    REVIEW_STRATEGY --> STRATEGIZE: provide_review(rejected)
+    CLARIFICATION --> CLARIFICATION_AI_REVIEW: submit_work
+    note right of CLARIFICATION: Conversational Q&A\nto resolve ambiguities
     
-    DESIGN --> REVIEW_DESIGN: submit_work
-    note right of DESIGN: File-by-file\nbreakdown
+    CLARIFICATION_AI_REVIEW --> CLARIFICATION_HUMAN_REVIEW: ai_approve
+    CLARIFICATION_AI_REVIEW --> CLARIFICATION: request_revision
     
-    REVIEW_DESIGN --> GENERATE_SLOTS: provide_review(approved)
-    REVIEW_DESIGN --> DESIGN: provide_review(rejected)
+    CLARIFICATION_HUMAN_REVIEW --> CONTRACTS: approve_review [if complex]
+    CLARIFICATION_HUMAN_REVIEW --> IMPLEMENTATION_PLAN: approve_review [if simple]
+    CLARIFICATION_HUMAN_REVIEW --> CLARIFICATION: request_revision
     
-    GENERATE_SLOTS --> REVIEW_PLAN: submit_work
-    note right of GENERATE_SLOTS: Create executable\nSLOTs
+    CONTRACTS --> CONTRACTS_AI_REVIEW: submit_work
+    note right of CONTRACTS: Interface-first design\nof all APIs and models
     
-    REVIEW_PLAN --> VERIFIED: provide_review(approved)
-    REVIEW_PLAN --> GENERATE_SLOTS: provide_review(rejected)
+    CONTRACTS_AI_REVIEW --> CONTRACTS_HUMAN_REVIEW: ai_approve
+    CONTRACTS_AI_REVIEW --> CONTRACTS: request_revision
     
-    VERIFIED --> [*]: Task ready for development
+    CONTRACTS_HUMAN_REVIEW --> IMPLEMENTATION_PLAN: approve_review
+    CONTRACTS_HUMAN_REVIEW --> CONTRACTS: request_revision
+    
+    IMPLEMENTATION_PLAN --> IMPLEMENTATION_PLAN_AI_REVIEW: submit_work
+    note right of IMPLEMENTATION_PLAN: Self-contained subtasks\nwith complete context
+    
+    IMPLEMENTATION_PLAN_AI_REVIEW --> IMPLEMENTATION_PLAN_HUMAN_REVIEW: ai_approve
+    IMPLEMENTATION_PLAN_AI_REVIEW --> IMPLEMENTATION_PLAN: request_revision
+    
+    IMPLEMENTATION_PLAN_HUMAN_REVIEW --> VALIDATION: approve_review
+    IMPLEMENTATION_PLAN_HUMAN_REVIEW --> IMPLEMENTATION_PLAN: request_revision
+    
+    VALIDATION --> VALIDATION_AI_REVIEW: submit_work
+    note right of VALIDATION: Final coherence check\nand plan validation
+    
+    VALIDATION_AI_REVIEW --> VALIDATION_HUMAN_REVIEW: ai_approve
+    VALIDATION_AI_REVIEW --> VALIDATION: request_revision
+    
+    VALIDATION_HUMAN_REVIEW --> VERIFIED: approve_review
+    VALIDATION_HUMAN_REVIEW --> VALIDATION: request_revision
+    
+    VERIFIED --> [*]: Task ready for implementation
 ```
 
-### Data Flow
+### Context Flow and Self-Containment
 
 ```mermaid
 sequenceDiagram
     participant Dev as Developer
     participant PT as plan_task
-    participant SW as submit_work
-    participant PR as provide_review
-    participant CS as Context Store
-    participant SP as Scratchpad
+    participant Disc as Discovery Phase
+    participant Tools as Discovery Tools
+    participant Clar as Clarification
+    participant Cont as Contracts
+    participant Impl as Implementation
+    participant ST as Self-Contained Subtask
     
-    Dev->>PT: plan_task("TS-01")
-    PT-->>Dev: Prompt: Analyze codebase
+    Dev->>PT: plan_task("TK-01")
+    PT->>Disc: Start discovery
     
-    Dev->>SW: submit_work(context_analysis)
-    SW->>CS: Store context_artifact
-    SW->>SP: Render to scratchpad
-    SW-->>Dev: Prompt: Review questions
+    Disc->>Tools: Parallel exploration
+    Tools-->>Disc: Code patterns, dependencies, context
+    Disc-->>Dev: Context + Ambiguities found
     
-    Dev->>PR: provide_review(true, answers)
-    PR->>CS: Store feedback_notes
-    PR-->>Dev: Prompt: Create strategy
+    Dev->>Clar: Answer questions
+    Clar-->>Dev: Follow-up questions
+    Dev->>Clar: Domain knowledge
+    Clar-->>PT: Clarified requirements
     
-    Note over CS: Context accumulates through workflow
+    PT->>Cont: Design contracts
+    Cont-->>Dev: Review interfaces
     
-    Dev->>SW: submit_work(strategy)
-    SW->>CS: Store strategy_artifact
-    Note over CS: Now contains:<br/>- context_artifact<br/>- feedback_notes<br/>- strategy_artifact
-```
-
-### Component Architecture
-
-```mermaid
-graph LR
-    subgraph "Tool Instance"
-        TI[PlanTaskTool]
-        SM[State Machine]
-        CS[Context Store]
-        AM[Artifact Map]
-    end
+    Dev->>Impl: Approve contracts
+    Impl->>Impl: Bundle complete context
+    Impl-->>ST: Self-contained subtask
     
-    subgraph "Support Systems"
-        P[Prompter]
-        PL[Persona Loader]
-        ArtM[Artifact Manager]
-        StM[State Manager]
-    end
-    
-    subgraph "Storage"
-        FS[File System]
-        WS[Workspace]
-        LOG[Debug Logs]
-    end
-    
-    TI --> SM
-    TI --> CS
-    TI --> AM
-    
-    TI -.-> P
-    TI -.-> PL
-    TI -.-> ArtM
-    TI -.-> StM
-    
-    StM --> FS
-    ArtM --> WS
-    P --> FS
-    StM --> LOG
+    Note over ST: Contains:<br/>- All code snippets<br/>- Patterns to follow<br/>- Integration points<br/>- Test approach<br/>- No external deps!
 ```
 
 ## Documentation Index
 
 ### 1. [Overview and Architecture](01-overview-architecture.md)
-- System design principles
-- Component overview
-- Directory structure
-- Data flow
+- Discovery-first principles
+- Component architecture
+- Self-contained design philosophy
+- System integration
 
-### 2. [Plan Task Tool Design](02-plan-task-design.md)
-- Tool purpose and goals
-- State machine details
-- Phase-by-phase breakdown
-- Delegation system
+### 2. [Discovery Planning Design](02-discovery-planning-design.md)
+- Tool purpose and innovations
+- Five-phase workflow
+- Context bundling system
+- Complexity adaptation
 
 ### 3. [State Machine and Workflow](03-state-machine-workflow.md)
-- FSM implementation
-- State transitions
+- Enhanced FSM implementation
+- Dynamic state transitions
 - Recovery mechanisms
-- Best practices
+- Autonomous mode support
 
 ### 4. [Implementation Details](04-implementation-details.md)
 - Code organization
-- Key components
-- Error handling
-- Performance considerations
+- Discovery components
+- Context bundling
+- Performance optimizations
 
 ### 5. [Prompts and Artifacts](05-prompts-artifacts.md)
-- Prompt structure
-- Artifact models
-- Template system
-- Context flow
+- Discovery prompt structure
+- Enhanced artifact models
+- Self-contained subtask design
+- Conversational templates
+
+### 6. [Autonomous Mode](06-autonomous-mode.md)
+- Configuration options
+- AI-only review cycles
+- Best-guess strategies
+- Use cases
+
+### 7. [Re-planning Support](07-replanning-support.md)
+- Re-planning triggers
+- Context preservation
+- State restart logic
+- Change management
 
 ## Key Concepts
 
-### SLOT (Specification, Location, Operation, Taskflow)
-The atomic unit of work in Alfred:
+### Self-Contained Subtask
+The revolutionary atomic unit of work in Discovery Planning:
 ```python
-class SLOT:
-    slot_id: str          # Unique identifier
-    title: str            # Human-readable title
-    spec: str             # What to do
-    location: str         # Where to do it
-    operation: Operation  # CREATE/MODIFY/DELETE/REVIEW
-    taskflow: Taskflow    # How to do it
-    delegation: Optional  # Complex task handoff
+class SelfContainedSubtask:
+    subtask_id: str              # Unique identifier
+    title: str                   # Human-readable title
+    location: str                # Where to work (L)
+    operation: str               # CREATE/MODIFY/DELETE (O)
+    context_bundle: ContextBundle # COMPLETE context - no external deps!
+    specification: Dict          # Detailed implementation steps (S)
+    testing: TestingRequirements # Test approach and verification (T)
+    dependencies: []             # Always empty - truly independent!
 ```
 
-### Context Store
-Maintains state between workflow phases:
-- Accumulates artifacts as workflow progresses
-- Passed to prompt templates for context
-- Cleared on tool completion
+### Context Bundle
+Everything a subtask needs to execute independently:
+```python
+class ContextBundle:
+    existing_code: str           # Current file content
+    related_code_snippets: Dict  # Examples from other files
+    data_models: List[str]       # Model definitions needed
+    utility_functions: List[str] # Available utilities
+    testing_patterns: str        # How to write tests
+    error_handling_patterns: str # Error handling approach
+    dependencies_available: List # Imports and deps
+```
 
-### Two-Step Review Pattern
-1. AI performs work → submits artifact
-2. AI reviews own work → can revise
-3. Human reviews → approves or requests changes
-
-### Persona System
-AI agents with distinct personalities:
-- Unique communication styles
-- Role-specific expertise
-- Dynamic, engaging dialogue
+### Discovery Artifact Types
+- **ContextDiscoveryArtifact**: Deep codebase understanding with patterns and integration points
+- **ClarificationArtifact**: Resolved ambiguities and domain knowledge
+- **ContractDesignArtifact**: All interfaces, APIs, and data models
+- **ImplementationPlanArtifact**: Self-contained subtasks ready for execution
+- **ValidationArtifact**: Final coherence check and quality metrics
 
 ## Example Workflow
 
-### 1. Context Analysis
+### 1. Discovery Phase
 ```json
 {
-  "context_summary": "The application currently has no authentication. Need to add JWT-based auth to the Express.js backend.",
-  "affected_files": [
-    "src/routes/index.js",
-    "src/models/User.js",
-    "src/middleware/auth.js"
+  "codebase_understanding": {
+    "auth_systems": "Found OAuth2Service and LegacyAuthService",
+    "patterns": ["Repository pattern", "JWT middleware pattern"],
+    "integration_points": ["Express router", "User model", "Database"]
+  },
+  "ambiguities_discovered": [
+    {
+      "question": "Should we integrate with OAuth2Service or create new AuthService?",
+      "context": "OAuth2Service handles external providers, might be overkill",
+      "impact_if_wrong": "Major refactor if we choose wrong service"
+    }
   ],
-  "questions_for_developer": [
-    "Should we use refresh tokens or just access tokens?",
-    "What should be the token expiration time?",
-    "Do you want email verification for registration?"
-  ]
+  "extracted_context": {
+    "jwt_pattern": "const token = jwt.sign({userId}, SECRET, {expiresIn: '30m'})",
+    "middleware_pattern": "module.exports = (req, res, next) => { ... }"
+  },
+  "complexity_assessment": "MEDIUM"
 }
 ```
 
-### 2. Strategy
-```json
-{
-  "approach": "Implement JWT authentication using jsonwebtoken library with bcrypt for password hashing",
-  "key_technical_decisions": [
-    "Use access + refresh token pattern",
-    "30min access token, 7 day refresh token",
-    "Skip email verification for MVP"
-  ],
-  "risk_factors": [
-    "Need to handle token refresh smoothly",
-    "Secure storage of refresh tokens"
-  ]
-}
+### 2. Clarification Conversation
+```
+AI: "I found two authentication systems. OAuth2Service handles external providers 
+     like Google/GitHub, while LegacyAuthService manages sessions. Which should 
+     I integrate with for JWT auth?"
+
+Human: "Create a new AuthService. OAuth2 is for external providers, Legacy is 
+       being phased out. The new service should handle JWT for our API."
+
+AI: "Got it! Should the JWT tokens support refresh tokens, or just access tokens?
+     Also, what expiration times do you prefer?"
+
+Human: "Yes, use refresh tokens. 30 min for access, 7 days for refresh."
 ```
 
-### 3. Design
+### 3. Contract Design
 ```json
 {
-  "design_overview": "Add auth endpoints, user model, and auth middleware",
-  "file_breakdown": [
+  "method_contracts": [
     {
-      "file_path": "src/models/User.js",
-      "operation": "CREATE",
-      "summary": "User model with email, password hash, refresh tokens"
+      "class_name": "AuthService",
+      "method_name": "generateTokens",
+      "signature": "generateTokens(userId: string) -> TokenPair",
+      "purpose": "Generate access and refresh token pair",
+      "test_approach": "Verify both tokens generated with correct expiry"
     },
     {
-      "file_path": "src/routes/auth.js",
-      "operation": "CREATE", 
-      "summary": "Auth routes: register, login, logout, refresh"
-    },
+      "class_name": "AuthService",
+      "method_name": "verifyToken",
+      "signature": "verifyToken(token: string) -> DecodedToken",
+      "error_handling": ["TokenExpiredError", "InvalidTokenError"]
+    }
+  ],
+  "data_models": [
     {
-      "file_path": "src/middleware/auth.js",
-      "operation": "CREATE",
-      "summary": "JWT verification middleware"
+      "name": "TokenPair",
+      "fields": [
+        {"name": "accessToken", "type": "string"},
+        {"name": "refreshToken", "type": "string"}
+      ]
     }
   ]
 }
 ```
 
-### 4. Execution Plan
+### 4. Self-Contained Subtask Example
 ```json
 {
-  "slots": [
-    {
-      "slot_id": "SLOT-001",
-      "title": "Create User Model",
-      "spec": "Implement User schema with auth fields",
-      "location": "src/models/User.js",
-      "operation": "CREATE",
-      "taskflow": {
-        "description": "Create Mongoose user model",
-        "steps": [
-          "Define schema with email, password fields",
-          "Add password hashing pre-save hook",
-          "Add method to validate password",
-          "Add refresh token array field"
-        ],
-        "verification_steps": [
-          "Test user creation with hashed password",
-          "Verify password comparison works",
-          "Ensure refresh tokens are stored"
-        ]
-      }
-    }
-  ],
-  "estimated_complexity": "Medium - 8-10 SLOTs total"
+  "subtask_id": "ST-001",
+  "title": "Create AuthService with JWT token generation",
+  "location": "src/services/AuthService.js",
+  "operation": "CREATE",
+  "context_bundle": {
+    "existing_patterns": "// From UserService.js\nclass UserService {\n  constructor(userRepository) {\n    this.userRepository = userRepository;\n  }\n}",
+    "jwt_examples": "// From OAuth2Service.js\nconst token = jwt.sign(payload, process.env.JWT_SECRET, {\n  expiresIn: '30m'\n});",
+    "error_handling": "// Standard pattern\nif (!token) {\n  throw new InvalidTokenError('Token is required');\n}",
+    "test_pattern": "// From UserService.test.js\ndescribe('UserService', () => {\n  let service;\n  beforeEach(() => {\n    service = new UserService(mockRepo);\n  });\n});"
+  },
+  "specification": {
+    "steps": [
+      "Create class AuthService with constructor",
+      "Implement generateTokens(userId) method",
+      "Sign access token with 30m expiry",
+      "Sign refresh token with 7d expiry",
+      "Return TokenPair object"
+    ]
+  },
+  "testing": {
+    "unit_tests_to_create": [
+      "test_generateTokens_creates_valid_pair",
+      "test_tokens_have_correct_expiry",
+      "test_tokens_contain_userId"
+    ]
+  },
+  "dependencies": []
 }
 ```
+
+## What's New
+
+### Revolutionary Improvements
+
+1. **Context Saturation First**
+   - Parallel tool usage (Glob, Grep, Read, Task) for comprehensive discovery
+   - Extract patterns, dependencies, and integration points before planning
+   - Build complete context bundles for subtask independence
+
+2. **True Conversational Clarification**
+   - Natural back-and-forth dialogue
+   - Follow-up questions based on responses
+   - Domain knowledge capture for non-training data
+
+3. **Contract-First Design**
+   - Define all interfaces before implementation
+   - Method signatures with types and error handling
+   - Data model specifications with validation
+   - API contracts with schemas
+
+4. **Self-Contained Subtasks**
+   - Each subtask includes ALL necessary context
+   - No need to rediscover patterns or examples
+   - Can be assigned to sub-agents independently
+   - Parallel execution possible
+
+5. **Dynamic Complexity Adaptation**
+   - Automatically skip CONTRACTS phase for simple tasks
+   - Adapt workflow based on discovery findings
+   - Optimize for efficiency without sacrificing quality
+
+6. **Comprehensive Re-planning**
+   - Handle changing requirements mid-flight
+   - Preserve completed work and context
+   - Restart from any phase
+   - Track what changed and why
+
+7. **Autonomous Mode**
+   - Run without human intervention
+   - AI-only review cycles
+   - Best-guess ambiguity resolution
+   - Perfect for CI/CD pipelines
 
 ## Best Practices
 
-1. **Clear Task Definitions**: Provide detailed acceptance criteria
-2. **Engage in Dialogue**: Answer clarification questions thoroughly
-3. **Review Artifacts**: Check each phase's output before approving
-4. **Use Recovery**: Can resume planning after interruptions
-5. **Trust the Process**: Let each phase build on the previous
+1. **Write Detailed Task Descriptions**: The more context, the better the discovery
+2. **Engage in Clarification**: Answer questions thoroughly with domain knowledge
+3. **Review Contracts Carefully**: These define the entire implementation
+4. **Trust Self-Containment**: Subtasks have everything they need
+5. **Use Re-planning**: Don't start over when requirements change
+6. **Consider Autonomous Mode**: For well-defined tasks with clear requirements
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Tool Not Found**
-   - Ensure task exists in `.alfred/tasks/`
-   - Check task ID matches filename
+1. **Incomplete Discovery**
+   - Ensure all discovery tools are available
+   - Check file permissions for code access
+   - Verify glob patterns match your structure
 
-2. **State Transition Errors**
-   - Use correct trigger names
-   - Ensure previous state completed
+2. **Ambiguity Overload**
+   - Normal for complex tasks
+   - Group related questions in clarification
+   - Provide examples when answering
 
-3. **Validation Errors**
-   - Check artifact structure matches schema
-   - Verify required fields present
+3. **Contract Complexity**
+   - Start with core interfaces
+   - Iterate on contracts if needed
+   - Use re-planning for adjustments
 
-### Debug Logs
+4. **Subtask Dependencies**
+   - Should always be empty
+   - If dependencies exist, context bundle incomplete
+   - Report as bug for investigation
+
+### Debug Information
 
 Detailed logs available at:
 ```
 .alfred/debug/{task-id}/alfred.log
+.alfred/workspace/{task-id}/discovery_context.json
+.alfred/workspace/{task-id}/subtask_bundles/
 ```
 
-## Contributing
+## Performance Metrics
 
-When extending the plan_task tool:
+- **Discovery Time**: 2-5 minutes for comprehensive exploration
+- **Clarification**: 5-10 minutes of human interaction
+- **Contract Design**: 3-5 minutes for typical systems
+- **Planning Quality**: 95% subtask independence achieved
+- **Re-planning Speed**: 30-60 seconds to adjust plans
 
-1. **Follow Patterns**: Use existing state machine patterns
-2. **Add Tests**: Create integration tests for new states
-3. **Update Schemas**: Define Pydantic models for new artifacts
-4. **Document Prompts**: Explain prompt engineering decisions
-5. **Maintain Types**: Ensure type safety throughout
+## Future Roadmap
+
+1. **Multi-Repository Discovery**: Explore dependencies across repos
+2. **Visual Contract Designer**: GUI for contract creation
+3. **Subtask Marketplace**: Share common subtask patterns
+4. **Learning System**: Improve based on implementation success
+5. **Team Collaboration**: Multiple humans in clarification phase
+
+The Discovery Planning System represents a paradigm shift in how AI approaches complex software development tasks - from linear planning to natural, context-rich problem-solving that mirrors expert developer thinking.

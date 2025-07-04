@@ -1,6 +1,6 @@
 """Alfred configuration module."""
 
-from src.alfred.models.alfred_config import AlfredConfig, FeaturesConfig
+from alfred.models.alfred_config import AlfredConfig, FeaturesConfig
 
 from .manager import ConfigManager
 

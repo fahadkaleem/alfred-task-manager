@@ -50,7 +50,7 @@ class OperationType(str, Enum):
 class Task(BaseModel):
     """Represents a single, well-defined unit of work (a user story or engineering task)."""
 
-    task_id: str = Field(description="The unique identifier, e.g., 'TS-01'.")
+    task_id: str = Field(description="The unique identifier, e.g., 'TK-01'.")
     title: str = Field(description="A short, human-readable title for the task.")
     context: str = Field(description="The background for this task, explaining the 'why'.")
     implementation_details: str = Field(description="A high-level overview of the proposed 'how'.")

@@ -1,43 +1,45 @@
-# Alfred Architecture Overview
+# Discovery Planning Architecture Overview
 
 ## Introduction
 
-Alfred is an AI-powered task management system built from the ground up with a clean architecture that emphasizes type safety, state management, and human-AI collaboration. The system currently consists of two primary tools: `initialize` and `plan_task`, with the architecture designed to be extensible for future tools.
+The Discovery Planning System represents a fundamental shift in how AI approaches complex software development tasks. Rather than following a rigid, linear planning process, it mirrors the natural problem-solving approach of expert developers: explore deeply, ask clarifying questions, design interfaces first, then create detailed implementation plans with complete context.
 
-## Core Design Principles
+## Core Design Philosophy
 
-### 1. **Strongly-Typed Data Models**
-Every data structure in Alfred is defined using Pydantic models, ensuring type safety and validation throughout the system:
-- **Task**: The core business unit representing work to be done
-- **SLOT**: Atomic technical work units (Specification, Location, Operation, Taskflow)
-- **Artifacts**: State-specific outputs validated against strict schemas
+### 1. **Context Saturation Before Planning**
+The system prioritizes deep understanding over quick planning:
+- **Parallel Discovery**: Uses multiple tools simultaneously (Glob, Grep, Read, Task)
+- **Pattern Recognition**: Identifies existing code patterns, architectures, and conventions
+- **Dependency Mapping**: Understands integration points and system boundaries
+- **Ambiguity Collection**: Gathers questions during exploration, not after
 
-### 2. **State Machine Architecture**
-Each workflow tool has its own internal state machine, providing:
-- Predictable state transitions
-- Recovery from failures
-- Clear workflow progression
-- Built-in quality gates
+### 2. **Conversational Intelligence**
+Human-AI collaboration through natural dialogue:
+- **Interactive Clarification**: Real conversations, not just Q&A
+- **Domain Knowledge Transfer**: Captures expertise not in training data
+- **Contextual Follow-ups**: Questions build on previous answers
+- **Adaptive Understanding**: Refines requirements based on clarifications
 
-### 3. **Two-Step Review Pattern**
-Every work phase follows a pattern:
-1. AI performs work and submits an artifact
-2. AI self-reviews the work
-3. Human reviews and approves/rejects
+### 3. **Contract-First Development**
+Design decisions before implementation details:
+- **Interface Specifications**: Method signatures with types and contracts
+- **Data Model Definitions**: Complete schemas with validation rules
+- **API Contracts**: External interfaces fully specified
+- **Error Handling Patterns**: Exception types and handling strategies
 
-### 4. **Persona-Driven Interactions**
-AI agents embody specific personas with:
-- Unique communication styles
-- Role-specific expertise
-- Dynamic, engaging dialogue
+### 4. **Self-Contained Work Units**
+Revolutionary approach to task decomposition:
+- **Complete Context Bundles**: Each subtask has ALL necessary information
+- **Zero External Dependencies**: No need to look up patterns or examples
+- **Parallel Executability**: Subtasks can be done in any order
+- **Sub-agent Ready**: Can be assigned to specialized agents
 
-### 5. **Clean Architecture**
-Clear separation of concerns:
-- **Tools**: Entry points and controllers
-- **Workflow**: State machine definitions
-- **Prompter**: Template-based prompt generation
-- **Orchestrator**: Session and lifecycle management
-- **Artifact Manager**: Human-readable output rendering
+### 5. **Dynamic Adaptation**
+Workflow adjusts to task complexity:
+- **Complexity Assessment**: Automatic evaluation during discovery
+- **Phase Skipping**: Skip CONTRACTS for simple tasks
+- **Re-planning Support**: Handle changing requirements gracefully
+- **Autonomous Mode**: Optional human-free operation
 
 ## System Architecture
 
@@ -45,147 +47,356 @@ Clear separation of concerns:
 graph TB
     subgraph "Client Layer"
         CLI[CLI/API Client]
+        CONFIG[Configuration]
     end
     
-    subgraph "Tool Layer"
-        IT[Initialize Tool]
-        PT[Plan Task Tool]
-        SW[Submit Work]
-        PR[Provide Review]
+    subgraph "Discovery Planning Tool"
+        PT[PlanTaskTool]
+        DW[DiscoveryWorkflow]
+        SM[State Machine]
+        AB[Artifact Builder]
     end
     
-    subgraph "Core Layer"
-        O[Orchestrator]
-        WF[Workflow Engine]
-        P[Prompter]
-        AM[Artifact Manager]
+    subgraph "Discovery Engine"
+        DE[Discovery Executor]
+        PE[Pattern Extractor]
+        CE[Context Extractor]
+        CB[Context Bundler]
     end
     
-    subgraph "State Layer"
-        SM[State Manager]
-        TR[Tool Recovery]
+    subgraph "Clarification System"
+        CM[Conversation Manager]
+        AR[Ambiguity Resolver]
+        DK[Domain Knowledge Store]
+    end
+    
+    subgraph "Contract Designer"
+        CD[Contract Designer]
+        MD[Method Designer]
+        DM[Data Modeler]
+        VC[Validation Creator]
+    end
+    
+    subgraph "Planning Engine"
+        IP[Implementation Planner]
+        SG[Subtask Generator]
+        TB[Test Builder]
+        VE[Validation Engine]
+    end
+    
+    subgraph "State Management"
+        CS[Context Store]
+        RP[Re-planning Manager]
+        SR[State Recovery]
     end
     
     subgraph "Data Layer"
-        TU[Task Utils]
         FS[File System]
-        CS[Context Store]
+        AS[Artifact Storage]
+        LOG[Debug Logs]
     end
     
-    CLI --> IT
     CLI --> PT
-    CLI --> SW
-    CLI --> PR
+    CONFIG --> PT
     
-    PT --> O
-    SW --> O
-    PR --> O
+    PT --> DW
+    DW --> SM
+    DW --> AB
     
-    O --> WF
-    O --> SM
+    SM --> DE
+    SM --> CM
+    SM --> CD
+    SM --> IP
+    SM --> VE
     
-    WF --> P
-    WF --> AM
-    WF --> CS
+    DE --> PE
+    DE --> CE
+    CE --> CB
     
-    SM --> TR
-    SM --> FS
+    CM --> AR
+    CM --> DK
     
-    P --> FS
-    AM --> FS
-    TU --> FS
+    CD --> MD
+    CD --> DM
+    CD --> VC
+    
+    IP --> SG
+    IP --> TB
+    IP --> CB
+    
+    CS --> RP
+    CS --> SR
+    
+    AB --> AS
+    SR --> FS
+    SM --> LOG
+```
+
+## Component Deep Dive
+
+### 1. **Discovery Engine**
+The heart of context gathering:
+
+```python
+class DiscoveryEngine:
+    def __init__(self):
+        self.pattern_extractor = PatternExtractor()
+        self.context_extractor = ContextExtractor()
+        self.integration_mapper = IntegrationMapper()
+    
+    async def discover(self, task: Task) -> ContextDiscoveryArtifact:
+        # Parallel exploration
+        patterns = await self.extract_patterns()
+        context = await self.extract_context()
+        integrations = await self.map_integrations()
+        ambiguities = await self.identify_ambiguities()
+        
+        return ContextDiscoveryArtifact(
+            codebase_understanding=deep_analysis,
+            code_patterns=patterns,
+            integration_points=integrations,
+            ambiguities_discovered=ambiguities,
+            extracted_context=context,
+            complexity_assessment=self.assess_complexity()
+        )
+```
+
+### 2. **Context Bundler**
+Creates self-contained execution contexts:
+
+```python
+class ContextBundler:
+    def bundle_for_subtask(self, subtask: Subtask, discovery: ContextDiscoveryArtifact) -> ContextBundle:
+        return ContextBundle(
+            existing_code=self.get_current_file_content(subtask.location),
+            related_code_snippets=self.extract_relevant_examples(discovery),
+            data_models=self.get_model_definitions(discovery),
+            utility_functions=self.get_available_utilities(discovery),
+            testing_patterns=self.extract_test_patterns(discovery),
+            error_handling_patterns=self.extract_error_patterns(discovery),
+            dependencies_available=self.get_import_list(discovery)
+        )
+```
+
+### 3. **Conversation Manager**
+Handles human-AI dialogue:
+
+```python
+class ConversationManager:
+    def manage_clarification(self, ambiguities: List[AmbiguityItem]) -> ClarificationArtifact:
+        conversation_log = []
+        resolved_ambiguities = []
+        
+        for ambiguity in ambiguities:
+            # Present with context
+            response = self.present_ambiguity(ambiguity)
+            
+            # Handle follow-ups
+            while needs_clarification(response):
+                follow_up = self.generate_follow_up(response)
+                response = self.get_human_response(follow_up)
+            
+            resolved_ambiguities.append(self.resolve(ambiguity, response))
+            conversation_log.extend(self.format_exchange())
+        
+        return ClarificationArtifact(
+            resolved_ambiguities=resolved_ambiguities,
+            conversation_log=conversation_log,
+            domain_knowledge_gained=self.extract_domain_knowledge()
+        )
+```
+
+### 4. **Re-planning Manager**
+Handles requirement changes:
+
+```python
+class ReplanningManager:
+    def initiate_replanning(self, trigger: str, changes: str) -> RestartContext:
+        return RestartContext(
+            trigger=trigger,  # requirements_changed, implementation_failed
+            restart_from=self.determine_restart_state(changes),
+            changes=changes,
+            preserve_artifacts=self.identify_reusable_artifacts(),
+            invalidated_decisions=self.identify_obsolete_work()
+        )
+```
+
+## Data Flow Architecture
+
+### Discovery Phase Flow
+```mermaid
+sequenceDiagram
+    participant Task as Task Definition
+    participant DE as Discovery Engine
+    participant Tools as Discovery Tools
+    participant PE as Pattern Extractor
+    participant CE as Context Extractor
+    participant CB as Context Bundler
+    participant CDA as ContextDiscoveryArtifact
+    
+    Task->>DE: Start discovery
+    DE->>Tools: Parallel exploration
+    
+    par Glob for files
+        Tools-->>DE: File structure
+    and Grep for patterns
+        Tools-->>DE: Code patterns
+    and Read for details
+        Tools-->>DE: Implementation details
+    and Task for context
+        Tools-->>DE: Related information
+    end
+    
+    DE->>PE: Extract patterns
+    PE-->>DE: Code patterns, conventions
+    
+    DE->>CE: Extract context
+    CE-->>DE: Integration points, dependencies
+    
+    DE->>CB: Prepare context bundles
+    CB-->>DE: Bundled contexts
+    
+    DE->>CDA: Create artifact
+    CDA-->>Task: Complete discovery results
+```
+
+### Self-Contained Subtask Generation
+```mermaid
+sequenceDiagram
+    participant CD as Contract Design
+    participant IP as Implementation Planner
+    participant CB as Context Bundler
+    participant SG as Subtask Generator
+    participant ST as Self-Contained Subtask
+    
+    CD->>IP: Contracts and interfaces
+    IP->>SG: Generate subtasks
+    
+    loop For each subtask
+        SG->>CB: Request context bundle
+        CB->>CB: Gather all dependencies
+        CB-->>SG: Complete context
+        SG->>ST: Create self-contained subtask
+    end
+    
+    Note over ST: Contains:<br/>- Complete context<br/>- All code examples<br/>- Test patterns<br/>- No external deps!
 ```
 
 ## Directory Structure
 
 ```
 .alfred/
-├── config.json          # Alfred configuration
-├── workflow.yml         # Workflow definitions
-├── personas/           # Persona configurations
-├── templates/          # Prompt and artifact templates
-├── tasks/             # Task definitions (local provider)
-│   └── TS-01.md      # Example task file
-├── workspace/         # Dynamic runtime data
-│   └── TS-01/        # Task-specific workspace
-│       ├── state.json    # Tool state persistence
-│       └── scratchpad.md # Human-readable artifacts
-└── debug/            # Task-specific debug logs
-    └── TS-01/
-        └── alfred.log
+├── config.json                  # Alfred configuration
+├── discovery.yml               # Discovery settings
+├── tasks/                      # Task definitions
+│   └── TK-01.md               # Task using new format
+├── workspace/
+│   └── TK-01/
+│       ├── state.json          # Tool state persistence
+│       ├── discovery/          # Discovery artifacts
+│       │   ├── context.json    # Discovery results
+│       │   ├── patterns.json   # Extracted patterns
+│       │   └── ambiguities.json # Questions found
+│       ├── clarification/      # Clarification artifacts
+│       │   ├── conversation.log # Dialogue history
+│       │   └── resolutions.json # Resolved ambiguities
+│       ├── contracts/          # Contract definitions
+│       │   ├── methods.json    # Method contracts
+│       │   ├── models.json     # Data models
+│       │   └── apis.json       # API contracts
+│       ├── subtasks/           # Self-contained subtasks
+│       │   ├── ST-001/         # Individual subtask
+│       │   │   ├── bundle.json # Complete context
+│       │   │   └── spec.json   # Implementation spec
+│       │   └── ST-002/
+│       └── scratchpad.md       # Human-readable progress
+└── debug/
+    └── TK-01/
+        ├── alfred.log          # Execution logs
+        └── discovery.trace     # Discovery trace
 ```
 
-## Key Components
+## Integration Architecture
 
-### 1. **Initialize Tool** (`src/alfred/tools/initialize.py`)
-- Sets up the Alfred project structure
-- Configures task provider (Jira, Linear, or Local)
-- Creates necessary directories and templates
-- One-time setup per project
+### With Base Alfred System
+- Extends `BaseWorkflowTool` maintaining compatibility
+- Uses standard `submit_work` and `approve_review` patterns
+- Integrates with orchestrator lifecycle management
+- Follows all architectural principles (state machine, handler, template)
 
-### 2. **Plan Task Tool** (`src/alfred/tools/plan_task.py`)
-- Entry point for task planning workflow
-- Manages recovery from persisted state
-- Coordinates with orchestrator for lifecycle
-- Generates initial prompts based on current state
+### With External Tools
+- **MCP Tools**: Leverages available MCP tools for discovery
+- **File System**: Direct integration for code analysis
+- **Version Control**: Git-aware for change context
+- **Testing Frameworks**: Understands test patterns
 
-### 3. **Submit Work** (`src/alfred/tools/submit_work.py`)
-- Generic tool for submitting work artifacts
-- Validates artifacts against Pydantic models
-- Triggers state transitions
-- Persists artifacts to scratchpad
+### With Future Tools
+- **implement_task**: Consumes self-contained subtasks
+- **test_task**: Uses embedded test strategies
+- **deploy_task**: Leverages validation artifacts
 
-### 4. **Provide Review** (`src/alfred/tools/provide_review.py`)
-- Processes human review feedback
-- Handles approval/rejection flows
-- Manages terminal state completion
-- Cleans up resources on completion
+## Performance Architecture
 
-### 5. **Orchestrator** (`src/alfred/orchestration/orchestrator.py`)
-- Singleton managing active tool instances
-- Maintains tool lifecycle
-- Facilitates recovery and handoffs
-- Acts as "Dumb Orchestrator" - just manages state
+### Parallel Discovery
+- Concurrent tool execution reduces discovery time
+- Intelligent caching of discovered patterns
+- Incremental discovery for re-planning
 
-### 6. **Prompter** (`src/alfred/core/prompter.py`)
-- Centralized prompt generation engine
-- Template-based using Jinja2
-- Injects task, persona, and context data
-- Stateless - all data passed per call
+### Memory Efficiency
+- Streaming large file analysis
+- Context compression for storage
+- Lazy loading of artifacts
 
-### 7. **Artifact Manager** (`src/alfred/lib/artifact_manager.py`)
-- Renders artifacts to human-readable markdown
-- Appends to task scratchpad
-- Uses artifact-specific templates
-- Maintains audit trail
+### Scalability
+- Handles codebases of any size
+- Subtask chunking for large plans
+- Distributed discovery possible
 
-## Data Flow
+## Security Considerations
 
-1. **Task Creation**: Tasks are created as markdown files in `.alfred/tasks/`
-2. **Tool Initialization**: `plan_task` loads task, creates tool instance, registers with orchestrator
-3. **State Progression**: Tool progresses through states via `submit_work` and `provide_review`
-4. **Context Persistence**: Each state's artifacts stored in tool's `context_store`
-5. **Human Review**: Artifacts rendered to scratchpad for review
-6. **Recovery**: State persisted to disk after each transition
-7. **Completion**: Tool updates task status, cleans up resources
+### Code Analysis
+- Sandboxed discovery execution
+- No code execution during planning
+- Pattern matching without evaluation
 
-## Recovery Architecture
+### Data Protection
+- Sensitive data masking in artifacts
+- Secure storage of domain knowledge
+- Audit trail for all decisions
 
-The system is designed to be resilient:
-- **State Persistence**: Tool state saved after every transition
-- **Context Preservation**: All artifacts maintained in context store
-- **Recovery Logic**: Tools can be recovered from disk on restart
-- **Atomic Transitions**: Rollback on failure prevents corruption
+## Extensibility Points
 
-## Next Steps
+### Custom Discovery Tools
+```python
+class CustomDiscoveryTool:
+    def discover(self, task: Task) -> DiscoveryResult:
+        # Custom discovery logic
+        pass
+```
 
-This architecture provides the foundation for additional tools:
-- `implement_task`: Execute the SLOTs generated by planning
-- `test_task`: Run verification procedures
-- `deploy_task`: Handle deployment workflows
+### Pattern Libraries
+```python
+class PatternLibrary:
+    def register_pattern(self, pattern: CodePattern):
+        # Add domain-specific patterns
+        pass
+```
 
-Each new tool follows the same patterns:
-- Extends `BaseWorkflowTool`
-- Defines its state machine
-- Maps states to artifacts
-- Uses generic `submit_work` and `provide_review`
+### Contract Validators
+```python
+class ContractValidator:
+    def validate(self, contract: MethodContract) -> ValidationResult:
+        # Custom validation logic
+        pass
+```
+
+## Architectural Principles
+
+1. **Discovery Before Decision**: Never plan without context
+2. **Human in the Loop**: Leverage human expertise effectively
+3. **Contracts as Truth**: Interfaces define implementation
+4. **Context is King**: Bundle everything needed for execution
+5. **Graceful Adaptation**: Handle changes without starting over
+6. **Audit Everything**: Complete trail of decisions and reasons
+
+This architecture enables Alfred to approach complex tasks the way expert developers do - with deep understanding, clear communication, and comprehensive planning that actually works in practice.

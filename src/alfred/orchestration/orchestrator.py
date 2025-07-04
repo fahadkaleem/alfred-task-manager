@@ -4,10 +4,10 @@ A simplified, central session manager for Alfred's active workflow tools.
 """
 
 from typing import Dict
-from src.alfred.config import ConfigManager
-from src.alfred.config.settings import settings
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.lib.logger import get_logger
+from alfred.config import ConfigManager
+from alfred.config.settings import settings
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 

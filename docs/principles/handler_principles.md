@@ -7,33 +7,39 @@ Handlers are **CONFIGURATION, not CODE**. One generic handler rules them all. Du
 
 ### **1. ONE HANDLER TO RULE THEM ALL**
 - There is **EXACTLY ONE** workflow handler class: `GenericWorkflowHandler`
-- All workflow tools use this SAME handler with different configurations
+- All workflow tools use this SAME handler with different `ToolDefinition` configurations
 - If you think you need a new handler class, YOU ARE WRONG
 
 ### **2. CONFIGURATION IS IMMUTABLE**
-- Tool configurations are defined ONCE in `workflow_config.py`
+- Tool configurations are defined ONCE in `tool_definitions.py` as `ToolDefinition` objects
 - Configuration is DATA, not logic
 - Never add conditional logic to configurations
-- If behavior differs, it goes in the configuration, not in a new handler
+- If behavior differs, it goes in the `ToolDefinition`, not in a new handler
 
 ### **3. HANDLER LOGIC IS FROZEN**
 - The `GenericWorkflowHandler` logic is COMPLETE
 - Do NOT add new methods to handle "special cases"
 - Do NOT add if-statements for specific tools
-- If you need different behavior, use the configuration
+- If you need different behavior, use the `ToolDefinition` configuration
 
-### **4. SACRED CONFIGURATION FIELDS**
+### **4. SACRED TOOL DEFINITION FIELDS**
 ```python
-WorkflowToolConfig fields (NEVER ADD NEW ONES):
-- tool_name              # The tool's identifier
+ToolDefinition fields (NEVER ADD NEW ONES):
+- name                   # The tool's identifier
 - tool_class            # The workflow tool class to instantiate
-- required_status       # Status requirement (can be None)
-- entry_status_map      # Status transitions on entry
-- dispatch_on_init      # Whether to auto-dispatch
-- dispatch_state_attr   # State to check for dispatch
-- target_state_method   # Method to call (always "dispatch")
+- description           # Tool description
+- work_states           # List of work states for multi-step workflows
+- dispatch_state        # Initial dispatch state for simple workflows
+- terminal_state        # Final verified state
+- initial_state         # Starting state (usually first work state or dispatch)
+- entry_statuses        # Valid task statuses for entry
+- exit_status           # Task status after tool execution
+- required_status       # Specific status requirement (optional)
+- dispatch_on_init      # Whether to auto-dispatch on initialization
+- produces_artifacts    # Whether tool produces artifacts (default: True)
+- requires_artifact_from # Dependency on another tool's output
 - context_loader        # Function to load context
-- requires_artifact_from # Dependency validation
+- custom_validator      # Custom validation function
 ```
 
 ### **5. CONTEXT LOADERS ARE PURE FUNCTIONS**
@@ -41,7 +47,7 @@ WorkflowToolConfig fields (NEVER ADD NEW ONES):
 - They do NOT modify state
 - They do NOT have side effects
 - They raise `ValueError` for missing dependencies
-- They are defined in `workflow_config.py` ONLY
+- They are defined in `tool_definitions.py` ONLY
 
 ### **6. NO SPECIAL SNOWFLAKES**
 - Every workflow tool follows the SAME pattern
@@ -52,9 +58,9 @@ WorkflowToolConfig fields (NEVER ADD NEW ONES):
 ## **WHEN ADDING A NEW TOOL**
 
 ### **DO:**
-- ✅ Add a configuration entry to `WORKFLOW_TOOL_CONFIGS`
+- ✅ Add a `ToolDefinition` entry to `TOOL_DEFINITIONS` 
 - ✅ Create a context loader if needed (pure function)
-- ✅ Use the existing `GenericWorkflowHandler`
+- ✅ Use the existing `GenericWorkflowHandler` (automatically used by tool factory)
 - ✅ Follow the established patterns exactly
 - ✅ Keep it simple and configuration-driven
 
@@ -74,13 +80,13 @@ WorkflowToolConfig fields (NEVER ADD NEW ONES):
 4. None of the above? → You're wrong, rethink it
 
 ### **"But plan_task has special validation!"**
-- It's handled in the EXISTING handler via configuration
+- It's handled in the EXISTING handler via `custom_validator` in `ToolDefinition`
 - The validation is simple and remains in `_setup_tool`
-- This is the ONLY special case, and it's already handled
+- This is the ONLY special case, and it's already handled via configuration
 
 ### **"But I need different dispatch logic!"**
 - No, you need different configuration
-- Use `dispatch_on_init`, `dispatch_state_attr`
+- Use `dispatch_on_init` and state configuration in `ToolDefinition`
 - The dispatch logic itself NEVER changes
 
 ## **TESTING HANDLERS**
@@ -90,14 +96,19 @@ When testing handler changes:
 ```python
 # This is ALL you should need for a new tool
 def test_new_tool():
-    config = WorkflowToolConfig(
-        tool_name="new_tool",
+    tool_def = ToolDefinition(
+        name="new_tool",
         tool_class=NewToolClass,
-        required_status=TaskStatus.SOME_STATUS,
-        # ... other config
+        description="New tool description",
+        work_states=[NewState.WORKING],
+        dispatch_state=NewState.DISPATCHING,
+        terminal_state=NewState.VERIFIED,
+        entry_statuses=[TaskStatus.READY],
+        exit_status=TaskStatus.IN_PROGRESS,
+        dispatch_on_init=True
     )
-    handler = GenericWorkflowHandler(config)
-    # Should work immediately
+    # Handler created automatically by tool factory
+    # Should work immediately with no custom code
 ```
 
 ## **THE HANDLER PLEDGE**

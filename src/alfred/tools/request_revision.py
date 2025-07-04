@@ -1,6 +1,6 @@
 # src/alfred/tools/request_revision.py
-from src.alfred.tools.provide_review_logic import provide_review_logic
-from src.alfred.models.schemas import ToolResponse
+from alfred.tools.provide_review_logic import provide_review_logic
+from alfred.models.schemas import ToolResponse
 
 
 async def request_revision_impl(task_id: str, feedback_notes: str) -> ToolResponse:

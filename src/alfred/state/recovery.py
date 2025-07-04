@@ -6,11 +6,11 @@ Handles reconstruction of workflow tools from persisted state.
 
 from typing import Dict, Optional, Type
 
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.lib.logger import get_logger
-from src.alfred.state.manager import state_manager
-from src.alfred.constants import ToolName
-from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.logger import get_logger
+from alfred.state.manager import state_manager
+from alfred.constants import ToolName
+from alfred.tools.tool_definitions import TOOL_DEFINITIONS
 
 logger = get_logger(__name__)
 
@@ -71,7 +71,7 @@ def recover_tool_from_state(task_id: str, tool_name: str) -> BaseWorkflowTool:
     Helper function to recover or create a tool for the given task and tool name.
     This is used by the individual tool implementations.
     """
-    from src.alfred.orchestration.orchestrator import orchestrator
+    from alfred.orchestration.orchestrator import orchestrator
 
     # Check if tool is already active
     if task_id in orchestrator.active_tools:

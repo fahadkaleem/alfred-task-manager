@@ -9,11 +9,11 @@ import logging
 from pathlib import Path
 import shutil
 
-from src.alfred.config.manager import ConfigManager
-from src.alfred.config.settings import settings
-from src.alfred.constants import ResponseStatus
-from src.alfred.models.alfred_config import TaskProvider
-from src.alfred.models.schemas import ToolResponse
+from alfred.config.manager import ConfigManager
+from alfred.config.settings import settings
+from alfred.constants import ResponseStatus
+from alfred.models.alfred_config import TaskProvider
+from alfred.models.schemas import ToolResponse
 
 logger = logging.getLogger(__name__)
 

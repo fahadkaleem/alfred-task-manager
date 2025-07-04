@@ -4,8 +4,8 @@ Utility commands for tool management.
 
 from typing import List, Dict, Any
 
-from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS
-from src.alfred.tools.tool_factory import ToolFactory
+from alfred.tools.tool_definitions import TOOL_DEFINITIONS
+from alfred.tools.tool_factory import ToolFactory
 
 
 def list_tools() -> List[Dict[str, Any]]:

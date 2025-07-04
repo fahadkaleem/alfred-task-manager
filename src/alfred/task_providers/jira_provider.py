@@ -3,8 +3,8 @@
 from typing import List, Optional
 from datetime import datetime
 
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.lib.logger import get_logger
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.lib.logger import get_logger
 from .base import BaseTaskProvider
 
 logger = get_logger(__name__)
@@ -28,16 +28,16 @@ class JiraTaskProvider(BaseTaskProvider):
         In production, this will call MCP Atlassian tools.
 
         Args:
-            task_id: The Jira issue key (e.g., "TS-01")
+            task_id: The Jira issue key (e.g., "TK-01")
 
         Returns:
             Task object if found, None otherwise
         """
         # Placeholder implementation - return hardcoded task for testing
-        if task_id == "TS-01":
+        if task_id == "TK-01":
             logger.info(f"Returning placeholder Jira task for {task_id}")
             return Task(
-                task_id="TS-01",
+                task_id="TK-01",
                 title="Implement user authentication",
                 description="""As a user, I want to be able to log in to the application
 so that I can access my personalized content and features.

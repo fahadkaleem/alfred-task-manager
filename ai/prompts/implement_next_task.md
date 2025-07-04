@@ -25,7 +25,7 @@ I need you to help me work on a Jira ticket using the Epic Task Manager workflow
 **Remember**: Server instructions exist for important technical and workflow reasons. Ignoring them can lead to degraded performance, workflow failures, or incomplete task execution.
 
 1. First, initialize Epic Task Manager:
-   - Call `mcp_epic-task-manager_initialize_epic_task_manager` if .epic folder does not exist
+   - Call `mcp_alfred_initialize_alfred` if .epic folder does not exist
 
 2. Ask me which issue I want to work on in a friendly way
 
@@ -38,27 +38,27 @@ I need you to help me work on a Jira ticket using the Epic Task Manager workflow
    - If I say no, ask what issue I'd prefer instead
 
 4. Start working on the task:
-   - Call `mcp_epic-task-manager_start_new_task` with task_id = the issue key
+   - Call `mcp_alfred_start_new_task` with task_id = the issue key
    - Mention you're getting started and updating the context
 
 5. Update the context file:
-   - Read `.epictaskmanager/contexts/[ISSUE-KEY].md`
+   - Read `.alfred/contexts/[ISSUE-KEY].md`
    - Replace "[Fetch from Jira MCP and add details here]" with the actual Jira details
    - Save the file
 
 6. Move to planning phase:
-   - Call `mcp_epic-task-manager_approve_and_advance`
-   - Read the planning prompt from `.epictaskmanager/prompts/planning.md`
+   - Call `mcp_alfred_approve_and_advance`
+   - Read the planning prompt from `.alfred/prompts/planning.md`
    - Help me create an implementation plan
    - Add the plan to the context file
    - Request feedback naturally: "I've put together an implementation plan for {issue-key}. I'm thinking we should approach it by [brief summary]. What do you think about this plan? Ready to move forward with coding?"
-   - Call `mcp_epic-task-manager_request_phase_review` internally
-   - When I give feedback, call `mcp_epic-task-manager_provide_feedback` with my response
-   - If revisions needed, address feedback and call `mcp_epic-task-manager_address_feedback`
+   - Call `mcp_alfred_request_phase_review` internally
+   - When I give feedback, call `mcp_alfred_provide_feedback` with my response
+   - If revisions needed, address feedback and call `mcp_alfred_address_feedback`
    - Only advance when I approve
 
 7. Move to coding phase:
-   - Call `mcp_epic-task-manager_approve_and_advance`
+   - Call `mcp_alfred_approve_and_advance`
    - **IMPORTANT: Update Jira status to "In Progress"**
    - Call `mcp_atlassian_getTransitionsForJiraIssue` to find "In Progress" transition
    - Call `mcp_atlassian_transitionJiraIssue` to move it to In Progress
@@ -68,27 +68,27 @@ I need you to help me work on a Jira ticket using the Epic Task Manager workflow
    - Implement the solution based on our plan
    - Update the context file with implementation notes
    - Request code review naturally: "I've finished implementing {brief description of what was built}. The code is working well and I've tested it locally. Could you take a look at what I've built? I'd love your feedback before we move to self-review."
-   - Call `mcp_epic-task-manager_request_phase_review` internally
-   - When I give feedback, call `mcp_epic-task-manager_provide_feedback` with my response
-   - If revisions needed, fix code and call `mcp_epic-task-manager_address_feedback`
+   - Call `mcp_alfred_request_phase_review` internally
+   - When I give feedback, call `mcp_alfred_provide_feedback` with my response
+   - If revisions needed, fix code and call `mcp_alfred_address_feedback`
 
 8. Move to self-review phase:
-   - Call `mcp_epic-task-manager_approve_and_advance`
+   - Call `mcp_alfred_approve_and_advance`
    - Review the code based on the self_review prompt
    - Test the implementation locally
    - Document findings in the context file
    - Request validation naturally: "I've completed my self-review and local testing. Everything looks solid - [brief summary of test results]. What do you think? Does this look ready for the team to review?"
-   - Call `mcp_epic-task-manager_request_phase_review` internally
-   - When I give feedback, call `mcp_epic-task-manager_provide_feedback` with my response
-   - If revisions needed, fix issues and call `mcp_epic-task-manager_address_feedback`
+   - Call `mcp_alfred_request_phase_review` internally
+   - When I give feedback, call `mcp_alfred_provide_feedback` with my response
+   - If revisions needed, fix issues and call `mcp_alfred_address_feedback`
 
 9. Mark ready for PR:
    - Request final approval naturally: "We're almost there! I think {issue-key} is ready for PR. The implementation meets all the acceptance criteria and testing looks good. Are you happy for me to create the PR and move this to code review?"
-   - Call `mcp_epic-task-manager_request_phase_review` internally
-   - When I give final approval, call `mcp_epic-task-manager_provide_feedback` with my response
-   - If final changes needed, make adjustments and call `mcp_epic-task-manager_address_feedback`
+   - Call `mcp_alfred_request_phase_review` internally
+   - When I give final approval, call `mcp_alfred_provide_feedback` with my response
+   - If final changes needed, make adjustments and call `mcp_alfred_address_feedback`
    - Once I approve, proceed:
-   - Call `mcp_epic-task-manager_mark_task_ready_for_pr` with the task_id
+   - Call `mcp_alfred_mark_task_ready_for_pr` with the task_id
    - Create a pull request for the changes
    - **IMPORTANT: Update Jira status to "Code Review"**
    - Call `mcp_atlassian_getTransitionsForJiraIssue` to find "Code Review" transition
@@ -99,10 +99,10 @@ I need you to help me work on a Jira ticket using the Epic Task Manager workflow
 **Note:** MCP workflow ends here. Team review, final testing, and deployment happen outside MCP.
 
 Throughout this process:
-- Use `mcp_epic-task-manager_get_current_status` to check where we are
-- Use `mcp_epic-task-manager_get_review_status` to check review cycle status
-- Each phase has a specific prompt in `.epictaskmanager/prompts/[phase].md`
-- The context file `.epictaskmanager/contexts/[ISSUE-KEY].md` tracks our entire journey
+- Use `mcp_alfred_get_current_status` to check where we are
+- Use `mcp_alfred_get_review_status` to check review cycle status
+- Each phase has a specific prompt in `.alfred/prompts/[phase].md`
+- The context file `.alfred/contexts/[ISSUE-KEY].md` tracks our entire journey
 - **CRITICAL**: developer review and approval required at EVERY phase transition
 - **CRITICAL**: Cannot advance phases without developer verification (needs_revision=false)
 - Review cycles can repeat multiple times until quality standards are met
@@ -110,9 +110,9 @@ Throughout this process:
 - Jira status transitions: TO DO → TO DO → In Progress → In Progress → Code Review
 
 ## Review-Feedback Cycle Tools:
-- `mcp_epic-task-manager_request_phase_review(task_id, work_summary)` - AI requests review
-- `mcp_epic-task-manager_provide_feedback(task_id, feedback, needs_revision, reviewer_notes?)` - developer provides feedback
-- `mcp_epic-task-manager_address_feedback(task_id, resolution_notes)` - AI addresses feedback
-- `mcp_epic-task-manager_get_review_status(task_id)` - Check review status
+- `mcp_alfred_request_phase_review(task_id, work_summary)` - AI requests review
+- `mcp_alfred_provide_feedback(task_id, feedback, needs_revision, reviewer_notes?)` - developer provides feedback
+- `mcp_alfred_address_feedback(task_id, resolution_notes)` - AI addresses feedback
+- `mcp_alfred_get_review_status(task_id)` - Check review status
 
 Let's start with step 1!

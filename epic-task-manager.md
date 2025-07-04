@@ -2378,7 +2378,7 @@ class MarkdownTaskParser:
         """Parses the markdown content into a dictionary."""
         data = {}
         
-        # Extract the task_id from the first line, e.g., '# TASK: TS-01'
+        # Extract the task_id from the first line, e.g., '# TASK: TK-01'
         task_id_match = re.search(r"^#\s*TASK:\s*(\S+)", markdown_content, re.MULTILINE)
         if task_id_match:
             data['task_id'] = task_id_match.group(1).strip()
@@ -3346,7 +3346,7 @@ class OperationType(str, Enum):
 class Task(BaseModel):
     """Represents a single, well-defined unit of work (a user story or engineering task)."""
 
-    task_id: str = Field(description="The unique identifier, e.g., 'TS-01'.")
+    task_id: str = Field(description="The unique identifier, e.g., 'TK-01'.")
     title: str = Field(description="A short, human-readable title for the task.")
     context: str = Field(description="The background for this task, explaining the 'why'.")
     implementation_details: str = Field(description="A high-level overview of the proposed 'how'.")
@@ -3658,14 +3658,14 @@ async def work_on_task(task_id: str) -> ToolResponse:
     - COMPLETED: Informs user the task is complete
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains routing guidance to the appropriate specialized tool
 
     Example:
-        work_on_task("TS-01") -> Guides to plan_task if task is new
-        work_on_task("TS-02") -> Guides to implement_task if planning is complete
+        work_on_task("TK-01") -> Guides to plan_task if task is new
+        work_on_task("TK-02") -> Guides to implement_task if planning is complete
     """
     pass  # Implementation handled by decorator
 
@@ -3849,7 +3849,7 @@ async def plan_task(task_id: str) -> ToolResponse:
     The final output is a validated execution plan ready for implementation.
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains success/error status and the next prompt to guide planning
@@ -3890,7 +3890,7 @@ async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     - **Testing**: test results, coverage, validation status
 
     Parameters:
-        task_id (str): The unique identifier for the task (e.g., "AL-01", "TS-123")
+        task_id (str): The unique identifier for the task (e.g., "AL-01", "TK-123")
         artifact (dict): Structured data matching the current state's expected schema
 
     Returns:
@@ -4047,7 +4047,7 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
     - The state is properly persisted after marking completion
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
         subtask_id (str): The subtask identifier to mark as complete (e.g., "subtask-1")
 
     Returns:
@@ -4057,7 +4057,7 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
             - List of remaining subtasks
 
     Example:
-        mark_subtask_complete("TS-01", "subtask-1")
+        mark_subtask_complete("TK-01", "subtask-1")
         # Returns progress update showing 1/5 subtasks complete (20%)
     """
     pass  # Implementation handled by decorator
@@ -4082,13 +4082,13 @@ async def implement_task(task_id: str) -> ToolResponse:
     - Maintaining implementation state across sessions
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains success/error status and implementation guidance
 
     Example:
-        implement_task("TS-01") -> Starts implementation of planned task
+        implement_task("TK-01") -> Starts implementation of planned task
     """
     handler = get_tool_handler(ToolName.IMPLEMENT_TASK)
     return await handler.execute(task_id)
@@ -4882,16 +4882,16 @@ class JiraTaskProvider(BaseTaskProvider):
         In production, this will call MCP Atlassian tools.
 
         Args:
-            task_id: The Jira issue key (e.g., "TS-01")
+            task_id: The Jira issue key (e.g., "TK-01")
 
         Returns:
             Task object if found, None otherwise
         """
         # Placeholder implementation - return hardcoded task for testing
-        if task_id == "TS-01":
+        if task_id == "TK-01":
             logger.info(f"Returning placeholder Jira task for {task_id}")
             return Task(
-                task_id="TS-01",
+                task_id="TK-01",
                 title="Implement user authentication",
                 description="""As a user, I want to be able to log in to the application
 so that I can access my personalized content and features.
@@ -6051,10 +6051,10 @@ Your final output MUST be a single, valid JSON object. It must be an array of `T
 ```json
 [
   {
-    "task_id": "TS-XX", // You will generate this, starting from the next available number.
+    "task_id": "TK-XX", // You will generate this, starting from the next available number.
     "title": "Clear, concise title for the task.",
     "priority": "critical | high | medium | low",
-    "dependencies": ["TS-YY", "TS-ZZ"], // List of task_ids this task depends on.
+    "dependencies": ["TK-YY", "TK-ZZ"], // List of task_ids this task depends on.
     "context": "A 1-2 sentence explanation of how this task fits into the larger project, referencing the spec.",
     "implementation_details": "Specific, actionable instructions for the developer. Reference file paths, function names, or design patterns from the spec.",
     "dev_notes": "Optional notes, hints, or warnings for the developer.",

@@ -4,11 +4,11 @@ Factory for creating tools from definitions.
 
 from typing import Dict, Any, Optional
 
-from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS, ToolDefinition
-from src.alfred.tools.generic_handler import GenericWorkflowHandler
-from src.alfred.tools.workflow_config import WorkflowToolConfig
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.lib.logger import get_logger
+from alfred.tools.tool_definitions import TOOL_DEFINITIONS, ToolDefinition
+from alfred.tools.generic_handler import GenericWorkflowHandler
+from alfred.tools.workflow_config import WorkflowToolConfig
+from alfred.models.schemas import ToolResponse
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 

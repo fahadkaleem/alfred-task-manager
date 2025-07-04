@@ -1,7 +1,7 @@
 # **ALFRED STATE MACHINE PRINCIPLES**
 
 ## **CORE PHILOSOPHY**
-State machines are **PATTERNS, not PUZZLES**. Use the builder. Trust the builder. The builder is complete.
+State machines are **DECLARATIVE WORKFLOWS, not IMPERATIVE CODE**. Use the builder. Trust the builder. The builder is complete.
 
 ## **THE GOLDEN RULES**
 
@@ -12,10 +12,11 @@ State machines are **PATTERNS, not PUZZLES**. Use the builder. Trust the builder
 - Do NOT add new builder methods
 
 ### **2. STATE MACHINES ARE DECLARATIVE**
-- You declare states and the builder creates the machine
+- You declare states in `ToolDefinition` and the builder creates the machine
 - You do NOT manually create transitions
 - You do NOT manually create review states
 - The builder handles ALL of this
+- All behavior is configuration-driven through `ToolDefinition`
 
 ### **3. REVIEW PATTERNS ARE SACRED**
 ```
@@ -29,22 +30,26 @@ This pattern is FROZEN. Do not modify it.
 
 ### **4. TWO PATTERNS ONLY**
 
-**Pattern 1: Multi-step with reviews** (PlanTaskTool)
+**Pattern 1: Multi-step with reviews** (Discovery Planning)
 ```python
-workflow_builder.build_workflow_with_reviews(
-    work_states=[state1, state2, state3],
-    terminal_state=StateEnum.VERIFIED,
-    initial_state=state1
-)
+# In ToolDefinition:
+work_states=[
+    PlanTaskState.DISCOVERY,
+    PlanTaskState.CLARIFICATION,
+    PlanTaskState.CONTRACTS,
+    PlanTaskState.IMPLEMENTATION_PLAN,
+    PlanTaskState.VALIDATION
+],
+terminal_state=PlanTaskState.VERIFIED,
+initial_state=PlanTaskState.DISCOVERY
 ```
 
-**Pattern 2: Simple dispatch-work-done** (Most tools)
+**Pattern 2: Simple dispatch-work-done** (Implementation, Review, Test, Finalize)
 ```python
-workflow_builder.build_simple_workflow(
-    dispatch_state=StateEnum.DISPATCHING,
-    work_state=StateEnum.WORKING,
-    terminal_state=StateEnum.VERIFIED
-)
+# In ToolDefinition:
+work_states=[ImplementTaskState.IMPLEMENTING],
+dispatch_state=ImplementTaskState.DISPATCHING,
+terminal_state=ImplementTaskState.VERIFIED
 ```
 
 THERE ARE NO OTHER PATTERNS.
@@ -64,10 +69,10 @@ THERE ARE NO OTHER PATTERNS.
 ## **WHEN CREATING A NEW WORKFLOW TOOL**
 
 ### **DO:**
+- ✅ Add entry to `TOOL_DEFINITIONS` in `tool_definitions.py`
 - ✅ Define your state enum
-- ✅ Choose Pattern 1 or Pattern 2
-- ✅ Call the appropriate builder method
-- ✅ Define your artifact_map
+- ✅ Choose Pattern 1 or Pattern 2 in your `ToolDefinition`
+- ✅ Define your artifact_map in your tool class
 - ✅ Trust the builder completely
 
 ### **DON'T:**
@@ -80,9 +85,9 @@ THERE ARE NO OTHER PATTERNS.
 ## **CHOOSING YOUR PATTERN**
 
 ### **Use Pattern 1 when:**
-- Multiple sequential work states
-- Each state needs review
-- Example: plan_task (contextualize → strategize → design → subtasks)
+- Multiple sequential work states requiring deep interaction
+- Each state needs AI and human review
+- Example: plan_task (discovery → clarification → contracts → implementation_plan → validation)
 
 ### **Use Pattern 2 when:**
 - Single work state
@@ -94,24 +99,26 @@ No, it's not. Pick Pattern 1 or Pattern 2.
 
 ## **STATE MACHINE EXAMPLES**
 
-### **GOOD Example - Using the builder:**
+### **GOOD Example - Declarative tool definition:**
 ```python
+# In tool_definitions.py
+ToolName.MY_TOOL: ToolDefinition(
+    name=ToolName.MY_TOOL,
+    tool_class=MyWorkflowTool,
+    description="My workflow tool",
+    work_states=[MyState.WORKING],
+    dispatch_state=MyState.DISPATCHING,
+    terminal_state=MyState.VERIFIED,
+    entry_statuses=[TaskStatus.READY],
+    exit_status=TaskStatus.IN_PROGRESS,
+    dispatch_on_init=True
+)
+
+# Tool class uses the builder automatically
 class MyWorkflowTool(BaseWorkflowTool):
     def __init__(self, task_id: str):
-        super().__init__(task_id, "my_tool")
-        
-        # Just use the builder
-        config = workflow_builder.build_simple_workflow(
-            dispatch_state=MyState.DISPATCHING,
-            work_state=MyState.WORKING,
-            terminal_state=MyState.VERIFIED
-        )
-        
-        self.machine = Machine(
-            model=self,
-            **config,
-            auto_transitions=False
-        )
+        # Builder is called automatically by tool_factory
+        super().__init__(task_id, ToolName.MY_TOOL)
 ```
 
 ### **BAD Example - Manual construction:**

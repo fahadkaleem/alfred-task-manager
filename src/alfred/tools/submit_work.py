@@ -2,17 +2,17 @@
 from typing import Optional, Any
 from pydantic import ValidationError
 
-from src.alfred.core.prompter import generate_prompt
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.lib.artifact_manager import artifact_manager
-from src.alfred.lib.logger import get_logger
-from src.alfred.lib.task_utils import load_task
-from src.alfred.models.schemas import Task, ToolResponse
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.state.manager import state_manager
-from src.alfred.state.recovery import ToolRecovery
-from src.alfred.tools.base_tool_handler import BaseToolHandler
-from src.alfred.constants import ArtifactKeys, Triggers, ResponseStatus, LogMessages, ErrorMessages
+from alfred.core.prompter import generate_prompt
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.turn_manager import turn_manager
+from alfred.lib.logger import get_logger
+from alfred.lib.task_utils import load_task
+from alfred.models.schemas import Task, ToolResponse
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.manager import state_manager
+from alfred.state.recovery import ToolRecovery
+from alfred.tools.base_tool_handler import BaseToolHandler
+from alfred.constants import ArtifactKeys, Triggers, ResponseStatus, LogMessages, ErrorMessages
 
 logger = get_logger(__name__)
 
@@ -58,20 +58,60 @@ class SubmitWorkHandler(BaseToolHandler):
             try:
                 validated_artifact = artifact_model.model_validate(normalized_artifact)
                 logger.info(LogMessages.ARTIFACT_VALIDATED.format(state=current_state_val, model=artifact_model.__name__))
+                
+                # Additional validation for ImplementationManifestArtifact
+                from alfred.models.planning_artifacts import ImplementationManifestArtifact
+                if isinstance(validated_artifact, ImplementationManifestArtifact):
+                    # Get the planned subtasks from the execution plan
+                    execution_plan = tool_instance.context_store.get("artifact_content", {})
+                    planned_subtasks = [st["subtask_id"] for st in execution_plan.get("subtasks", [])]
+                    
+                    if planned_subtasks:
+                        validation_error = validated_artifact.validate_against_plan(planned_subtasks)
+                        if validation_error:
+                            return ToolResponse(status=ResponseStatus.ERROR, message=f"Implementation validation failed: {validation_error}")
+                        
+                        # Log successful validation
+                        completed_count = len(validated_artifact.completed_subtasks)
+                        total_count = len(planned_subtasks)
+                        logger.info(f"Implementation validation passed: {completed_count}/{total_count} subtasks completed")
+                        
             except ValidationError as e:
                 error_msg = f"{ErrorMessages.VALIDATION_FAILED.format(state=current_state_val)}. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
                 return ToolResponse(status=ResponseStatus.ERROR, message=error_msg)
         else:
             validated_artifact = normalized_artifact  # No model to validate against
 
-        # 2. Store artifact and update scratchpad
+        # 2. Store artifact and update turn-based storage
         artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
         tool_instance.context_store[artifact_key] = validated_artifact
         # For review states, we need the artifact as an object, not a string
         tool_instance.context_store[ArtifactKeys.ARTIFACT_CONTENT_KEY] = validated_artifact
         # Store the last state for generic templates
         tool_instance.context_store["last_state"] = current_state_val
-        artifact_manager.append_to_scratchpad(task.task_id, current_state_val, validated_artifact)
+
+        # Use the turn-based storage system
+        tool_name = tool_instance.__class__.__name__
+
+        # Check if this is a revision (has revision_turn_number in context)
+        revision_of = tool_instance.context_store.get("revision_turn_number")
+        revision_feedback = tool_instance.context_store.get("revision_feedback")
+        if revision_of:
+            # Clear revision context after use so it doesn't persist to next submissions
+            del tool_instance.context_store["revision_turn_number"]
+            if revision_feedback and "revision_feedback" in tool_instance.context_store:
+                del tool_instance.context_store["revision_feedback"]
+
+        # Convert Pydantic models to dict for storage
+        if hasattr(validated_artifact, "model_dump"):
+            artifact_dict = validated_artifact.model_dump()
+        else:
+            artifact_dict = validated_artifact if isinstance(validated_artifact, dict) else {"content": str(validated_artifact)}
+
+        turn_manager.append_turn(task_id=task.task_id, state_name=current_state_val, tool_name=tool_name, artifact_data=artifact_dict, revision_of=revision_of, revision_feedback=revision_feedback)
+
+        # Generate human-readable scratchpad from turns
+        turn_manager.generate_scratchpad(task.task_id)
 
         # 3. Determine the correct trigger and fire it
         trigger_name = Triggers.submit_trigger(current_state_val)
@@ -99,14 +139,14 @@ class SubmitWorkHandler(BaseToolHandler):
 
         normalized = artifact.copy()
 
-        # Normalize file_breakdown operations (for DesignArtifact)
+        # Normalize file_breakdown operations (for ContractDesignArtifact and ImplementationPlanArtifact from discovery planning)
         if "file_breakdown" in normalized and isinstance(normalized["file_breakdown"], list):
             for file_change in normalized["file_breakdown"]:
                 if isinstance(file_change, dict) and "operation" in file_change:
                     # Normalize operation to uppercase
                     file_change["operation"] = file_change["operation"].upper()
 
-        # Normalize subtasks operations (for ExecutionPlanArtifact)
+        # Normalize subtasks operations (for ImplementationPlanArtifact)
         if "subtasks" in normalized and isinstance(normalized["subtasks"], list):
             for subtask in normalized["subtasks"]:
                 if isinstance(subtask, dict) and "operation" in subtask:

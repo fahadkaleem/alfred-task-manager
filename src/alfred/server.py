@@ -12,32 +12,34 @@ from typing import AsyncIterator, Callable
 
 from fastmcp import FastMCP
 
-from src.alfred.config.settings import settings
-from src.alfred.core.prompter import prompt_library  # Import the prompt library
-from src.alfred.lib.logger import get_logger
-from src.alfred.lib.transaction_logger import transaction_logger
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.tools.approve_and_advance import approve_and_advance_impl
-from src.alfred.constants import ToolName
-from src.alfred.tools.registry import tool_registry
-from src.alfred.tools.create_spec import create_spec_impl
+from alfred.config.settings import settings
+from alfred.core.prompter import prompt_library  # Import the prompt library
+from alfred.lib.logger import get_logger
+from alfred.lib.transaction_logger import transaction_logger
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.tools.approve_and_advance import approve_and_advance_impl
+from alfred.constants import ToolName
+from alfred.tools.registry import tool_registry
+from alfred.tools.create_spec import create_spec_impl
 from alfred.tools.create_tasks_from_spec import create_tasks_from_spec_impl
-from src.alfred.tools.create_task import create_task_impl
-from src.alfred.tools.finalize_task import finalize_task_impl
-from src.alfred.tools.get_next_task import get_next_task_impl
-from src.alfred.tools.implement_task import implement_task_impl
-from src.alfred.tools.initialize import initialize_project as initialize_project_impl
-from src.alfred.tools.plan_task import plan_task_impl
-from src.alfred.tools.review_task import review_task_impl
-from src.alfred.tools.test_task import test_task_impl
-from src.alfred.core.workflow import PlanTaskTool, ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
-from src.alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
-from src.alfred.tools.approve_review import approve_review_impl
-from src.alfred.tools.request_revision import request_revision_impl
-from src.alfred.tools.submit_work import submit_work_handler
-from src.alfred.tools.work_on import work_on_impl
-from src.alfred.tools.tool_definitions import TOOL_DEFINITIONS, get_tool_definition
-from src.alfred.tools.tool_factory import get_tool_handler
+from alfred.tools.create_task import create_task_impl
+from alfred.tools.finalize_task import finalize_task_impl
+from alfred.tools.get_next_task import get_next_task_impl
+from alfred.tools.implement_task import implement_task_impl
+from alfred.tools.initialize import initialize_project as initialize_project_impl
+from alfred.tools.plan_task import plan_task_impl
+from alfred.tools.review_task import review_task_impl
+from alfred.tools.test_task import test_task_impl
+from alfred.core.workflow import ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
+from alfred.core.discovery_workflow import PlanTaskTool
+from alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
+from alfred.tools.approve_review import approve_review_impl
+from alfred.tools.request_revision import request_revision_impl
+from alfred.tools.submit_work import submit_work_handler
+from alfred.tools.work_on import work_on_impl
+from alfred.tools.tool_definitions import TOOL_DEFINITIONS, get_tool_definition
+from alfred.tools.tool_factory import get_tool_handler
+from alfred.llm.initialization import initialize_ai_providers
 
 logger = get_logger(__name__)
 
@@ -60,6 +62,9 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
     """Lifespan context manager for FastMCP server."""
     # Startup
     logger.info(f"Starting Alfred server with {len(prompt_library._cache)} prompts loaded")
+
+    # Initialize AI providers (following Alfred's immutable startup principle)
+    await initialize_ai_providers()
 
     yield
 
@@ -179,14 +184,14 @@ async def work_on_task(task_id: str) -> ToolResponse:
     - COMPLETED: Informs user the task is complete
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains routing guidance to the appropriate specialized tool
 
     Example:
-        work_on_task("TS-01") -> Guides to plan_task if task is new
-        work_on_task("TS-02") -> Guides to implement_task if planning is complete
+        work_on_task("TK-01") -> Guides to plan_task if task is new
+        work_on_task("TK-02") -> Guides to implement_task if planning is complete
     """
     pass  # Implementation handled by decorator
 
@@ -360,17 +365,18 @@ async def plan_task(task_id: str) -> ToolResponse:
     into a concrete, machine-executable 'Execution Plan' composed of Subtasks.
     A Subtask (based on LOST framework) is an atomic unit of work.
 
-    This tool manages a multi-step, interactive planning process:
-    1. **Contextualize**: Deep analysis of the task requirements and codebase context
-    2. **Strategize**: High-level technical approach and architecture decisions
-    3. **Design**: Detailed technical design and component specifications
-    4. **Generate Subtasks**: Break down into atomic, executable work units
+    This tool manages a multi-step, interactive discovery planning process:
+    1. **Discovery**: Deep context discovery and codebase exploration
+    2. **Clarification**: Conversational human-AI clarification
+    3. **Contracts**: Interface-first design and contracts
+    4. **Implementation Plan**: Self-contained subtask creation
+    5. **Validation**: Final plan validation and coherence check
 
     Each step includes AI self-review followed by human approval gates to ensure quality.
     The final output is a validated execution plan ready for implementation.
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains success/error status and the next prompt to guide planning
@@ -398,47 +404,40 @@ async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
     """
     Submits a structured work artifact for the current step of a workflow tool.
 
-    - Generic state-advancing tool for any active workflow (plan, implement, review, test)
-    - Automatically determines correct state transition based on current state
-    - Validates artifact structure against expected schema for current state
-    - Advances the tool's state machine to next step or review phase
-    - Works with all workflow tools: plan_task, implement_task, review_task, test_task
+    This tool advances any active workflow (plan, implement, review, test) by submitting
+    the completed work for the current state. It automatically validates the artifact
+    structure and transitions to the next appropriate state in the workflow.
 
-    The artifact structure varies by tool and state:
-    - **Planning states**: context_analysis, strategy, design, subtasks
+    The artifact structure varies by workflow tool and current state:
+    - **Planning states**: context_discovery, clarification, contract_design, implementation_plan, validation
     - **Implementation**: progress updates, completion status
     - **Review**: findings, issues, recommendations
     - **Testing**: test results, coverage, validation status
 
-    Parameters:
-        task_id (str): The unique identifier for the task (e.g., "AL-01", "TS-123")
-        artifact (dict): Structured data matching the current state's expected schema
+    ## Parameters
+    - **task_id** `[string]`: The unique identifier for the task (e.g., "AL-01", "TK-123")
+    - **artifact** `[object]`: Structured data matching the current state's expected schema
 
-    Returns:
-        ToolResponse: Contains:
-            - success: Whether submission was accepted
-            - data.next_action: The next tool/action to take
-            - data.state: New state after transition
-            - data.prompt: Next prompt for user interaction
+    ## Examples
+    ```
+    # Planning context submission
+    submit_work("AL-01", {
+        "understanding": "Task requires refactoring auth module...",
+        "constraints": ["Must maintain backward compatibility"],
+        "risks": ["Potential breaking changes to API"]
+    })
 
-    Examples:
-        # Planning context submission
-        submit_work("AL-01", {
-            "understanding": "Task requires refactoring auth module...",
-            "constraints": ["Must maintain backward compatibility"],
-            "risks": ["Potential breaking changes to API"]
-        })
+    # Implementation progress
+    submit_work("AL-02", {
+        "progress": "Completed authentication refactor",
+        "subtasks_completed": ["subtask-1", "subtask-2"]
+    })
+    ```
 
-        # Implementation progress
-        submit_work("AL-02", {
-            "progress": "Completed authentication refactor",
-            "subtasks_completed": ["subtask-1", "subtask-2"]
-        })
-
-    Next Actions:
-        - If in review state: Use approve_review or request_revision
-        - If advancing to new phase: Tool will indicate next tool to use
-        - If complete: No further action needed
+    ## Next Actions
+    - If in review state: Use approve_review or request_revision
+    - If advancing to new phase: Tool will indicate next tool to use
+    - If complete: No further action needed
     """
     return await submit_work_handler.execute(task_id, artifact=artifact)
 
@@ -455,7 +454,7 @@ async def approve_review(task_id: str) -> ToolResponse:
     - Automatically determines next state based on current workflow phase
 
     Applicable States:
-    - **Planning**: review_context, review_strategy, review_design, review_plan
+    - **Planning**: discovery_awaiting_ai_review, clarification_awaiting_ai_review, contracts_awaiting_ai_review, implementation_plan_awaiting_ai_review, validation_awaiting_ai_review
     - **Implementation**: awaiting_human_review after completion
     - **Review**: awaiting_ai_review, awaiting_human_review
     - **Testing**: awaiting_ai_review, awaiting_human_review
@@ -568,7 +567,7 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
     - The state is properly persisted after marking completion
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
         subtask_id (str): The subtask identifier to mark as complete (e.g., "subtask-1")
 
     Returns:
@@ -578,7 +577,7 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
             - List of remaining subtasks
 
     Example:
-        mark_subtask_complete("TS-01", "subtask-1")
+        mark_subtask_complete("TK-01", "subtask-1")
         # Returns progress update showing 1/5 subtasks complete (20%)
     """
     pass  # Implementation handled by decorator
@@ -603,13 +602,13 @@ async def implement_task(task_id: str) -> ToolResponse:
     - Maintaining implementation state across sessions
 
     Args:
-        task_id (str): The unique identifier for the task (e.g., "TS-01", "PROJ-123")
+        task_id (str): The unique identifier for the task (e.g., "TK-01", "PROJ-123")
 
     Returns:
         ToolResponse: Contains success/error status and implementation guidance
 
     Example:
-        implement_task("TS-01") -> Starts implementation of planned task
+        implement_task("TK-01") -> Starts implementation of planned task
     """
     handler = get_tool_handler(ToolName.IMPLEMENT_TASK)
     return await handler.execute(task_id)

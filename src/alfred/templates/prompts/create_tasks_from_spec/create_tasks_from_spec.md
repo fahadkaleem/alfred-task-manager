@@ -53,10 +53,10 @@ Your final output MUST be a single, valid JSON object. It must be an array of `T
 ```json
 [
   {
-    "task_id": "TS-XX", // You will generate this, starting from the next available number.
+    "task_id": "TK-XX", // You will generate this, starting from the next available number.
     "title": "Clear, concise title for the task.",
     "priority": "critical | high | medium | low",
-    "dependencies": ["TS-YY", "TS-ZZ"], // List of task_ids this task depends on.
+    "dependencies": ["TK-YY", "TK-ZZ"], // List of task_ids this task depends on.
     "context": "A 1-2 sentence explanation of how this task fits into the larger project, referencing the spec.",
     "implementation_details": "Specific, actionable instructions for the developer. Reference file paths, function names, or design patterns from the spec.",
     "dev_notes": "Optional notes, hints, or warnings for the developer.",

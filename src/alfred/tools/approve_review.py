@@ -1,6 +1,6 @@
 # src/alfred/tools/approve_review.py
-from src.alfred.tools.provide_review_logic import provide_review_logic
-from src.alfred.models.schemas import ToolResponse
+from alfred.tools.provide_review_logic import provide_review_logic
+from alfred.models.schemas import ToolResponse
 
 
 async def approve_review_impl(task_id: str) -> ToolResponse:

@@ -1,21 +1,22 @@
 # src/alfred/tools/provide_review_logic.py
-from src.alfred.core.prompter import generate_prompt
-from src.alfred.lib.logger import get_logger, cleanup_task_logging
-from src.alfred.lib.task_utils import load_task
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.constants import Triggers
-from src.alfred.orchestration.orchestrator import orchestrator
-from src.alfred.state.manager import state_manager
-from src.alfred.constants import ArtifactKeys
-from src.alfred.config.manager import ConfigManager
-from src.alfred.config.settings import settings
+from alfred.core.prompter import generate_prompt
+from alfred.lib.logger import get_logger, cleanup_task_logging
+from alfred.lib.task_utils import load_task
+from alfred.lib.turn_manager import turn_manager
+from alfred.models.schemas import ToolResponse
+from alfred.constants import Triggers, ToolName
+from alfred.orchestration.orchestrator import orchestrator
+from alfred.state.manager import state_manager
+from alfred.constants import ArtifactKeys
+from alfred.config.manager import ConfigManager
+from alfred.config.settings import settings
 
 logger = get_logger(__name__)
 
 
 async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
     if task_id not in orchestrator.active_tools:
-        from src.alfred.state.recovery import ToolRecovery
+        from alfred.state.recovery import ToolRecovery
 
         recovered_tool = ToolRecovery.recover_tool(task_id)
         if not recovered_tool:
@@ -31,6 +32,13 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
     logger.info(f"Processing review for task {task_id} in state '{current_state}', approved={is_approved}")
 
     if not is_approved:
+        # Record revision request as a turn
+        if feedback_notes:
+            state_to_revise = current_state.replace("_awaiting_ai_review", "").replace("_awaiting_human_review", "")
+            revision_turn = turn_manager.request_revision(task_id=task_id, state_to_revise=state_to_revise, feedback=feedback_notes, requested_by="human")
+            # Store the revision turn number in context for next submission
+            active_tool.context_store["revision_turn_number"] = revision_turn.turn_number
+
         active_tool.trigger(Triggers.REQUEST_REVISION)
         message = "Revision requested. Returning to previous step."
     else:
@@ -69,7 +77,25 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         orchestrator.active_tools.pop(task_id, None)
         cleanup_task_logging(task_id)
 
-        handoff = f"""The '{tool_name}' workflow has completed successfully! 
+        # Import here to avoid circular dependency
+        from alfred.models.schemas import TaskStatus
+        from alfred.core.workflow_config import WorkflowConfiguration
+
+        # Update task status based on the tool that just completed
+        current_task_status = task.task_status
+        if tool_name == ToolName.PLAN_TASK and current_task_status == TaskStatus.PLANNING:
+            # Planning completed, update to READY_FOR_DEVELOPMENT
+            state_manager.update_task_status(task_id, TaskStatus.READY_FOR_DEVELOPMENT)
+            logger.info(f"Planning completed for task {task_id}. Status updated to READY_FOR_DEVELOPMENT.")
+            handoff = f"""The planning workflow has completed successfully!
+
+Task '{task_id}' is now ready for development.
+
+**Next Action:**
+Call `alfred.work_on_task(task_id='{task_id}')` to start implementation."""
+        else:
+            # For other tools, provide the standard handoff message
+            handoff = f"""The '{tool_name}' workflow has completed successfully! 
 
 **Next Action Required:**
 Call `alfred.approve_and_advance(task_id='{task_id}')` to:
@@ -78,7 +104,8 @@ Call `alfred.approve_and_advance(task_id='{task_id}')` to:
 - Update task status
 
 **Alternative:** If you need to review the work first, call `alfred.work_on_task(task_id='{task_id}')` to see current status."""
-        return ToolResponse(status="success", message=f"'{tool_name}' completed. Awaiting final approval.", next_prompt=handoff)
+
+        return ToolResponse(status="success", message=f"'{tool_name}' completed.", next_prompt=handoff)
 
     if not is_approved and feedback_notes:
         # Store feedback in the tool's context for persistence

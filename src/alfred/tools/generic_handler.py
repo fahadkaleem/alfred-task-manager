@@ -4,12 +4,12 @@ Generic workflow handler that replaces all individual tool handlers.
 
 from typing import Optional, Any
 
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.tools.base_tool_handler import BaseToolHandler
-from src.alfred.tools.workflow_config import WorkflowToolConfig
-from src.alfred.state.manager import state_manager
-from src.alfred.lib.logger import get_logger
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.tools.base_tool_handler import BaseToolHandler
+from alfred.tools.workflow_config import WorkflowToolConfig
+from alfred.state.manager import state_manager
+from alfred.lib.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -53,23 +53,25 @@ class GenericWorkflowHandler(BaseToolHandler):
                     message=f"Task '{task.task_id}' has status '{task.task_status.value}'. Planning can only start on a 'new' or resume a 'planning' task.",
                 )
 
-        # Check if we should dispatch on initialization
-        if self.config.dispatch_on_init and tool_instance.state == self.config.dispatch_state_attr:
+        # Load context if configured (for both dispatching and non-dispatching tools)
+        if self.config.context_loader:
             # Load task state for context
             task_state = state_manager.load_or_create(task.task_id)
 
-            # Load context using configured loader
-            if self.config.context_loader:
-                try:
-                    context = self.config.context_loader(task, task_state)
-                    tool_instance.context_store.update(context)
-                except ValueError as e:
-                    # Context loader can raise ValueError for missing dependencies
-                    return ToolResponse(status="error", message=str(e))
-                except Exception as e:
-                    logger.error(f"Context loader failed for {self.config.tool_name}: {e}")
-                    return ToolResponse(status="error", message=f"Failed to load required context for {self.config.tool_name}: {str(e)}")
+            try:
+                context = self.config.context_loader(task, task_state)
+                # Update context_store with context loader values, allowing overrides for proper variable mapping
+                for key, value in context.items():
+                    tool_instance.context_store[key] = value
+            except ValueError as e:
+                # Context loader can raise ValueError for missing dependencies
+                return ToolResponse(status="error", message=str(e))
+            except Exception as e:
+                logger.error(f"Context loader failed for {self.config.tool_name}: {e}")
+                return ToolResponse(status="error", message=f"Failed to load required context for {self.config.tool_name}: {str(e)}")
 
+        # Check if we should dispatch on initialization
+        if self.config.dispatch_on_init and tool_instance.state == self.config.dispatch_state_attr:
             # Dispatch to next state
             dispatch_method = getattr(tool_instance, self.config.target_state_method)
             dispatch_method()

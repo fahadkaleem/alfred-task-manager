@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from src.alfred.models.schemas import Task, ToolResponse
+from alfred.models.schemas import Task, ToolResponse
 
 
 class BaseTaskProvider(ABC):

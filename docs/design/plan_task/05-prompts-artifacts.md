@@ -1,376 +1,465 @@
-# Prompts and Artifacts
+# Discovery Planning Prompts and Artifacts
 
 ## Overview
 
-The prompt and artifact system is the heart of Alfred's human-AI collaboration. This document details how prompts guide AI behavior and how artifacts capture structured outputs.
+The Discovery Planning system uses a simplified, turn-based approach with human-readable artifacts and a conversational style. This document details the prompt templates and artifact structures for each phase of the planning workflow.
 
-## Prompt System Architecture
+## Core Design Principles
 
-### Template Organization
-```
-templates/prompts/plan_task/
-├── contextualize.md      # Initial analysis
-├── review_context.md     # Clarification dialogue
-├── strategize.md        # Strategy formulation
-├── review_strategy.md   # Strategy review
-├── design.md           # Detailed design
-├── review_design.md    # Design review
-├── generate_slots.md   # SLOT generation
-├── review_plan.md      # Final review
-└── verified.md         # Completion message
-```
+### 1. **Simplicity First**
+- Simple JSON artifacts with clear fields
+- Markdown for all human-readable content
+- No nested complex structures
+- Validation focuses on essentials only
 
-### Prompt Structure
+### 2. **Turn-Based Storage**
+- Each artifact is saved as an immutable turn
+- No JSON-to-Markdown conversions needed
+- Scratchpad is a generated view, not storage
+- Full history preserved for debugging
 
-Each prompt follows a consistent structure:
+### 3. **Conversational Style**
+- Prompts encourage natural dialogue
+- Multi-turn conversations supported
+- Context preserved across interactions
+- Human expertise captured naturally
 
+## Prompt Templates
+
+### Discovery Phase Prompt
+
+**File**: `src/alfred/templates/prompts/plan_task/discovery.md`
+
+**Purpose**: Guide AI to explore the codebase comprehensively
+
+**Key Sections**:
 ```markdown
-# ROLE: {{ persona.name }}, {{ persona.title }}
-# TOOL: `alfred.plan_task`
-# TASK: {{ task.task_id }}
-# STATE: {{ current_state }}
+# INSTRUCTIONS
+1. Use Glob/Grep/Read tools to explore relevant code
+2. Document what you find in markdown
+3. Note any questions you need answered
+4. List files that need changes
+5. Assess complexity (LOW/MEDIUM/HIGH)
 
-[Contextual greeting or status update]
-
----
-### **Persona Guidelines**
-[Instructions for embodying the persona]
-
----
-### **Task Context**
-[Relevant task information]
-
----
-### **Directive**
-[Specific instructions for this state]
-
----
-### **Required Action**
-[Tool call specification with artifact structure]
+# OUTPUT
+Submit a simple artifact with:
+- **findings**: Your discoveries in markdown format
+- **questions**: List of questions (must end with ?)
+- **files_to_modify**: List of file paths
+- **complexity**: LOW, MEDIUM, or HIGH
+- **implementation_context**: Any code/patterns for later use
 ```
 
-## Persona Integration
+**Design Rationale**:
+- Encourages parallel tool usage for efficiency
+- Markdown findings are human-readable without conversion
+- Questions must end with "?" for validation
+- Complexity assessment guides workflow adaptation
+- Implementation context preserves discovered patterns
 
-### Persona Configuration
-```yaml
-# personas/planning.yml
-name: "Alex"
-title: "Senior Planning Architect"
-greeting: "Hey there! Alex here, your planning architect"
-communication_style: "Collaborative, detail-oriented, asks clarifying questions"
-thinking_methodology: "Break down complex problems into manageable pieces"
-```
+### Clarification Phase Prompt
 
-### Dynamic Persona Injection
-```jinja2
-# In prompts
-**Your Persona:** {{ persona.name }}, {{ persona.title }}.
-**Communication Style:** {{ persona.communication_style }}
+**File**: `src/alfred/templates/prompts/plan_task/clarification.md`
 
-# Example rendering
-**Your Persona:** Alex, Senior Planning Architect.
-**Communication Style:** Collaborative, detail-oriented, asks clarifying questions
-```
+**Purpose**: Enable natural conversation to resolve ambiguities
 
-## State-Specific Prompts
-
-### 1. CONTEXTUALIZE Prompt
-**Purpose**: Guide initial codebase analysis
-
+**Key Features**:
 ```markdown
-### **Directive: Codebase Analysis & Ambiguity Detection**
-
-Your mission is to become the expert on this task. You must:
-1. **Analyze the existing codebase.**
-2. **Identify Ambiguities.**
-
-### **Required Action**
-Call `alfred.submit_work` with a `ContextAnalysisArtifact`:
-```json
-{
-  "context_summary": "string",
-  "affected_files": ["string"],
-  "questions_for_developer": ["string"]
-}
+# INSTRUCTIONS
+1. Present each question with its full context from discovery
+2. Have a natural, multi-turn conversation with the human
+3. **IMPORTANT: Track your progress internally** - humans may answer only some questions at a time:
+   - Keep a mental list of which questions have been answered
+   - Which questions remain unanswered
+   - If human skips questions or only partially answers, acknowledge what you learned and continue asking the remaining questions
+   - Do NOT submit work until ALL questions are resolved
 ```
 
-### 2. REVIEW_CONTEXT Prompt
-**Purpose**: Manage clarification dialogue
+**Design Innovation**:
+- Supports partial answers and follow-ups
+- AI tracks conversation state internally
+- Natural dialogue flow, not rigid Q&A
+- Captures domain knowledge through conversation
 
+### Contracts Phase Prompt
+
+**File**: `src/alfred/templates/prompts/plan_task/contracts.md`
+
+**Purpose**: Design interfaces before implementation
+
+**Structure**:
 ```markdown
-### **Directive: Manage Clarification Dialogue**
-
-1. **Maintain a checklist** of the questions below
-2. **Present the unanswered questions**
-3. **Receive their response**
-4. **Check your list**
-5. **Repeat until all questions are answered**
-
-**My Questions Checklist:**
-{% for question in artifact.questions_for_developer %}
-- [ ] {{ question }}
-{% endfor %}
+# OUTPUT
+Submit artifact with:
+- **interface_design**: Markdown-formatted specifications
+- **contracts_defined**: List of main contracts/interfaces
+- **design_notes**: Important decisions or notes
 ```
 
-### 3. STRATEGIZE Prompt
-**Purpose**: Create technical strategy
+**Simplification**:
+- Single markdown field for all interface designs
+- List of contract names for quick reference
+- Design notes capture key decisions
+- No complex nested structures
 
+### Implementation Plan Prompt
+
+**File**: `src/alfred/templates/prompts/plan_task/implementation_plan.md`
+
+**Purpose**: Create detailed implementation steps with subtasks
+
+**Key Output**:
 ```markdown
-### **Available Context**
-{% set context_artifact = context_store.context_artifact %}
-{% if additional_context.feedback_notes %}
-**Developer's Clarifications:**
-{{ additional_context.feedback_notes }}
-{% endif %}
+# OUTPUT
+- **implementation_plan**: Markdown-formatted steps
+- **subtasks**: List of structured subtasks with IDs
+- **risks**: Potential risks or concerns
+```
 
-### **Directive: Technical Strategy**
-Based on the clarifications, create a comprehensive strategy
+**Subtask Structure**:
+- Simple ID + description format
+- Self-contained context in plan markdown
+- No complex dependency tracking
+- Future extensibility preserved
+
+### Validation Phase Prompt
+
+**File**: `src/alfred/templates/prompts/plan_task/validation.md`
+
+**Purpose**: Final coherence check
+
+**Validation Output**:
+```markdown
+# OUTPUT
+- **validation_summary**: Markdown results
+- **validations_performed**: Checklist of validations
+- **issues_found**: List of concerns
+- **ready_for_implementation**: Boolean flag
 ```
 
 ## Artifact Models
 
-### 1. ContextAnalysisArtifact
+### ContextDiscoveryArtifact
+
+**File**: `src/alfred/models/planning_artifacts.py`
+
 ```python
-class ContextAnalysisArtifact(BaseModel):
-    """Captures understanding of task context"""
-    context_summary: str = Field(
-        description="Summary of codebase understanding"
+class ContextDiscoveryArtifact(BaseModel):
+    """Simplified discovery artifact focusing on essentials."""
+    
+    # What we found (markdown formatted for readability)
+    findings: str = Field(
+        description="Markdown-formatted discovery findings"
     )
-    affected_files: List[str] = Field(
-        description="Files relevant to the task"
+    
+    # Questions that need answers
+    questions: List[str] = Field(
+        description="Simple list of questions for clarification",
+        default_factory=list
     )
-    questions_for_developer: List[str] = Field(
-        description="Ambiguities requiring clarification"
+    
+    # Files that will be touched
+    files_to_modify: List[str] = Field(
+        description="List of files that need changes",
+        default_factory=list
+    )
+    
+    # Complexity assessment
+    complexity: ComplexityLevel = Field(
+        description="Overall complexity: LOW, MEDIUM, or HIGH",
+        default=ComplexityLevel.MEDIUM
+    )
+    
+    # Context bundle for implementation (free-form)
+    implementation_context: Dict[str, Any] = Field(
+        description="Any context needed for implementation",
+        default_factory=dict
     )
 ```
 
-### 2. StrategyArtifact
+**Design Choices**:
+- `findings` in markdown eliminates conversion needs
+- Simple string list for questions (validated to end with "?")
+- Free-form dict for implementation context
+- Enum for complexity ensures consistency
+
+### ClarificationArtifact
+
 ```python
-class StrategyArtifact(BaseModel):
-    """High-level technical approach"""
-    approach: str = Field(
-        description="Overall technical strategy"
+class ClarificationArtifact(BaseModel):
+    """Simplified clarification results."""
+    
+    # Q&A in markdown format
+    clarification_dialogue: str = Field(
+        description="Markdown-formatted Q&A dialogue"
     )
-    key_technical_decisions: List[str] = Field(
-        description="Important design choices"
+    
+    # Key decisions made
+    decisions: List[str] = Field(
+        description="List of decisions made during clarification",
+        default_factory=list
     )
-    risk_factors: List[str] = Field(
-        description="Potential challenges"
-    )
-```
-
-### 3. DesignArtifact
-```python
-class FileChange(BaseModel):
-    """Single file modification"""
-    file_path: str
-    operation: OperationType  # CREATE, MODIFY, DELETE, REVIEW
-    summary: str
-
-class DesignArtifact(BaseModel):
-    """Detailed implementation design"""
-    design_overview: str
-    file_breakdown: List[FileChange]
-    assumptions: List[str] = Field(default_factory=list)
-```
-
-### 4. ExecutionPlanArtifact
-```python
-class Taskflow(BaseModel):
-    """Step-by-step procedures"""
-    description: str
-    steps: List[str]
-    verification_steps: List[str]
-
-class DelegationSpec(BaseModel):
-    """Complex task delegation"""
-    delegated_to: str
-    sub_slots: List['SLOT']
-    handoff_context: str
-
-class SLOT(BaseModel):
-    """Atomic work unit"""
-    slot_id: str
-    title: str
-    spec: str
-    location: str
-    operation: OperationType
-    taskflow: Taskflow
-    delegation: Optional[DelegationSpec] = None
-
-class ExecutionPlanArtifact(BaseModel):
-    """Complete execution plan"""
-    slots: List[SLOT]
-    estimated_complexity: str = Field(
-        description="Overall complexity assessment"
+    
+    # Any new constraints discovered
+    additional_constraints: List[str] = Field(
+        description="New constraints or requirements discovered",
+        default_factory=list
     )
 ```
 
-## Artifact Rendering
+**Conversation Capture**:
+- Full dialogue preserved in markdown
+- Key decisions extracted as a list
+- New constraints documented separately
+- No complex conversation tree structure
 
-### Template Organization
-```
-templates/artifacts/
-├── context_analysis.md   # Context artifact display
-├── strategy.md          # Strategy artifact display
-├── design.md           # Design artifact display
-└── execution_plan.md   # Execution plan display
-```
+### ContractDesignArtifact
 
-### Example Artifact Template
-```jinja2
-{# execution_plan.md #}
-## 🎯 Execution Plan Generated
-
-**Generated by:** {{ persona.name }} ({{ persona.title }})
-**Timestamp:** {{ timestamp }}
-
-### Overview
-- **Total SLOTs:** {{ artifact.slots | length }}
-- **Estimated Complexity:** {{ artifact.estimated_complexity }}
-
-### Execution Units
-
-{% for slot in artifact.slots %}
-#### SLOT {{ slot.slot_id }}: {{ slot.title }}
-- **Location:** `{{ slot.location }}`
-- **Operation:** {{ slot.operation }}
-- **Specification:** {{ slot.spec }}
-
-**Taskflow:**
-{{ slot.taskflow.description }}
-
-**Steps:**
-{% for step in slot.taskflow.steps %}
-{{ loop.index }}. {{ step }}
-{% endfor %}
-
-{% if slot.delegation %}
-**⚡ Delegated to:** {{ slot.delegation.delegated_to }}
-**Handoff Context:** {{ slot.delegation.handoff_context }}
-{% endif %}
-
----
-{% endfor %}
-```
-
-## Context Flow Between States
-
-### Context Accumulation Pattern
 ```python
-# After CONTEXTUALIZE
-context_store = {
-    "context_artifact": ContextAnalysisArtifact(...)
-}
-
-# After STRATEGIZE  
-context_store = {
-    "context_artifact": ContextAnalysisArtifact(...),
-    "feedback_notes": "Developer clarifications",
-    "strategy_artifact": StrategyArtifact(...)
-}
-
-# After DESIGN
-context_store = {
-    "context_artifact": ContextAnalysisArtifact(...),
-    "feedback_notes": "Developer clarifications", 
-    "strategy_artifact": StrategyArtifact(...),
-    "design_artifact": DesignArtifact(...)
-}
+class ContractDesignArtifact(BaseModel):
+    """Simplified contracts/interface design."""
+    
+    # Interface design in markdown
+    interface_design: str = Field(
+        description="Markdown-formatted interface specifications"
+    )
+    
+    # Key APIs/contracts defined
+    contracts_defined: List[str] = Field(
+        description="List of main contracts/interfaces defined",
+        default_factory=list
+    )
+    
+    # Any additional notes
+    design_notes: List[str] = Field(
+        description="Important design decisions or notes",
+        default_factory=list
+    )
 ```
 
-### Template Context Access
-```jinja2
-{# Access previous artifacts in templates #}
-{% set strategy = context_store.strategy_artifact %}
-{% set design = context_store.design_artifact %}
+**Flexibility**:
+- Single markdown field for all designs
+- List of contract names for indexing
+- Design notes capture rationale
+- No rigid schema for interfaces
 
-{# Use data from previous phases #}
-Following the strategy of {{ strategy.approach }},
-implementing the design with {{ design.file_breakdown | length }} files...
-```
+### ImplementationPlanArtifact
 
-## Prompt Engineering Best Practices
-
-### 1. Clear Structure
-- Consistent headers and sections
-- Explicit required actions
-- JSON examples for artifacts
-
-### 2. Persona Embodiment
-- Dynamic greetings
-- Role-appropriate language
-- Avoid repetitive phrases
-
-### 3. Context Awareness
-- Reference previous artifacts
-- Incorporate feedback
-- Maintain conversation flow
-
-### 4. Progressive Disclosure
-- Only show relevant context
-- Build on previous states
-- Avoid information overload
-
-## Artifact Validation
-
-### Validation Flow
 ```python
-# 1. Pydantic validation
-try:
-    validated = ArtifactModel.model_validate(submitted_data)
-except ValidationError as e:
-    return detailed_error_message(e)
-
-# 2. Business logic validation
-if not validated.slots:
-    return "Execution plan must contain at least one SLOT"
-
-# 3. Persistence
-context_store[artifact_key] = validated
-append_to_scratchpad(validated)
+class ImplementationPlanArtifact(BaseModel):
+    """Implementation plan with structured subtasks."""
+    
+    # Implementation plan in markdown
+    implementation_plan: str = Field(
+        description="Markdown-formatted implementation steps"
+    )
+    
+    # List of structured subtasks
+    subtasks: List[Subtask] = Field(
+        description="List of structured subtasks with IDs",
+        default_factory=list
+    )
+    
+    # Any risks or concerns
+    risks: List[str] = Field(
+        description="Potential risks or concerns",
+        default_factory=list
+    )
 ```
 
-### Error Messages
-Validation errors are formatted for AI comprehension:
-```
-Artifact validation failed for state 'generate_slots'.
-The submitted artifact does not match the required structure.
+### Subtask Model
 
-Validation Errors:
-- slots.0.taskflow.steps: Field required
-- slots.1.operation: Invalid enum value 'modify', expected one of: CREATE, MODIFY, DELETE, REVIEW
-```
-
-## Advanced Prompt Features
-
-### 1. Conditional Sections
-```jinja2
-{% if task.acceptance_criteria %}
-### Acceptance Criteria
-{% for criterion in task.acceptance_criteria %}
-- {{ criterion }}
-{% endfor %}
-{% endif %}
+```python
+class Subtask(BaseModel):
+    """Structured subtask with ID and description."""
+    
+    subtask_id: str = Field(
+        ..., 
+        description="Unique identifier for the subtask (e.g., 'subtask-1')"
+    )
+    description: str = Field(
+        ..., 
+        description="Clear, actionable description of what needs to be done"
+    )
+    # Future extensibility: status, dependencies, estimated_hours, etc.
 ```
 
-### 2. Dynamic Lists
-```jinja2
-### Files to Consider
-{% for file in context_store.context_artifact.affected_files %}
-- `{{ file }}`
-{% endfor %}
+**Extensibility**:
+- Minimal required fields
+- Room for future enhancements
+- Compatible with existing implementation flow
+- Self-contained context in plan markdown
+
+### ValidationArtifact
+
+```python
+class ValidationArtifact(BaseModel):
+    """Simplified validation results."""
+    
+    # Validation summary in markdown
+    validation_summary: str = Field(
+        description="Markdown-formatted validation results"
+    )
+    
+    # Checklist of validations performed
+    validations_performed: List[str] = Field(
+        description="List of validations performed",
+        default_factory=list
+    )
+    
+    # Any issues found
+    issues_found: List[str] = Field(
+        description="List of issues or concerns found",
+        default_factory=list
+    )
+    
+    # Ready for implementation?
+    ready_for_implementation: bool = Field(
+        description="Whether the plan is ready for implementation",
+        default=True
+    )
 ```
 
-### 3. Nested Templates
-```jinja2
-{% include 'partials/persona_guidelines.md' %}
+## Turn-Based Storage System
+
+### How Artifacts are Stored
+
+```python
+# When submitting work
+artifact_manager.record_artifact(
+    task_id=task.task_id,
+    state_name=current_state_val,
+    tool_name=tool_name,
+    artifact_data=validated_artifact,
+    revision_of=revision_of  # If this is a revision
+)
 ```
+
+### Turn Structure
+
+```python
+class Turn(BaseModel):
+    """Represents a single turn in the task history."""
+    turn_number: int
+    state_name: str
+    tool_name: str
+    timestamp: datetime
+    artifact_data: Dict[str, Any]
+    revision_of: Optional[int]
+    revision_feedback: Optional[str]
+```
+
+### Storage Benefits
+
+1. **Immutable History**: Every artifact version preserved
+2. **No Data Loss**: Original JSON saved exactly
+3. **Efficient Queries**: Manifest provides quick lookups
+4. **Revision Tracking**: Clear lineage of changes
+5. **Tool Agnostic**: Works with any workflow
+
+## Scratchpad Generation
+
+### Current State View
+
+The scratchpad is now a **view**, not storage:
+
+```python
+def generate_scratchpad(self, task_id: str):
+    """Generates a human-readable scratchpad showing ONLY the current state."""
+    
+    # Get latest artifacts by state
+    latest_artifacts = turn_manager.get_latest_artifacts_by_state(task_id)
+    
+    # Determine current phase
+    current_phase = self._determine_current_phase(task, current_state)
+    
+    # Build clean, current view
+    content_parts = [
+        f"# Task: {task_id}",
+        f"**Current Phase:** {current_phase}",
+        # ... phase-specific content
+    ]
+```
+
+### Phase-Specific Rendering
+
+```python
+if current_phase == "Planning":
+    # Show planning artifacts in order
+    planning_states = ["discovery", "clarification", "contracts", 
+                      "implementation_plan", "validation"]
+    for state in planning_states:
+        if state in latest_artifacts:
+            self._add_planning_artifact(content_parts, state, 
+                                      latest_artifacts[state])
+```
+
+## Best Practices
+
+### 1. **Artifact Design**
+- Keep fields simple and flat
+- Use markdown for all human-readable content
+- Validate only essential constraints
+- Allow flexibility for edge cases
+
+### 2. **Prompt Design**
+- Guide without constraining
+- Support multi-turn interactions
+- Provide clear examples
+- Explain the "why" behind instructions
+
+### 3. **Context Preservation**
+- Save discovered patterns in implementation_context
+- Capture full conversations in clarification
+- Document all decisions and rationale
+- Enable re-planning with preserved work
+
+### 4. **Error Handling**
+- Validate questions end with "?"
+- Ensure findings are not empty
+- Check complexity is valid enum value
+- Handle partial conversation responses
+
+## Migration Guide
+
+### From Old System to New
+
+1. **Artifact Storage**:
+   - Old: JSON → Markdown conversion in scratchpad
+   - New: Direct JSON storage as turns
+
+2. **Scratchpad Role**:
+   - Old: Primary storage mechanism
+   - New: Generated view of current state
+
+3. **Artifact Structure**:
+   - Old: Complex nested models
+   - New: Simple flat structures with markdown
+
+4. **Conversation Handling**:
+   - Old: Rigid Q&A format
+   - New: Natural multi-turn dialogue
 
 ## Future Enhancements
 
-1. **Multi-language Prompts**: Support for different languages
-2. **Adaptive Prompts**: Adjust based on AI performance
-3. **Template Inheritance**: Base templates for consistency
-4. **A/B Testing**: Compare prompt effectiveness
-5. **Version Control**: Track prompt evolution
+### 1. **Rich Media Support**
+- Embed diagrams in markdown fields
+- Link to external documentation
+- Include code snippets with syntax highlighting
+
+### 2. **Collaborative Features**
+- Multiple participants in clarification
+- Async conversation support
+- Vote on design decisions
+
+### 3. **Intelligence Features**
+- Auto-suggest questions from patterns
+- Predict complexity from discovery
+- Recommend design patterns
+
+### 4. **Integration Points**
+- Export to project management tools
+- Generate documentation from artifacts
+- Create test cases from contracts
+
+The simplified artifact system makes Discovery Planning more approachable while maintaining the power and flexibility needed for complex software development tasks.

@@ -5,11 +5,11 @@ from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
 
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse
-from src.alfred.lib.md_parser import MarkdownTaskParser
-from src.alfred.lib.logger import get_logger
-from src.alfred.config.settings import settings
-from src.alfred.state.manager import state_manager
+from alfred.models.schemas import Task, TaskStatus, ToolResponse
+from alfred.lib.md_parser import MarkdownTaskParser
+from alfred.lib.logger import get_logger
+from alfred.config.settings import settings
+from alfred.state.manager import state_manager
 from .base import BaseTaskProvider
 
 logger = get_logger(__name__)

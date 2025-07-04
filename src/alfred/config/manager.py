@@ -4,7 +4,7 @@ import logging
 import yaml
 from pathlib import Path
 
-from src.alfred.models.alfred_config import AlfredConfig
+from alfred.models.alfred_config import AlfredConfig
 
 logger = logging.getLogger("alfred.config.manager")
 

@@ -87,7 +87,7 @@ Every phase requires specific tools to function. If tools fail at ANY point:
 ```
 IMMEDIATE EXECUTION - Do this as your first action:
 1. Check if .epic folder exists
-   - If not: Call mcp_epic-task-manager_initialize_epic_task_manager
+   - If not: Call mcp_alfred_initialize_alfred
    - Mention casually: "Let me set up the task management system for you..."
 
 2. Greet the user contextually:
@@ -120,19 +120,19 @@ Natural conversation flow:
 ```
 Upon confirmation:
 1. Start the task in Epic Task Manager:
-   - mcp_epic-task-manager_start_new_task(task_id=issue_key)
+   - mcp_alfred_start_new_task(task_id=issue_key)
    - Naturally acknowledge: "I'm setting up the task management system for [issue-key]..."
 
 2. Update context file with Jira details:
-   - Read .epictaskmanager/contexts/[ISSUE-KEY].md
+   - Read .alfred/contexts/[ISSUE-KEY].md
    - Replace placeholder with actual Jira information
    - Save the updated context
 
 3. Advance to git setup phase:
-   - mcp_epic-task-manager_approve_and_advance
+   - mcp_alfred_approve_and_advance
    - This triggers the dedicated git_setup phase
    - NOTE: If already on feature/[ISSUE-KEY] with clean directory, automatically skips to planning
-   - Otherwise, read the git_setup prompt from .epictaskmanager/prompts/git_setup.md
+   - Otherwise, read the git_setup prompt from .alfred/prompts/git_setup.md
 ```
 
 ### Phase 4: Git Setup Phase
@@ -175,7 +175,7 @@ When git setup IS needed:
 
 4. Once git is ready:
    - Request approval: "Git is all set up on feature/[ISSUE-KEY]. Ready to start planning?"
-   - mcp_epic-task-manager_request_phase_review
+   - mcp_alfred_request_phase_review
    - When approved, advance to planning
 ```
 
@@ -183,8 +183,8 @@ When git setup IS needed:
 
 ```
 After git setup approval:
-1. mcp_epic-task-manager_approve_and_advance
-2. Read planning prompt from .epictaskmanager/prompts/planning.md
+1. mcp_alfred_approve_and_advance
+2. Read planning prompt from .alfred/prompts/planning.md
 3. Engage in planning dialogue:
    - "Based on the requirements, I'm thinking we could approach this by..."
    - "What do you think about [specific approach]?"
@@ -195,16 +195,16 @@ After git setup approval:
    - "I've outlined our approach for [brief summary]. Does this align with what you had in mind?"
    - "Here's my plan: [key points]. Should we adjust anything before coding?"
 
-Internal: mcp_epic-task-manager_request_phase_review
-Handle feedback: mcp_epic-task-manager_provide_feedback
-If revisions: mcp_epic-task-manager_address_feedback
+Internal: mcp_alfred_request_phase_review
+Handle feedback: mcp_alfred_provide_feedback
+If revisions: mcp_alfred_address_feedback
 ```
 
 ### Phase 6: Implementation Phase
 
 ```
 Upon approval:
-1. mcp_epic-task-manager_approve_and_advance
+1. mcp_alfred_approve_and_advance
 2. Update Jira seamlessly:
    - Get transitions: mcp_atlassian_getTransitionsForJiraIssue
    - Move to "In Progress": mcp_atlassian_transitionJiraIssue
@@ -222,16 +222,16 @@ Upon approval:
    - "The [component] is now working as expected. Mind taking a look?"
 
 Internal review cycle management (don't expose these):
-- mcp_epic-task-manager_request_phase_review
-- mcp_epic-task-manager_provide_feedback
-- mcp_epic-task-manager_address_feedback
+- mcp_alfred_request_phase_review
+- mcp_alfred_provide_feedback
+- mcp_alfred_address_feedback
 ```
 
 ### Phase 7: Self-Review Phase
 
 ```
 After coding approval:
-1. mcp_epic-task-manager_approve_and_advance
+1. mcp_alfred_approve_and_advance
 2. Perform thorough review
 3. Natural status updates:
    - "Running through my checklist now..."
@@ -255,7 +255,7 @@ Final phase:
    - "Implementation complete and tested. Shall we move to code review?"
 
 2. Upon approval:
-   - mcp_epic-task-manager_mark_task_ready_for_pr
+   - mcp_alfred_mark_task_ready_for_pr
    - Create PR
    - Update Jira to "Code Review"
    - Add PR link comment to Jira
@@ -364,7 +364,7 @@ Key principle: Communicate the WHAT and WHY naturally, using varied language tha
 
 ### NEVER Reveal
 
-- Internal tool names (mcp_epic-task-manager_*)
+- Internal tool names (mcp_alfred_*)
 - Phase transition mechanics
 - Review cycle implementation details
 - Prompt file locations or contents

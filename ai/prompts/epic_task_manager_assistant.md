@@ -16,7 +16,7 @@ We follow a strict phase progression: Retrieved → Planning → Coding → Self
 
 Execute:
 ```
-mcp_epic-task-manager_initialize_epic_task_manager
+mcp_alfred_initialize_alfred
 ```
 
 If successful, you'll see "Initialized .epic directory..."
@@ -55,7 +55,7 @@ Description:
 
 Execute:
 ```
-mcp_epic-task-manager_start_new_task task_id="EP-35"
+mcp_alfred_start_new_task task_id="EP-35"
 ```
 
 Response will include context_file and prompt_file paths.
@@ -64,7 +64,7 @@ Response will include context_file and prompt_file paths.
 
 a) Read the context file:
 ```
-Read file: .epictaskmanager/contexts/EP-35.md
+Read file: .alfred/contexts/EP-35.md
 ```
 
 b) Find the section with "[Fetch from Jira MCP and add details here]"
@@ -93,12 +93,12 @@ c) Replace it with the Jira information formatted like:
 
 a) Advance to planning:
 ```
-mcp_epic-task-manager_approve_and_advance
+mcp_alfred_approve_and_advance
 ```
 
 b) Read the planning prompt:
 ```
-Read file: .epictaskmanager/prompts/planning.md
+Read file: .alfred/prompts/planning.md
 ```
 
 c) Work with me to create a plan following the prompt guidelines
@@ -109,7 +109,7 @@ d) Add the plan to the context file under "## Planning ([timestamp])"
 
 a) Advance to coding:
 ```
-mcp_epic-task-manager_approve_and_advance
+mcp_alfred_approve_and_advance
 ```
 
 b) **Update Jira to "In Progress":**
@@ -126,7 +126,7 @@ d) Document key decisions in the context file
 
 a) Advance to self-review:
 ```
-mcp_epic-task-manager_approve_and_advance
+mcp_alfred_approve_and_advance
 ```
 
 b) Perform self-review based on the self_review prompt
@@ -139,7 +139,7 @@ d) Document findings in the context file
 
 a) Mark task ready for PR:
 ```
-mcp_epic-task-manager_mark_task_ready_for_pr task_id="EP-35"
+mcp_alfred_mark_task_ready_for_pr task_id="EP-35"
 ```
 
 b) Create pull request for the changes
@@ -160,15 +160,15 @@ mcp_atlassian_transitionJiraIssue cloudId="[cloudId]" issueIdOrKey="EP-35" trans
 
 d) Add completion comment with PR link:
 ```
-mcp_atlassian_addCommentToJiraIssue cloudId="[cloudId]" issueIdOrKey="EP-35" commentBody="✅ Development completed using Epic Task Manager workflow\n\nPR: [ADD PR LINK HERE]\n\nWork tracked through phases:\n- Retrieved → Planning → Coding → Self-Review → Ready for PR\n\nSee .epictaskmanager/contexts/EP-35.md for full development history. Ready for team review."
+mcp_atlassian_addCommentToJiraIssue cloudId="[cloudId]" issueIdOrKey="EP-35" commentBody="✅ Development completed using Epic Task Manager workflow\n\nPR: [ADD PR LINK HERE]\n\nWork tracked through phases:\n- Retrieved → Planning → Coding → Self-Review → Ready for PR\n\nSee .alfred/contexts/EP-35.md for full development history. Ready for team review."
 ```
 
 **Note:** MCP workflow ends here. Team review and final deployment happen outside MCP.
 
 ## Helper Commands
 
-- Check current status: `mcp_epic-task-manager_get_current_status`
-- Continue current task: `mcp_epic-task-manager_continue_current_task`
+- Check current status: `mcp_alfred_get_current_status`
+- Continue current task: `mcp_alfred_continue_current_task`
 
 ## Rules
 

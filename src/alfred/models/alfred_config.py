@@ -1,7 +1,7 @@
 """Configuration models for Alfred."""
 
 from enum import Enum
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -11,6 +11,15 @@ class TaskProvider(str, Enum):
     JIRA = "jira"
     LINEAR = "linear"
     LOCAL = "local"
+
+
+class AIProvider(str, Enum):
+    """Supported AI provider types."""
+
+    OPENAI = "openai"
+    GOOGLE = "google"
+    ANTHROPIC = "anthropic"
+    CUSTOM = "custom"
 
 
 class ToolConfig(BaseModel):
@@ -42,6 +51,31 @@ class WorkflowConfig(BaseModel):
     auto_create_branches: bool = Field(default=True, description="Whether to create branches automatically")
 
 
+class AIProviderConfig(BaseModel):
+    """Configuration for individual AI providers."""
+
+    name: AIProvider = Field(description="AI provider type")
+    enabled: bool = Field(default=True, description="Whether this provider is enabled")
+
+
+class AIConfig(BaseModel):
+    """AI provider configuration."""
+
+    providers: List[AIProviderConfig] = Field(
+        default_factory=lambda: [
+            AIProviderConfig(name=AIProvider.OPENAI),
+            AIProviderConfig(name=AIProvider.GOOGLE),
+            AIProviderConfig(name=AIProvider.ANTHROPIC, enabled=False),
+        ],
+        description="List of configured AI providers",
+    )
+    default_provider: AIProvider = Field(default=AIProvider.OPENAI, description="Default provider to use")
+    enable_token_tracking: bool = Field(default=True, description="Whether to track token usage")
+    max_tokens_per_request: int = Field(default=8000, description="Maximum tokens per request")
+    default_temperature: float = Field(default=0.5, description="Default temperature for AI requests")
+    default_model: str = Field(default="gpt-4", description="Default model to use when not specified")
+
+
 class ProvidersConfig(BaseModel):
     """Provider-specific workflow settings."""
 
@@ -63,6 +97,7 @@ class AlfredConfig(BaseModel):
 
     version: str = Field(default="2.0.0", description="Configuration version")
     provider: ProviderConfig = Field(default_factory=ProviderConfig, description="Task provider configuration")
+    ai: AIConfig = Field(default_factory=AIConfig, description="AI provider configuration")
     features: FeaturesConfig = Field(default_factory=FeaturesConfig, description="Feature flags")
     tools: Dict[str, ToolConfig] = Field(
         default_factory=lambda: {

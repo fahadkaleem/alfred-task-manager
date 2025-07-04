@@ -5,7 +5,7 @@ Each template is a data structure - no logic, just content definition.
 """
 
 from typing import List
-from src.alfred.core.template_base import WorkflowPromptTemplate, WorkflowWithTaskDetailsTemplate, SubmitWorkPromptTemplate, ReviewPromptTemplate
+from alfred.core.template_base import WorkflowPromptTemplate, WorkflowWithTaskDetailsTemplate, SubmitWorkPromptTemplate, ReviewPromptTemplate
 
 
 # Plan Task Templates

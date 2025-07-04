@@ -1,7 +1,7 @@
 """Task provider factory for instantiating the correct provider based on configuration."""
 
-from src.alfred.models.alfred_config import TaskProvider as ProviderType
-from src.alfred.lib.logger import get_logger
+from alfred.models.alfred_config import TaskProvider as ProviderType
+from alfred.lib.logger import get_logger
 from .base import BaseTaskProvider
 from .local_provider import LocalTaskProvider
 from .jira_provider import JiraTaskProvider
@@ -23,12 +23,12 @@ def get_provider() -> BaseTaskProvider:
         NotImplementedError: If the configured provider is not yet implemented
     """
     # Import here to avoid circular dependency
-    from src.alfred.orchestration.orchestrator import orchestrator
+    from alfred.orchestration.orchestrator import orchestrator
 
     try:
         # Load the current configuration
         config = orchestrator.config_manager.load()
-        provider_type = config.providers.task_provider
+        provider_type = config.provider.type
 
         logger.info(f"Instantiating task provider: {provider_type}")
 

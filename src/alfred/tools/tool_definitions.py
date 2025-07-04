@@ -9,10 +9,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Type, Optional, Callable, Any
 from enum import Enum
 
-from src.alfred.core.workflow import (
+from alfred.core.workflow import (
     BaseWorkflowTool,
-    PlanTaskTool,
-    PlanTaskState,
     StartTaskTool,
     StartTaskState,
     ImplementTaskTool,
@@ -28,8 +26,10 @@ from src.alfred.core.workflow import (
     CreateTasksTool,
     CreateTasksState,
 )
-from src.alfred.models.schemas import TaskStatus
-from src.alfred.constants import ToolName
+from alfred.core.discovery_workflow import PlanTaskTool, PlanTaskState
+from alfred.core.discovery_context import load_plan_task_context
+from alfred.models.schemas import TaskStatus
+from alfred.constants import ToolName
 
 
 @dataclass
@@ -106,10 +106,18 @@ class ToolDefinition:
 # Context loaders
 def load_execution_plan_context(task, task_state):
     """Load execution plan for implement_task."""
-    execution_plan = task_state.completed_tool_outputs.get(ToolName.PLAN_TASK)
-    if not execution_plan:
-        raise ValueError(f"CRITICAL: Cannot start implementation. Execution plan from 'plan_task' not found for task '{task.task_id}'.")
-    return {"artifact_content": execution_plan}
+    from alfred.lib.turn_manager import turn_manager
+
+    # Get the implementation_plan artifact from turns
+    latest_artifacts = turn_manager.get_latest_artifacts_by_state(task.task_id)
+
+    # Get the implementation_plan artifact specifically (which contains subtasks)
+    implementation_plan = latest_artifacts.get("implementation_plan")
+    if not implementation_plan:
+        raise ValueError(f"CRITICAL: Cannot start implementation. Implementation plan not found for task '{task.task_id}'.")
+
+    # Return the implementation plan with subtasks
+    return {"artifact_content": implementation_plan}
 
 
 def load_implementation_context(task, task_state):
@@ -148,18 +156,39 @@ TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
     ToolName.PLAN_TASK: ToolDefinition(
         name=ToolName.PLAN_TASK,
         tool_class=PlanTaskTool,
-        description="Create detailed execution plan for a task",
+        description="""
+        Interactive planning with deep context discovery and conversational clarification.
+        
+        This tool implements a comprehensive planning workflow that mirrors how expert developers 
+        actually approach complex tasks:
+        
+        1. DISCOVERY: Deep context gathering using all available tools in parallel
+        2. CLARIFICATION: Conversational Q&A to resolve ambiguities  
+        3. CONTRACTS: Interface-first design of all APIs and data models
+        4. IMPLEMENTATION_PLAN: Self-contained subtask creation with full context
+        5. VALIDATION: Final coherence check and human approval
+        
+        Features:
+        - Context saturation before planning begins
+        - Real human-AI conversation for ambiguity resolution
+        - Contract-first design approach
+        - Self-contained subtasks with no rediscovery needed
+        - Re-planning support for changing requirements
+        - Complexity adaptation (can skip contracts for simple tasks)
+        """,
         work_states=[
-            PlanTaskState.CONTEXTUALIZE,
-            PlanTaskState.STRATEGIZE,
-            PlanTaskState.DESIGN,
-            PlanTaskState.GENERATE_SUBTASKS,
+            PlanTaskState.DISCOVERY,
+            PlanTaskState.CLARIFICATION,
+            PlanTaskState.CONTRACTS,
+            PlanTaskState.IMPLEMENTATION_PLAN,
+            PlanTaskState.VALIDATION,
         ],
         terminal_state=PlanTaskState.VERIFIED,
-        initial_state=PlanTaskState.CONTEXTUALIZE,
+        initial_state=PlanTaskState.DISCOVERY,
         entry_statuses=[TaskStatus.NEW, TaskStatus.PLANNING, TaskStatus.TASKS_CREATED],
         exit_status=TaskStatus.PLANNING,
         dispatch_on_init=False,
+        context_loader=load_plan_task_context,
         custom_validator=validate_plan_task_status,
     ),
     ToolName.START_TASK: ToolDefinition(

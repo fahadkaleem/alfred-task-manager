@@ -3,13 +3,13 @@ from typing import Dict, Optional, Type, Callable, Coroutine, Any, List, TYPE_CH
 from dataclasses import dataclass
 import inspect
 
-from src.alfred.core.workflow import BaseWorkflowTool
-from src.alfred.models.schemas import TaskStatus, ToolResponse
-from src.alfred.lib.logger import get_logger
+from alfred.core.workflow import BaseWorkflowTool
+from alfred.models.schemas import TaskStatus, ToolResponse
+from alfred.lib.logger import get_logger
 
 # THIS IS THE FIX for Blocker #3
 if TYPE_CHECKING:
-    from src.alfred.tools.base_tool_handler import BaseToolHandler
+    from alfred.tools.base_tool_handler import BaseToolHandler
 
 logger = get_logger(__name__)
 

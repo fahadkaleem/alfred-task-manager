@@ -8,7 +8,7 @@ You will help me work on a Jira ticket using the Epic Task Manager workflow. Fol
 
 Execute this MCP call:
 ```
-mcp_epic-task-manager_initialize_epic_task_manager
+mcp_alfred_initialize_alfred
 ```
 
 Expected response: "Initialized .epic directory..."
@@ -38,14 +38,14 @@ mcp_atlassian_getJiraIssue cloudId="[use the cloudId from above]" issueIdOrKey="
 
 Execute:
 ```
-mcp_epic-task-manager_start_new_task task_id="ISSUE-KEY"
+mcp_alfred_start_new_task task_id="ISSUE-KEY"
 ```
 
 This will return paths to the context and prompt files.
 
 ## Step 5: Update Context with Jira Details
 
-1. Read the context file at `.epictaskmanager/contexts/ISSUE-KEY.md`
+1. Read the context file at `.alfred/contexts/ISSUE-KEY.md`
 2. Find the section "### Jira Details"
 3. Replace "[Fetch from Jira MCP and add details here]" with:
    - Issue Summary: [from Jira]
@@ -59,10 +59,10 @@ This will return paths to the context and prompt files.
 
 Execute:
 ```
-mcp_epic-task-manager_approve_and_advance
+mcp_alfred_approve_and_advance
 ```
 
-Now read the planning prompt at `.epictaskmanager/prompts/planning.md` and help me create an implementation plan. The plan should include:
+Now read the planning prompt at `.alfred/prompts/planning.md` and help me create an implementation plan. The plan should include:
 - Files to create/modify
 - Technical approach
 - Potential challenges
@@ -74,7 +74,7 @@ Add this plan to the context file under the "## Planning" section.
 
 After the plan is complete, execute:
 ```
-mcp_epic-task-manager_approve_and_advance
+mcp_alfred_approve_and_advance
 ```
 
 **IMPORTANT: Update Jira status to "In Progress"**
@@ -95,7 +95,7 @@ Now implement the solution according to the plan. Add notes about the implementa
 
 Once coding is complete, execute:
 ```
-mcp_epic-task-manager_approve_and_advance
+mcp_alfred_approve_and_advance
 ```
 
 Perform a self-review based on the self_review prompt. Test the implementation locally and document any findings in the context file.
@@ -104,7 +104,7 @@ Perform a self-review based on the self_review prompt. Test the implementation l
 
 After self-review, execute:
 ```
-mcp_epic-task-manager_mark_task_ready_for_pr task_id="ISSUE-KEY"
+mcp_alfred_mark_task_ready_for_pr task_id="ISSUE-KEY"
 ```
 
 Create a pull request for your changes.
@@ -133,8 +133,8 @@ mcp_atlassian_addCommentToJiraIssue cloudId="[cloudId]" issueIdOrKey="ISSUE-KEY"
 ## Status Commands
 
 Use these anytime:
-- Check status: `mcp_epic-task-manager_get_current_status`
-- Continue current task: `mcp_epic-task-manager_continue_current_task`
+- Check status: `mcp_alfred_get_current_status`
+- Continue current task: `mcp_alfred_continue_current_task`
 
 ## IMPORTANT RULES
 
@@ -148,7 +148,7 @@ Use these anytime:
 
 - If MCP calls fail, check the exact parameter names and retry
 - If you lose track, use `get_current_status` to see where you are
-- The context file at `.epictaskmanager/contexts/ISSUE-KEY.md` always has the history
+- The context file at `.alfred/contexts/ISSUE-KEY.md` always has the history
 
 ---
 

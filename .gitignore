@@ -54,3 +54,5 @@ worktrees/
 /ai/alfred_tasks_old/
 reference/dim.txt
 alfred-codebase.md
+.env
+/reference_code/

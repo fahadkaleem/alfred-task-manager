@@ -36,7 +36,6 @@ class Paths:
     ALFRED_DIR: Final[str] = ".alfred"
     WORKSPACE_DIR: Final[str] = "workspace"
     TEMPLATES_DIR: Final[str] = "templates"
-    ARCHIVE_DIR: Final[str] = "archive"
     DEBUG_DIR: Final[str] = "debug"
     TASKS_DIR: Final[str] = "tasks"
 
@@ -62,19 +61,15 @@ class TemplatePaths:
     ARTIFACT_PATTERN: Final[str] = "artifacts/{template_name}.md"
 
 
-# Plan Task State Names (as strings for transitions)
+# Plan Task State Names (as strings for transitions) - Discovery Planning
 class PlanTaskStates:
-    """Plan task state string constants."""
+    """Discovery planning state string constants."""
 
-    INITIAL: Final[str] = "initial"
-    CONTEXTUALIZE: Final[str] = "contextualize"
-    REVIEW_CONTEXT: Final[str] = "review_context"
-    STRATEGIZE: Final[str] = "strategize"
-    REVIEW_STRATEGY: Final[str] = "review_strategy"
-    DESIGN: Final[str] = "design"
-    REVIEW_DESIGN: Final[str] = "review_design"
-    GENERATE_SUBTASKS: Final[str] = "generate_subtasks"
-    REVIEW_PLAN: Final[str] = "review_plan"
+    DISCOVERY: Final[str] = "discovery"
+    CLARIFICATION: Final[str] = "clarification"
+    CONTRACTS: Final[str] = "contracts"
+    IMPLEMENTATION_PLAN: Final[str] = "implementation_plan"
+    VALIDATION: Final[str] = "validation"
     VERIFIED: Final[str] = "verified"
 
 
@@ -84,11 +79,12 @@ class ArtifactKeys:
 
     # State to artifact name mapping
     STATE_TO_ARTIFACT_MAP: Final[dict] = {
-        # PlanTask states
-        PlanTaskStates.CONTEXTUALIZE: "context",
-        PlanTaskStates.STRATEGIZE: "strategy",
-        PlanTaskStates.DESIGN: "design",
-        PlanTaskStates.GENERATE_SUBTASKS: "execution_plan",
+        # Discovery Planning states
+        PlanTaskStates.DISCOVERY: "context_discovery",
+        PlanTaskStates.CLARIFICATION: "clarification",
+        PlanTaskStates.CONTRACTS: "contract_design",
+        PlanTaskStates.IMPLEMENTATION_PLAN: "implementation_plan",
+        PlanTaskStates.VALIDATION: "validation",
         # Other tool states
         "drafting_spec": "drafting_spec",
         "drafting_tasks": "drafting_tasks",
@@ -126,10 +122,11 @@ class StateDescriptions:
     """Human-readable state descriptions."""
 
     DESCRIPTIONS: Final[dict] = {
-        PlanTaskStates.CONTEXTUALIZE: "Understanding the Requirements and Codebase",
-        PlanTaskStates.STRATEGIZE: "Technical Strategy and Approach",
-        PlanTaskStates.DESIGN: "Detailed Implementation Design",
-        PlanTaskStates.GENERATE_SUBTASKS: "Execution Plan",
+        PlanTaskStates.DISCOVERY: "Deep Context Discovery and Codebase Exploration",
+        PlanTaskStates.CLARIFICATION: "Conversational Human-AI Clarification",
+        PlanTaskStates.CONTRACTS: "Interface-First Design and Contracts",
+        PlanTaskStates.IMPLEMENTATION_PLAN: "Self-Contained Subtask Creation",
+        PlanTaskStates.VALIDATION: "Final Plan Validation and Coherence Check",
     }
 
 
