@@ -4,7 +4,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from .base import BaseTaskProvider
 
 logger = get_logger(__name__)

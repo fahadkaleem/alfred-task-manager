@@ -2,7 +2,7 @@
 
 from alfred.models.schemas import ToolResponse
 from alfred.task_providers.factory import get_provider
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from alfred.config.settings import settings
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.lib.turn_manager import turn_manager
 from alfred.core.template_registry import template_registry
 

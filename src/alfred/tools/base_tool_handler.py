@@ -4,7 +4,7 @@ from typing import Optional, Type, Any
 
 from alfred.core.prompter import generate_prompt
 from alfred.core.workflow import BaseWorkflowTool
-from alfred.lib.logger import get_logger, setup_task_logging
+from alfred.lib.structured_logger import get_logger, setup_task_logging
 from alfred.lib.task_utils import load_task, load_task_with_error_details
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
 from alfred.orchestration.orchestrator import orchestrator
@@ -51,13 +51,13 @@ class BaseToolHandler(ABC):
     def _get_or_create_tool(self, task_id: str, task: Task) -> BaseWorkflowTool | ToolResponse:
         """Common tool recovery and creation logic."""
         if task_id in orchestrator.active_tools:
-            logger.info(f"Found active tool '{self.tool_name}' for task {task_id}.")
+            logger.info("Found active tool", task_id=task_id, tool_name=self.tool_name)
             return orchestrator.active_tools[task_id]
 
         tool_instance = ToolRecovery.recover_tool(task_id)
         if tool_instance:
             orchestrator.active_tools[task_id] = tool_instance
-            logger.info(f"Recovered tool '{self.tool_name}' for task {task_id}.")
+            logger.info("Recovered tool", task_id=task_id, tool_name=self.tool_name)
             return tool_instance
 
         if self.required_status and task.task_status != self.required_status:
@@ -79,7 +79,7 @@ class BaseToolHandler(ABC):
         # Persist the initial state of the newly created tool
         state_manager.update_tool_state(task_id, new_tool)
 
-        logger.info(f"Created new '{self.tool_name}' tool for task {task_id}.")
+        logger.info("Created new tool", task_id=task_id, tool_name=self.tool_name)
         return new_tool
 
     def _generate_response(self, tool_instance: BaseWorkflowTool, task: Task) -> ToolResponse:
@@ -96,7 +96,7 @@ class BaseToolHandler(ABC):
             return ToolResponse(status="success", message=message, next_prompt=prompt)
         except (ValueError, RuntimeError, KeyError) as e:
             # Handle errors from the new prompter
-            logger.error(f"Prompt generation failed: {e}", exc_info=True)
+            logger.error("Prompt generation failed", task_id=task.task_id, tool_name=tool_instance.tool_name, error=str(e), exc_info=True)
             return ToolResponse(status="error", message=f"A critical error occurred while preparing the next step: {e}")
 
     @abstractmethod

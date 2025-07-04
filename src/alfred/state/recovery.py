@@ -7,7 +7,7 @@ Handles reconstruction of workflow tools from persisted state.
 from typing import Dict, Optional, Type
 
 from alfred.core.workflow import BaseWorkflowTool
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.state.manager import state_manager
 from alfred.constants import ToolName
 from alfred.tools.tool_definitions import TOOL_DEFINITIONS

@@ -14,8 +14,7 @@ from fastmcp import FastMCP
 
 from alfred.config.settings import settings
 from alfred.core.prompter import prompt_library  # Import the prompt library
-from alfred.lib.logger import get_logger
-from alfred.lib.transaction_logger import transaction_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.tools.approve_and_advance import approve_and_advance_impl
 from alfred.constants import ToolName
@@ -61,7 +60,7 @@ def register_tool_from_definition(app: FastMCP, tool_name: str):
 async def lifespan(server: FastMCP) -> AsyncIterator[None]:
     """Lifespan context manager for FastMCP server."""
     # Startup
-    logger.info(f"Starting Alfred server with {len(prompt_library._cache)} prompts loaded")
+    logger.info("Starting Alfred server", server_name=settings.server_name, prompts_loaded=len(prompt_library._cache))
 
     # Initialize AI providers (following Alfred's immutable startup principle)
     await initialize_ai_providers()
@@ -69,7 +68,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
     yield
 
     # Shutdown (if needed in the future)
-    logger.info("Server shutting down")
+    logger.info("Server shutting down", server_name=settings.server_name)
 
 
 app = FastMCP(settings.server_name, lifespan=lifespan)
@@ -93,16 +92,31 @@ def log_tool_transaction(impl_func: Callable) -> Callable:
             # Build request data from kwargs
             request_data = {k: v for k, v in kwargs.items() if v is not None}
 
-            # Call the implementation function (handle both async and sync)
-            if inspect.iscoroutinefunction(impl_func):
-                response = await impl_func(**kwargs)
-            else:
-                response = impl_func(**kwargs)
+            # Log tool execution start with structured context
+            logger.info("Tool execution started", task_id=task_id, tool_name=tool_name, request_params=list(request_data.keys()))
 
-            # Log the transaction
-            transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+            try:
+                # Call the implementation function (handle both async and sync)
+                if inspect.iscoroutinefunction(impl_func):
+                    response = await impl_func(**kwargs)
+                else:
+                    response = impl_func(**kwargs)
 
-            return response
+                # Log successful completion
+                logger.info("Tool execution completed", task_id=task_id, tool_name=tool_name, status=response.status)
+
+                # Log the detailed transaction with structured context
+                with logger.context(task_id=task_id, tool_name=tool_name):
+                    logger.info("Tool transaction completed", 
+                               request_params=request_data, 
+                               response_status=response.status,
+                               response_message=response.message)
+
+                return response
+            except Exception as e:
+                # Log tool execution error with structured context
+                logger.error("Tool execution failed", task_id=task_id, tool_name=tool_name, error=str(e), exc_info=True)
+                raise
 
         return wrapper
 

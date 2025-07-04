@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from alfred.core.prompter import generate_prompt
 from alfred.core.workflow import BaseWorkflowTool
 from alfred.lib.turn_manager import turn_manager
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.lib.task_utils import load_task
 from alfred.models.schemas import Task, ToolResponse
 from alfred.orchestration.orchestrator import orchestrator

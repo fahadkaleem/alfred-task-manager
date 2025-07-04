@@ -1,7 +1,7 @@
 """Task provider factory for instantiating the correct provider based on configuration."""
 
 from alfred.models.alfred_config import TaskProvider as ProviderType
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from .base import BaseTaskProvider
 from .local_provider import LocalTaskProvider
 from .jira_provider import JiraTaskProvider

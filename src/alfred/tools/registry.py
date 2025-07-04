@@ -5,7 +5,7 @@ import inspect
 
 from alfred.core.workflow import BaseWorkflowTool
 from alfred.models.schemas import TaskStatus, ToolResponse
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 # THIS IS THE FIX for Blocker #3
 if TYPE_CHECKING:

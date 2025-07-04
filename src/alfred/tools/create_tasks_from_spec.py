@@ -3,7 +3,7 @@ from alfred.models.schemas import ToolResponse
 from alfred.constants import ToolName
 from alfred.core.workflow import CreateTasksTool
 from alfred.models.engineering_spec import EngineeringSpec
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.state.manager import state_manager
 
 logger = get_logger(__name__)

@@ -7,7 +7,7 @@ from typing import Dict
 from alfred.config import ConfigManager
 from alfred.config.settings import settings
 from alfred.core.workflow import BaseWorkflowTool
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -33,7 +33,7 @@ class Orchestrator:
         self.active_tools: Dict[str, BaseWorkflowTool] = {}
         self.config_manager = ConfigManager(settings.alfred_dir)
         self._initialized = True
-        logger.info("Orchestrator initialized as a simple tool session manager.")
+        logger.info("Orchestrator initialized as a simple tool session manager", orchestrator_type="simple_session_manager", alfred_dir=str(settings.alfred_dir))
 
 
 # Global singleton instance

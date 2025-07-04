@@ -6,7 +6,7 @@ import os
 import json
 from pathlib import Path
 from typing import Dict, Any
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.lib.md_parser import MarkdownTaskParser
 from alfred.models.schemas import ToolResponse
 from alfred.config.settings import settings

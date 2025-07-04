@@ -9,7 +9,7 @@ from alfred.models.schemas import Task, TaskStatus, ToolResponse
 from alfred.tools.base_tool_handler import BaseToolHandler
 from alfred.tools.workflow_config import WorkflowToolConfig
 from alfred.state.manager import state_manager
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -67,7 +67,7 @@ class GenericWorkflowHandler(BaseToolHandler):
                 # Context loader can raise ValueError for missing dependencies
                 return ToolResponse(status="error", message=str(e))
             except Exception as e:
-                logger.error(f"Context loader failed for {self.config.tool_name}: {e}")
+                logger.error("Context loader failed", task_id=task.task_id, tool_name=self.config.tool_name, error=str(e))
                 return ToolResponse(status="error", message=f"Failed to load required context for {self.config.tool_name}: {str(e)}")
 
         # Check if we should dispatch on initialization
@@ -79,6 +79,6 @@ class GenericWorkflowHandler(BaseToolHandler):
             # Persist the state change
             state_manager.update_tool_state(task.task_id, tool_instance)
 
-            logger.info(f"Dispatched '{self.config.tool_name}' for task {task.task_id} to state '{tool_instance.state}'.")
+            logger.info("Dispatched tool to state", task_id=task.task_id, tool_name=self.config.tool_name, state=tool_instance.state)
 
         return None

@@ -7,7 +7,7 @@ from alfred.tools.base_tool_handler import BaseToolHandler
 from alfred.constants import ToolName
 from alfred.state.manager import state_manager
 from alfred.state.recovery import ToolRecovery
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.orchestration.orchestrator import orchestrator
 
 logger = get_logger(__name__)

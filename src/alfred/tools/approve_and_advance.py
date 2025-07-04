@@ -1,7 +1,7 @@
 from alfred.state.manager import state_manager
 from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.core.workflow_config import WorkflowConfiguration
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.orchestration.orchestrator import orchestrator
 from alfred.state.recovery import ToolRecovery
 

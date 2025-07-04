@@ -3,7 +3,7 @@ from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.core.workflow_config import WorkflowConfiguration
 from alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
 from alfred.task_providers.factory import get_provider
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -8,7 +8,7 @@ from alfred.tools.tool_definitions import TOOL_DEFINITIONS, ToolDefinition
 from alfred.tools.generic_handler import GenericWorkflowHandler
 from alfred.tools.workflow_config import WorkflowToolConfig
 from alfred.models.schemas import ToolResponse
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 

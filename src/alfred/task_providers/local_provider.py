@@ -7,7 +7,7 @@ from datetime import datetime
 
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
 from alfred.lib.md_parser import MarkdownTaskParser
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.config.settings import settings
 from alfred.state.manager import state_manager
 from .base import BaseTaskProvider

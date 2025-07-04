@@ -10,7 +10,7 @@ Following Alfred's principles:
 from typing import List, Optional
 from alfred.config import ConfigManager
 from alfred.config.settings import settings
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.models.alfred_config import AIProvider, AIProviderConfig
 
 from .registry import model_registry

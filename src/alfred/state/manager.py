@@ -5,10 +5,13 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, TYPE_CHECKING
 
 from alfred.lib.fs_utils import file_lock
-from alfred.lib.logger import get_logger
+
+if TYPE_CHECKING:
+    from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.structured_logger import get_logger
 from alfred.models.state import TaskState, WorkflowState
 from alfred.models.schemas import TaskStatus
 from alfred.config.settings import settings
@@ -55,7 +58,7 @@ class StateManager:
             with os.fdopen(fd, "w") as f:
                 f.write(state.model_dump_json(indent=2))
             os.replace(temp_path, state_file)
-            logger.debug(f"Atomically wrote state for task {state.task_id}")
+            logger.debug("Atomically wrote state", task_id=state.task_id)
         except Exception:
             if temp_path.exists():
                 os.remove(temp_path)
@@ -66,7 +69,7 @@ class StateManager:
         state_file = self._get_task_state_file(task_id)
 
         if not state_file.exists():
-            logger.info(f"No state file for task {task_id}. Creating new state.")
+            logger.info("No state file found, creating new state", task_id=task_id)
             return TaskState(task_id=task_id)
 
         try:
@@ -74,7 +77,7 @@ class StateManager:
                 data = json.load(f)
             return TaskState.model_validate(data)
         except Exception as e:
-            logger.error(f"Failed to load or validate state for task {task_id}, creating new. Error: {e}")
+            logger.error("Failed to load or validate state, creating new", task_id=task_id, error=str(e))
             return TaskState(task_id=task_id)
 
     # Backward compatibility alias
@@ -90,7 +93,7 @@ class StateManager:
             state.task_status = new_status
             self._atomic_write(state)
 
-        logger.info(f"Updated task {task_id} status: {old_status.value} -> {new_status.value}")
+        logger.info("Updated task status", task_id=task_id, old_status=old_status.value, new_status=new_status.value)
 
     def update_tool_state(self, task_id: str, tool: Any) -> None:
         """Update tool state with proper locking."""
@@ -111,7 +114,7 @@ class StateManager:
             state.active_tool_state = tool_state
             self._atomic_write(state)
 
-        logger.debug(f"Updated tool state for task {task_id}, tool {tool.tool_name}")
+        logger.debug("Updated tool state", task_id=task_id, tool_name=tool.tool_name)
 
     def clear_tool_state(self, task_id: str) -> None:
         """Clear active tool state with proper locking."""
@@ -120,7 +123,7 @@ class StateManager:
             state.active_tool_state = None
             self._atomic_write(state)
 
-        logger.info(f"Cleared tool state for task {task_id}")
+        logger.info("Cleared tool state", task_id=task_id)
 
     def add_completed_output(self, task_id: str, tool_name: str, artifact: Any) -> None:
         """Add completed tool output with proper locking."""
@@ -136,7 +139,7 @@ class StateManager:
             state.completed_tool_outputs[tool_name] = serializable_artifact
             self._atomic_write(state)
 
-        logger.info(f"Added completed output for task {task_id}, tool {tool_name}")
+        logger.info("Added completed output", task_id=task_id, tool_name=tool_name)
 
     @contextmanager
     def complex_update(self, task_id: str):
@@ -161,9 +164,9 @@ class StateManager:
                 # Only write if state actually changed
                 if state.model_dump_json() != original_data:
                     self._atomic_write(state)
-                    logger.debug(f"Complex update completed for task {task_id}")
+                    logger.debug("Complex update completed", task_id=task_id)
             except Exception as e:
-                logger.error(f"Complex update failed for task {task_id}: {e}", exc_info=True)
+                logger.error("Complex update failed", task_id=task_id, error=str(e), exc_info=True)
                 raise
 
     def get_archive_path(self, task_id: str) -> Path:
@@ -180,7 +183,7 @@ class StateManager:
 
         orchestrator.active_tools[task_id] = tool
         self.update_tool_state(task_id, tool)
-        logger.info(f"Registered {tool.tool_name} tool for task {task_id}")
+        logger.info("Registered tool", task_id=task_id, tool_name=tool.tool_name)
 
 
 # Singleton instance

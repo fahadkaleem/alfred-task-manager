@@ -1,0 +1,6 @@
+{
+  "last_task_number": 5,
+  "prefix": "TS",
+  "created_at": "2025-07-04",
+  "description": "Tracks the last assigned task number for auto-incrementing task IDs"
+}

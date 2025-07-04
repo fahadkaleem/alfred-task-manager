@@ -1,6 +1,6 @@
 # src/alfred/tools/provide_review_logic.py
 from alfred.core.prompter import generate_prompt
-from alfred.lib.logger import get_logger, cleanup_task_logging
+from alfred.lib.structured_logger import get_logger, cleanup_task_logging
 from alfred.lib.task_utils import load_task
 from alfred.lib.turn_manager import turn_manager
 from alfred.models.schemas import ToolResponse
@@ -29,7 +29,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
 
     current_state = active_tool.state
-    logger.info(f"Processing review for task {task_id} in state '{current_state}', approved={is_approved}")
+    logger.info("Processing review", task_id=task_id, tool_name=active_tool.tool_name, state=current_state, approved=is_approved)
 
     if not is_approved:
         # Record revision request as a turn
@@ -51,7 +51,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
             message = "AI review approved. Awaiting human review."
             try:
                 if ConfigManager(settings.alfred_dir).load().features.autonomous_mode:
-                    logger.info(f"Autonomous mode enabled. Bypassing human review for task {task_id}.")
+                    logger.info("Autonomous mode enabled, bypassing human review", task_id=task_id, tool_name=active_tool.tool_name)
                     active_tool.trigger(Triggers.HUMAN_APPROVE)
                     message = "AI review approved. Autonomous mode bypassed human review."
             except FileNotFoundError:
@@ -86,7 +86,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         if tool_name == ToolName.PLAN_TASK and current_task_status == TaskStatus.PLANNING:
             # Planning completed, update to READY_FOR_DEVELOPMENT
             state_manager.update_task_status(task_id, TaskStatus.READY_FOR_DEVELOPMENT)
-            logger.info(f"Planning completed for task {task_id}. Status updated to READY_FOR_DEVELOPMENT.")
+            logger.info("Planning completed, status updated", task_id=task_id, tool_name=tool_name, new_status="READY_FOR_DEVELOPMENT")
             handoff = f"""The planning workflow has completed successfully!
 
 Task '{task_id}' is now ready for development.
