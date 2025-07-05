@@ -5,11 +5,8 @@ from typing import Optional, Type, Any
 from alfred.core.prompter import generate_prompt
 from alfred.core.workflow import BaseWorkflowTool
 from alfred.lib.structured_logger import get_logger, setup_task_logging
-from alfred.lib.task_utils import load_task, load_task_with_error_details
+from alfred.lib.task_utils import load_task_with_error_details
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
-from alfred.orchestration.orchestrator import orchestrator
-from alfred.state.manager import state_manager
-from alfred.tools.registry import tool_registry
 
 logger = get_logger(__name__)
 
@@ -35,49 +32,23 @@ class BaseToolHandler(ABC):
         if not task:
             return ToolResponse(status="error", message=error_msg or f"Task '{task_id}' not found.")
 
-        get_tool_result = self._get_or_create_tool(task_id, task)
-        if isinstance(get_tool_result, ToolResponse):
-            return get_tool_result
-        tool_instance = get_tool_result
-
-        # The setup_tool hook is now responsible for initial state dispatch if needed
-        setup_response = await self._setup_tool(tool_instance, task, **kwargs)
-        if setup_response and isinstance(setup_response, ToolResponse):
-            return setup_response
-
-        return self._generate_response(tool_instance, task)
-
-    def _get_or_create_tool(self, task_id: str, task: Task) -> BaseWorkflowTool | ToolResponse:
-        """Legacy tool recovery and creation logic - mostly replaced by stateless pattern."""
-        if task_id in orchestrator.active_tools:
-            logger.info("Found active tool", task_id=task_id, tool_name=self.tool_name)
-            return orchestrator.active_tools[task_id]
-
-        # Note: ToolRecovery has been removed in favor of stateless design
-        # This path should not be used with the new GenericWorkflowHandler stateless implementation
-        
+        # Check required status if specified
         if self.required_status and task.task_status != self.required_status:
             return ToolResponse(
                 status="error",
                 message=f"Task '{task_id}' has status '{task.task_status.value}'. Tool '{self.tool_name}' requires status to be '{self.required_status.value}'.",
             )
 
-        # Use the factory method for instantiation
-        new_tool = self._create_new_tool(task_id, task)
-        orchestrator.active_tools[task_id] = new_tool
+        # Always create fresh tool instance - no persistence
+        tool_instance = self._create_new_tool(task_id, task)
 
-        # Get the tool config from the registry to determine status transition
-        tool_config = tool_registry.get_tool_config(self.tool_name)
-        if tool_config and task.task_status in tool_config.entry_status_map:
-            new_status = tool_config.entry_status_map[task.task_status]
-            state_manager.update_task_status(task_id, new_status)
+        # The setup_tool hook is responsible for tool-specific setup
+        setup_response = await self._setup_tool(tool_instance, task, **kwargs)
+        if setup_response and isinstance(setup_response, ToolResponse):
+            return setup_response
 
-        # Note: This method is deprecated in favor of stateless design
-        # New tools should use WorkflowState via StateManager directly
-        logger.warning("Using deprecated stateful tool creation path", task_id=task_id, tool_name=self.tool_name)
+        return self._generate_response(tool_instance, task)
 
-        logger.info("Created new tool", task_id=task_id, tool_name=self.tool_name)
-        return new_tool
 
     def _generate_response(self, tool_instance: BaseWorkflowTool, task: Task) -> ToolResponse:
         """Common logic for generating the final prompt and tool response."""

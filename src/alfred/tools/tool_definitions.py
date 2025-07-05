@@ -21,10 +21,6 @@ from alfred.core.workflow import (
     TestTaskState,
     FinalizeTaskTool,
     FinalizeTaskState,
-    CreateSpecTool,
-    CreateSpecState,
-    CreateTasksTool,
-    CreateTasksState,
 )
 from alfred.core.discovery_workflow import PlanTaskTool, PlanTaskState
 from alfred.core.discovery_context import load_plan_task_context
@@ -164,10 +160,8 @@ def load_finalize_context(task, task_state):
     return {"test_results": test_results} if test_results else {}
 
 
-def load_spec_context(task, task_state):
-    """Load technical spec for create_tasks."""
-    # This is loaded from archive, not task state
-    return {}  # Handled specially in create_tasks_impl
+
+
 
 
 # Custom validators
@@ -291,29 +285,15 @@ TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
     ),
     ToolName.CREATE_SPEC: ToolDefinition(
         name=ToolName.CREATE_SPEC,
-        tool_class=CreateSpecTool,
+        tool_class=None,  # Convert to simple tool
         description="Create technical specification from PRD",
-        work_states=[CreateSpecState.DRAFTING_SPEC],
-        dispatch_state=CreateSpecState.DISPATCHING,
-        terminal_state=CreateSpecState.VERIFIED,
-        initial_state=CreateSpecState.DISPATCHING,
-        entry_statuses=[TaskStatus.NEW, TaskStatus.CREATING_SPEC],
-        exit_status=TaskStatus.CREATING_SPEC,
-        dispatch_on_init=True,
+        context_loader=create_spec_logic,  # Use create_spec_logic as the implementation
     ),
     ToolName.CREATE_TASKS_FROM_SPEC: ToolDefinition(
         name=ToolName.CREATE_TASKS_FROM_SPEC,
-        tool_class=CreateTasksTool,
+        tool_class=None,  # Convert to simple tool
         description="Break down spec into actionable tasks",
-        work_states=[CreateTasksState.DRAFTING_TASKS],
-        dispatch_state=CreateTasksState.DISPATCHING,
-        terminal_state=CreateTasksState.VERIFIED,
-        initial_state=CreateTasksState.DISPATCHING,
-        entry_statuses=[TaskStatus.SPEC_COMPLETED, TaskStatus.CREATING_TASKS],
-        exit_status=TaskStatus.CREATING_TASKS,
-        required_status=TaskStatus.SPEC_COMPLETED,
-        dispatch_on_init=True,
-        context_loader=load_spec_context,
+        context_loader=create_tasks_logic,  # Use create_tasks_logic as the implementation
     ),
     # Simple tools (tool_class=None, logic in context_loader)
     ToolName.GET_NEXT_TASK: ToolDefinition(

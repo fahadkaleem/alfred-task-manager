@@ -43,6 +43,7 @@ class Paths:
     TEMPLATES_DIR: Final[str] = "templates"
     DEBUG_DIR: Final[str] = "debug"
     TASKS_DIR: Final[str] = "tasks"
+    ARCHIVE_DIR: Final[str] = "archive"
 
     # Files
     SCRATCHPAD_FILE: Final[str] = "scratchpad.md"

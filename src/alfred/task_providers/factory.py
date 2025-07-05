@@ -23,11 +23,13 @@ def get_provider() -> BaseTaskProvider:
         NotImplementedError: If the configured provider is not yet implemented
     """
     # Import here to avoid circular dependency
-    from alfred.orchestration.orchestrator import orchestrator
+    from alfred.config import ConfigManager
+    from alfred.config.settings import settings
 
     try:
         # Load the current configuration
-        config = orchestrator.config_manager.load()
+        config_manager = ConfigManager(settings.alfred_dir)
+        config = config_manager.load()
         provider_type = config.provider.type
 
         logger.info(f"Instantiating task provider: {provider_type}")

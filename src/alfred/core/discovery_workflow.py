@@ -2,10 +2,7 @@
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from transitions.core import Machine
-
 from alfred.constants import ToolName
-from alfred.core.state_machine_builder import workflow_builder
 from alfred.core.workflow import BaseWorkflowTool
 from alfred.models.planning_artifacts import (
     ContextDiscoveryArtifact,
@@ -45,33 +42,16 @@ class PlanTaskTool(BaseWorkflowTool):
         # Handle re-planning context
         if restart_context:
             initial_state = self._determine_restart_state(restart_context)
-            self._load_preserved_artifacts(restart_context)
+            # Note: preserved artifacts are now handled by the context loader
         else:
             initial_state = PlanTaskState.DISCOVERY
 
-        # Initially include all states - we'll skip dynamically during transitions
-        workflow_states = [PlanTaskState.DISCOVERY, PlanTaskState.CLARIFICATION, PlanTaskState.CONTRACTS, PlanTaskState.IMPLEMENTATION_PLAN, PlanTaskState.VALIDATION]
-
-        # Use the builder to create state machine configuration
-        machine_config = workflow_builder.build_workflow_with_reviews(
-            work_states=workflow_states,
-            terminal_state=PlanTaskState.VERIFIED,
-            initial_state=initial_state,
-        )
-
-        # Create the state machine
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
+        # Configuration removed - now uses WorkflowEngine via GenericWorkflowHandler
 
         # Configuration flags
         self._skip_contracts = False
         self.autonomous_mode = autonomous_mode
-
-        # Store autonomous mode in context for templates
-        self.context_store["autonomous_mode"] = autonomous_mode
-        if autonomous_mode:
-            self.context_store["autonomous_note"] = "Running in autonomous mode - human reviews will be skipped"
-        else:
-            self.context_store["autonomous_note"] = "Running in interactive mode - human reviews are enabled for each phase"
+        # Note: context_store is no longer used - context is managed by WorkflowState
 
     def get_final_work_state(self) -> str:
         """Return the final work state that produces the main artifact."""
@@ -82,12 +62,6 @@ class PlanTaskTool(BaseWorkflowTool):
         restart_from = restart_context.get("restart_from", "DISCOVERY")
         return PlanTaskState(restart_from.lower())
 
-    def _load_preserved_artifacts(self, restart_context: Dict) -> None:
-        """Load preserved artifacts from previous planning attempt."""
-        preserved = restart_context.get("preserve_artifacts", [])
-        for artifact_name in preserved:
-            # Load preserved artifact into context_store
-            self.context_store[f"preserved_{artifact_name}"] = restart_context.get(artifact_name)
 
     def _determine_workflow_states(self, discovery_artifact: Optional[ContextDiscoveryArtifact] = None) -> list:
         """Determine which states to include based on complexity."""
@@ -132,15 +106,6 @@ class PlanTaskTool(BaseWorkflowTool):
 
         return should_skip
 
-    def check_complexity_after_clarification(self) -> None:
-        """Check if we should skip contracts after clarification phase."""
-        # Get discovery artifact from context store
-        discovery_artifact = self.context_store.get("context_discovery_artifact")
-        if discovery_artifact and self.should_skip_contracts(discovery_artifact):
-            self._skip_contracts = True
-            # Add note to context for templates
-            self.context_store["skip_contracts"] = True
-            self.context_store["complexity_note"] = "Skipping CONTRACTS phase due to LOW complexity assessment"
 
     def get_next_state_after_clarification(self) -> str:
         """Determine next state after clarification based on complexity."""
@@ -156,21 +121,6 @@ class PlanTaskTool(BaseWorkflowTool):
         """Get configuration for autonomous mode."""
         return {"skip_human_reviews": self.autonomous_mode, "auto_approve_after_ai": self.autonomous_mode, "question_handling": "best_guess" if self.autonomous_mode else "interactive"}
 
-    def initiate_replanning(self, trigger: str, restart_from: str, changes: str, preserve_artifacts: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Initiate re-planning with preserved context."""
-        restart_context = {
-            "trigger": trigger,  # "requirements_changed", "implementation_failed", "review_failed"
-            "restart_from": restart_from,  # State to restart from
-            "changes": changes,  # What changed
-            "preserve_artifacts": preserve_artifacts or [],
-            "timestamp": __import__("datetime").datetime.now().isoformat(),
-            "previous_state": self.state,
-        }
-
-        # Store restart context for next planning session
-        self.context_store["restart_context"] = restart_context
-
-        return restart_context
 
     def can_restart_from_state(self, state: str) -> bool:
         """Check if we can restart planning from a given state."""

@@ -104,26 +104,6 @@ class StateManager:
         except Exception as e:
             logger.error("Failed to update scratchpad after status change", task_id=task_id, error=str(e))
 
-    def update_tool_state(self, task_id: str, tool: Any) -> None:
-        """Update tool state with proper locking."""
-        with file_lock(self._get_lock_file(task_id)):
-            state = self.load_or_create(task_id)
-
-            # Serialize context store
-            serializable_context = {}
-            for key, value in tool.context_store.items():
-                if isinstance(value, BaseModel):
-                    serializable_context[key] = value.model_dump()
-                else:
-                    serializable_context[key] = value
-
-            # Create workflow state
-            tool_state = WorkflowState(task_id=task_id, tool_name=tool.tool_name, current_state=str(tool.state), context_store=serializable_context)
-
-            state.active_tool_state = tool_state
-            self._atomic_write(state)
-
-        logger.debug("Updated tool state", task_id=task_id, tool_name=tool.tool_name)
 
     def clear_tool_state(self, task_id: str) -> None:
         """Clear active tool state with proper locking."""
@@ -186,13 +166,6 @@ class StateManager:
         archive_path.mkdir(parents=True, exist_ok=True)
         return archive_path
 
-    def register_tool(self, task_id: str, tool: "BaseWorkflowTool") -> None:
-        """Register a tool with the orchestrator and update state."""
-        from alfred.orchestration.orchestrator import orchestrator
-
-        orchestrator.active_tools[task_id] = tool
-        self.update_tool_state(task_id, tool)
-        logger.info("Registered tool", task_id=task_id, tool_name=tool.tool_name)
 
 
 # Singleton instance
