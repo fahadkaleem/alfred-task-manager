@@ -106,7 +106,7 @@ class OpenAIProvider(BaseAIProvider):
                 capabilities=[ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
                 context_window=200000,
                 max_output_tokens=100000,
-                cost_per_input_token=0.0001,  # Placeholder pricing
+                cost_per_input_token=0.0001,
                 cost_per_output_token=0.0002,
             ),
             ModelInfo(

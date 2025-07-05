@@ -29,11 +29,11 @@ class ModelResponse(BaseModel):
 
     content: str
     model_name: str
-    usage: Dict[str, Any] = Field(default_factory=dict)  # {input_tokens: int, output_tokens: int, cost: float, etc.}
-    metadata: Dict[str, Any] = Field(default_factory=dict)  # Provider-specific data
+    usage: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    model_config = {"frozen": True}  # Immutable value object
+    model_config = {"frozen": True}
 
 
 class ModelInfo(BaseModel):

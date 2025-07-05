@@ -62,7 +62,6 @@ class PlanTaskTool(BaseWorkflowTool):
         restart_from = restart_context.get("restart_from", "DISCOVERY")
         return PlanTaskState(restart_from.lower())
 
-
     def _determine_workflow_states(self, discovery_artifact: Optional[ContextDiscoveryArtifact] = None) -> list:
         """Determine which states to include based on complexity."""
         base_states = [PlanTaskState.DISCOVERY, PlanTaskState.CLARIFICATION]
@@ -99,13 +98,12 @@ class PlanTaskTool(BaseWorkflowTool):
         is_low_complexity = complexity == "LOW"
         few_files = len(relevant_files) <= 3
         no_new_integrations = len(integration_points) == 0
-        follows_patterns = len(code_patterns) > 0  # Uses existing patterns
+        follows_patterns = len(code_patterns) > 0
 
         # Skip if it's clearly a simple task
         should_skip = is_low_complexity and few_files and no_new_integrations
 
         return should_skip
-
 
     def get_next_state_after_clarification(self) -> str:
         """Determine next state after clarification based on complexity."""
@@ -120,7 +118,6 @@ class PlanTaskTool(BaseWorkflowTool):
     def get_autonomous_config(self) -> Dict[str, Any]:
         """Get configuration for autonomous mode."""
         return {"skip_human_reviews": self.autonomous_mode, "auto_approve_after_ai": self.autonomous_mode, "question_handling": "best_guess" if self.autonomous_mode else "interactive"}
-
 
     def can_restart_from_state(self, state: str) -> bool:
         """Check if we can restart planning from a given state."""

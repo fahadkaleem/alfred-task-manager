@@ -68,7 +68,7 @@ class PromptLibrary:
         count = 0
         for prompt_file in self.prompts_dir.rglob("*.md"):
             if prompt_file.name.startswith("_"):
-                continue  # Skip special files
+                continue
 
             try:
                 content = prompt_file.read_text(encoding="utf-8")

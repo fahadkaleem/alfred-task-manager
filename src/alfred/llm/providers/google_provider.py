@@ -89,18 +89,18 @@ class GoogleProvider(BaseAIProvider):
                 name="gemini-1.5-pro",
                 provider="google",
                 capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
-                context_window=1048576,  # 1M tokens
+                context_window=1048576,
                 max_output_tokens=8192,
-                cost_per_input_token=0.00125,  # Per 1K tokens
+                cost_per_input_token=0.00125,
                 cost_per_output_token=0.005,
             ),
             ModelInfo(
                 name="gemini-1.5-flash",
                 provider="google",
                 capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION],
-                context_window=1048576,  # 1M tokens
+                context_window=1048576,
                 max_output_tokens=8192,
-                cost_per_input_token=0.000075,  # Per 1K tokens
+                cost_per_input_token=0.000075,
                 cost_per_output_token=0.0003,
             ),
             ModelInfo(
@@ -116,9 +116,9 @@ class GoogleProvider(BaseAIProvider):
                 name="gemini-1.5-flash-8b",
                 provider="google",
                 capabilities=[ModelCapability.TEXT_GENERATION],
-                context_window=1048576,  # 1M tokens
+                context_window=1048576,
                 max_output_tokens=8192,
-                cost_per_input_token=0.0000375,  # Per 1K tokens
+                cost_per_input_token=0.0000375,
                 cost_per_output_token=0.00015,
             ),
         ]

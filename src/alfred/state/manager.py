@@ -104,7 +104,6 @@ class StateManager:
         except Exception as e:
             logger.error("Failed to update scratchpad after status change", task_id=task_id, error=str(e))
 
-
     def clear_tool_state(self, task_id: str) -> None:
         """Clear active tool state with proper locking."""
         with file_lock(self._get_lock_file(task_id)):
@@ -165,7 +164,6 @@ class StateManager:
         archive_path = self._get_task_dir(task_id) / Paths.ARCHIVE_DIR
         archive_path.mkdir(parents=True, exist_ok=True)
         return archive_path
-
 
 
 # Singleton instance

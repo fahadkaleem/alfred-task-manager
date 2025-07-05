@@ -55,7 +55,7 @@ class EngineeringSpec(BaseModel):
 
     # Design Section
     major_design_considerations: str
-    architecture_diagrams: Optional[str] = None  # Text description, link to diagram
+    architecture_diagrams: Optional[str] = None
     api_changes: List[ApiDetails] = Field(default_factory=list)
     api_usage_estimates: Optional[str] = None
     event_flows: Optional[str] = None

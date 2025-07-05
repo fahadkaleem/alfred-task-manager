@@ -20,7 +20,7 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
         # So, it doesn't need a tool_class or status maps.
         super().__init__(
             tool_name=ToolName.MARK_SUBTASK_COMPLETE,
-            tool_class=None,  # Not a workflow-initiating tool
+            tool_class=None,
             required_status=None,
         )
 
@@ -31,14 +31,14 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
     async def execute(self, task_id: str = None, **kwargs: Any) -> ToolResponse:
         """Execute mark_subtask_complete using stateless pattern."""
         from alfred.lib.task_utils import load_task
-        
+
         task = load_task(task_id)
         if not task:
             return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
-        
+
         # Load task state
         task_state = state_manager.load_or_create(task_id)
-        
+
         # Check if we have an active workflow state
         if not task_state.active_tool_state:
             error_msg = f"""No active implementation workflow found for task '{task_id}'. 
@@ -59,7 +59,7 @@ Cannot mark subtask progress without an active implementation workflow."""
             return ToolResponse(status="error", message=error_msg)
 
         workflow_state = task_state.active_tool_state
-        
+
         # Ensure we are operating on an ImplementTaskTool
         if workflow_state.tool_name != ToolName.IMPLEMENT_TASK:
             return ToolResponse(status="error", message=f"Progress can only be marked during the '{ToolName.IMPLEMENT_TASK}' workflow.")
@@ -89,7 +89,7 @@ Cannot mark subtask progress without an active implementation workflow."""
             return ToolResponse(status="success", message=f"Subtask '{subtask_id}' was already marked as complete.")
 
         completed_subtasks.add(subtask_id)
-        workflow_state.context_store["completed_subtasks"] = sorted(list(completed_subtasks))  # Store sorted for consistency
+        workflow_state.context_store["completed_subtasks"] = sorted(list(completed_subtasks))
 
         # Persist the updated workflow state
         with state_manager.complex_update(task_id) as state:

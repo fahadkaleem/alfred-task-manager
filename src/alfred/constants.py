@@ -15,7 +15,7 @@ class ToolName:
 
     CREATE_SPEC: Final[str] = "create_spec"
     CREATE_TASKS_FROM_SPEC: Final[str] = "create_tasks_from_spec"
-    CREATE_TASKS: Final[str] = "create_tasks_from_spec"  # Alias for backward compatibility
+    CREATE_TASKS: Final[str] = "create_tasks_from_spec"
     START_TASK: Final[str] = "start_task"
     PLAN_TASK: Final[str] = "plan_task"
     IMPLEMENT_TASK: Final[str] = "implement_task"

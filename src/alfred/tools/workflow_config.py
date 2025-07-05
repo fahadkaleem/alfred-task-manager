@@ -24,14 +24,14 @@ class WorkflowToolConfig:
 
     # Dispatch configuration
     dispatch_on_init: bool = False
-    dispatch_state_attr: Optional[str] = None  # e.g., "DISPATCHING"
-    target_state_method: str = "dispatch"  # method to call for state transition
+    dispatch_state_attr: Optional[str] = None
+    target_state_method: str = "dispatch"
 
     # Context loading configuration
     context_loader: Optional[Callable[[Any, Any], Dict[str, Any]]] = None
 
     # Validation
-    requires_artifact_from: Optional[str] = None  # e.g., ToolName.PLAN_TASK
+    requires_artifact_from: Optional[str] = None
 
     def __post_init__(self):
         """Validate configuration consistency."""

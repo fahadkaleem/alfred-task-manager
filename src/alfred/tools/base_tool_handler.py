@@ -49,7 +49,6 @@ class BaseToolHandler(ABC):
 
         return self._generate_response(tool_instance, task)
 
-
     def _generate_response(self, tool_instance: BaseWorkflowTool, task: Task) -> ToolResponse:
         """Common logic for generating the final prompt and tool response."""
         try:

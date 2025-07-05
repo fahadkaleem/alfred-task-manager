@@ -87,7 +87,7 @@ async def _initialize_single_provider(provider_config: AIProviderConfig) -> None
         provider = model_registry.create_provider(
             "openai",
             api_key=api_key,
-            base_url=None,  # Use OpenAI's default API endpoint
+            base_url=None,
         )
     elif provider_config.name == AIProvider.GOOGLE:
         provider = model_registry.create_provider("google", api_key=api_key)

@@ -8,27 +8,28 @@ from alfred.state.manager import state_manager
 def create_spec_logic(task_id: str, prd_content: str, **kwargs) -> ToolResponse:
     """
     Pure context loader function for create_spec tool.
-    
+
     This function provides the logic for creating a technical specification from a PRD
     using the stateless context loader pattern. It returns data for the workflow handler
     to process instead of manipulating context directly.
-    
+
     Args:
         task_id: The unique identifier for the epic/feature (e.g., "EPIC-01")
         prd_content: The raw PRD content to analyze
         **kwargs: Additional parameters from the workflow handler
-        
+
     Returns:
         ToolResponse containing the initialization data and next prompt
     """
     # Update status to creating_spec
     state_manager.update_task_status(task_id, TaskStatus.CREATING_SPEC)
-    
+
     # Create PRD artifact for context
     prd_artifact = PRDInputArtifact(prd_content=prd_content)
-    
+
     # Load or create task for prompt generation
     from alfred.lib.task_utils import load_task
+
     task = load_task(task_id)
     if not task:
         # Create a basic task object for the spec creation phase
@@ -39,20 +40,21 @@ def create_spec_logic(task_id: str, prd_content: str, **kwargs) -> ToolResponse:
             implementation_details="Transform PRD into engineering specification",
             task_status=TaskStatus.CREATING_SPEC,
         )
-    
+
     # Generate the initial prompt
     from alfred.core.prompter import generate_prompt
+
     prompt = generate_prompt(
         task_id=task_id,
         tool_name=ToolName.CREATE_SPEC,
-        state="dispatching",  # Initial state for workflow tools
+        state="dispatching",
         task=task,
         additional_context={
             "task_id": task_id,
             "prd_content": prd_content,
         },
     )
-    
+
     # Return response with context data for the workflow handler
     return ToolResponse(
         status="success",
@@ -61,6 +63,5 @@ def create_spec_logic(task_id: str, prd_content: str, **kwargs) -> ToolResponse:
         data={
             "prd_input": prd_artifact.model_dump(),
             "task_id": task_id,
-        }
+        },
     )
-

@@ -21,7 +21,7 @@ class WorkflowState(BaseModel):
 
     task_id: str
     tool_name: str
-    current_state: str  # String representation of the state enum
+    current_state: str
     context_store: Dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

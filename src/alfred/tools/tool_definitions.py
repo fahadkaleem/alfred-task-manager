@@ -160,10 +160,6 @@ def load_finalize_context(task, task_state):
     return {"test_results": test_results} if test_results else {}
 
 
-
-
-
-
 # Custom validators
 def validate_plan_task_status(task) -> Optional[str]:
     """Validate that task is in correct status for planning."""
@@ -285,15 +281,15 @@ TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
     ),
     ToolName.CREATE_SPEC: ToolDefinition(
         name=ToolName.CREATE_SPEC,
-        tool_class=None,  # Convert to simple tool
+        tool_class=None,
         description="Create technical specification from PRD",
-        context_loader=create_spec_logic,  # Use create_spec_logic as the implementation
+        context_loader=create_spec_logic,
     ),
     ToolName.CREATE_TASKS_FROM_SPEC: ToolDefinition(
         name=ToolName.CREATE_TASKS_FROM_SPEC,
-        tool_class=None,  # Convert to simple tool
+        tool_class=None,
         description="Break down spec into actionable tasks",
-        context_loader=create_tasks_logic,  # Use create_tasks_logic as the implementation
+        context_loader=create_tasks_logic,
     ),
     # Simple tools (tool_class=None, logic in context_loader)
     ToolName.GET_NEXT_TASK: ToolDefinition(

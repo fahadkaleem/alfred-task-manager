@@ -13,7 +13,7 @@ from typing import AsyncIterator, Callable
 from fastmcp import FastMCP
 
 from alfred.config.settings import settings
-from alfred.core.prompter import prompt_library  # Import the prompt library
+from alfred.core.prompter import prompt_library
 from alfred.lib.structured_logger import get_logger
 from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.constants import ToolName
@@ -31,6 +31,7 @@ def register_tool_from_definition(app: FastMCP, tool_name: str):
     """Register a tool using its definition."""
     # Local import to avoid circular dependency
     from alfred.tools.tool_definitions import get_tool_definition
+
     definition = get_tool_definition(tool_name)
     handler = get_tool_handler(tool_name)
 
@@ -466,10 +467,10 @@ async def approve_review(task_id: str) -> ToolResponse:
 
     Examples:
         # Approve planning context analysis
-        approve_review("AL-01")  # Advances to strategy phase
+        approve_review("AL-01")
 
         # Approve final implementation
-        approve_review("AL-02")  # Advances to review phase
+        approve_review("AL-02")
 
     Next Actions:
         - Planning phases: Continues to next planning step via submit_work
@@ -576,7 +577,7 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
         mark_subtask_complete("TK-01", "subtask-1")
         # Returns progress update showing 1/5 subtasks complete (20%)
     """
-    pass  # Implementation handled by decorator
+    pass
 
 
 @app.tool()
@@ -645,7 +646,7 @@ async def review_task(task_id: str) -> ToolResponse:
             - data.requirements: Original requirements for reference
 
     Examples:
-        review_task("AL-01")  # Starts comprehensive code review
+        review_task("AL-01")
 
     Review Process:
     1. Tool loads implementation details and original requirements
@@ -704,7 +705,7 @@ async def test_task(task_id: str) -> ToolResponse:
             - data.acceptance_criteria: Original criteria to validate
 
     Examples:
-        test_task("AL-01")  # Starts comprehensive testing phase
+        test_task("AL-01")
 
     Testing Process:
     1. Tool provides testing checklist and requirements

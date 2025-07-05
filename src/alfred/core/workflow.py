@@ -66,10 +66,11 @@ class CreateTasksState(str, Enum):
 class BaseWorkflowTool:
     """
     Stateless base class for workflow tools.
-    
+
     No longer holds machine instance or state. Contains only static configuration
     and utility methods for workflow management.
     """
+
     def __init__(self, task_id: str, tool_name: str):
         self.task_id = task_id
         self.tool_name = tool_name

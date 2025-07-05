@@ -13,7 +13,7 @@ IMPORTANT: This is a DRY RUN validation test. Do NOT write actual production cod
 ## PROTOCOL EXECUTION
 
 1. **Environment Preparation**:
-   - Execute `rm -rf .alfred` to ensure clean state
+   - Ask the user and Execute `rm -rf .alfred` to ensure clean state. If the user rejects this, then skip to the next stage
    - Verify command completion and directory removal
 
 2. **Phase 1: System Initialization**:

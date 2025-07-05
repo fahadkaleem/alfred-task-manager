@@ -77,7 +77,7 @@ class AnthropicProvider(BaseAIProvider):
                 capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
                 context_window=200000,
                 max_output_tokens=8192,
-                cost_per_input_token=0.003,  # Per 1K tokens
+                cost_per_input_token=0.003,
                 cost_per_output_token=0.015,
             ),
             ModelInfo(
@@ -86,7 +86,7 @@ class AnthropicProvider(BaseAIProvider):
                 capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
                 context_window=200000,
                 max_output_tokens=4096,
-                cost_per_input_token=0.015,  # Per 1K tokens
+                cost_per_input_token=0.015,
                 cost_per_output_token=0.075,
             ),
             ModelInfo(

@@ -25,7 +25,7 @@ class ToolConfig:
     """Immutable configuration for a registered tool."""
 
     name: str
-    handler_class: Any  # Can be Type or Callable returning instance
+    handler_class: Any
     tool_class: Type[BaseWorkflowTool]
     entry_status_map: Dict[TaskStatus, TaskStatus]
     implementation: Callable[..., Coroutine[Any, Any, ToolResponse]]
@@ -46,7 +46,7 @@ class ToolRegistry:
     def register(
         self,
         name: str,
-        handler_class: Any,  # Can be Type or Callable returning instance
+        handler_class: Any,
         tool_class: Type[BaseWorkflowTool],
         entry_status_map: Dict[TaskStatus, TaskStatus],
     ):
