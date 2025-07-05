@@ -92,8 +92,8 @@ Cannot mark subtask progress without an active implementation workflow."""
         workflow_state.context_store["completed_subtasks"] = sorted(list(completed_subtasks))  # Store sorted for consistency
 
         # Persist the updated workflow state
-        task_state.active_tool_state = workflow_state
-        state_manager.save_task_state(task_state)
+        with state_manager.complex_update(task_id) as state:
+            state.active_tool_state = workflow_state
 
         # Generate a progress report message
         completed_count = len(completed_subtasks)

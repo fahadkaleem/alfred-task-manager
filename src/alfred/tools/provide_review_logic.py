@@ -31,11 +31,20 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
     workflow_state = task_state.active_tool_state
     current_state = workflow_state.current_state
     
+    # CRITICAL FIX: Override approval if feedback_notes is provided
+    # If feedback is provided, treat it as a revision request regardless of is_approved flag
+    if feedback_notes:
+        logger.info("Feedback provided, overriding approval to revision request", 
+                   task_id=task_id, 
+                   original_is_approved=is_approved, 
+                   feedback_length=len(feedback_notes))
+        is_approved = False
+    
     logger.info("Processing review", task_id=task_id, tool_name=workflow_state.tool_name, state=current_state, approved=is_approved)
 
     # Get tool definition and engine for state transitions (local import to avoid circular dependency)
-    from alfred.tools.tool_definitions import tool_definitions
-    tool_definition = tool_definitions.get_tool_definition(workflow_state.tool_name)
+    from alfred.tools.tool_definitions import TOOL_DEFINITIONS
+    tool_definition = TOOL_DEFINITIONS.get(workflow_state.tool_name)
     if not tool_definition:
         return ToolResponse(status="error", message=f"No tool definition found for {workflow_state.tool_name}")
     
@@ -103,8 +112,8 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
             return ToolResponse(status="error", message=f"Cannot provide review from non-review state '{current_state}'.")
 
     # Persist the updated workflow state
-    task_state.active_tool_state = workflow_state
-    state_manager.save_task_state(task_state)
+    with state_manager.complex_update(task_id) as state:
+        state.active_tool_state = workflow_state
 
     # Check if we've reached a terminal state
     is_terminal = engine.is_terminal_state(workflow_state.current_state)
@@ -125,8 +134,8 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
             state_manager.add_completed_output(task_id, tool_name, artifact)
         
         # Clear active tool state
-        task_state.active_tool_state = None
-        state_manager.save_task_state(task_state)
+        with state_manager.complex_update(task_id) as state:
+            state.active_tool_state = None
         
         cleanup_task_logging(task_id)
 
@@ -172,8 +181,8 @@ Call `alfred.work_on_task(task_id='{task_id}')` to check the current status."""
         # Store feedback in the workflow state's context for persistence
         workflow_state.context_store["feedback_notes"] = feedback_notes
         # Persist the updated workflow state with feedback
-        task_state.active_tool_state = workflow_state
-        state_manager.save_task_state(task_state)
+        with state_manager.complex_update(task_id) as state:
+            state.active_tool_state = workflow_state
 
     # Always use the workflow state's context (which now includes feedback if present)
     ctx = workflow_state.context_store.copy()

@@ -59,8 +59,8 @@ class SubmitWorkHandler(BaseToolHandler):
         normalized_artifact = self._normalize_artifact(artifact)
 
         # 2. Create stateless tool instance for artifact validation (local import to avoid circular dependency)
-        from alfred.tools.tool_definitions import tool_definitions
-        tool_definition = tool_definitions.get_tool_definition(workflow_state.tool_name)
+        from alfred.tools.tool_definitions import get_tool_definition
+        tool_definition = get_tool_definition(workflow_state.tool_name)
         if not tool_definition:
             return ToolResponse(status=ResponseStatus.ERROR, message=f"No tool definition found for {workflow_state.tool_name}")
         
@@ -163,8 +163,8 @@ class SubmitWorkHandler(BaseToolHandler):
             return ToolResponse(status=ResponseStatus.ERROR, message=f"State transition failed: {str(e)}")
 
         # 6. Persist the new state
-        task_state.active_tool_state = workflow_state
-        state_manager.save_task_state(task_state)
+        with state_manager.complex_update(task.task_id) as state:
+            state.active_tool_state = workflow_state
 
         # 7. Generate response
         try:

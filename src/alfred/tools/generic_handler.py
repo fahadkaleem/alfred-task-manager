@@ -107,8 +107,8 @@ class GenericWorkflowHandler(BaseToolHandler):
             return task_state.active_tool_state
         
         # Create new workflow state (local import to avoid circular dependency)
-        from alfred.tools.tool_definitions import tool_definitions
-        tool_definition = tool_definitions.get_tool_definition(self.config.tool_name)
+        from alfred.tools.tool_definitions import get_tool_definition
+        tool_definition = get_tool_definition(self.config.tool_name)
         if not tool_definition:
             raise ValueError(f"No tool definition found for {self.config.tool_name}")
         
@@ -124,8 +124,8 @@ class GenericWorkflowHandler(BaseToolHandler):
         )
         
         # Update task state with new workflow state
-        task_state.active_tool_state = workflow_state
-        state_manager.save_task_state(task_state)
+        with state_manager.complex_update(task_id) as state:
+            state.active_tool_state = workflow_state
         
         logger.info("Created new workflow state", task_id=task_id, tool_name=self.config.tool_name, state=initial_state)
         return workflow_state
@@ -157,8 +157,8 @@ class GenericWorkflowHandler(BaseToolHandler):
                 from alfred.core.workflow_engine import WorkflowEngine
                 
                 # Use WorkflowEngine for state transition (local import to avoid circular dependency)
-                from alfred.tools.tool_definitions import tool_definitions
-                tool_definition = tool_definitions.get_tool_definition(self.config.tool_name)
+                from alfred.tools.tool_definitions import get_tool_definition
+                tool_definition = get_tool_definition(self.config.tool_name)
                 engine = WorkflowEngine(tool_definition)
                 
                 # Execute dispatch transition
@@ -166,9 +166,8 @@ class GenericWorkflowHandler(BaseToolHandler):
                 workflow_state.current_state = new_state
                 
                 # Persist the state change
-                task_state = state_manager.load_or_create(task.task_id)
-                task_state.active_tool_state = workflow_state
-                state_manager.save_task_state(task_state)
+                with state_manager.complex_update(task.task_id) as state:
+                    state.active_tool_state = workflow_state
 
                 logger.info("Dispatched tool to state", task_id=task.task_id, tool_name=self.config.tool_name, state=new_state)
                 

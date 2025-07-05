@@ -30,6 +30,7 @@ ${artifact_json}
 - Focus on substantive issues, not minor formatting
 - Consider whether a human reviewer would find this acceptable
 - If rejecting, provide specific, actionable feedback
+- **CRITICAL**: If the user provides ANY feedback or notes alongside their approval, you MUST treat this as a revision request by calling request_revision. Only call approve_review for an explicit, unqualified approval with no feedback.
 
 # OUTPUT
 Make a review decision:
