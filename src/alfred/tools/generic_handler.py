@@ -120,6 +120,14 @@ class GenericWorkflowHandler(BaseToolHandler):
         with state_manager.complex_update(task_id) as state:
             state.active_tool_state = workflow_state
 
+        # Update task status if tool has entry_status_map
+        if self.config.entry_status_map:
+            current_status = state_manager.load_or_create(task_id).task_status
+            new_status = self.config.entry_status_map.get(current_status)
+            if new_status and new_status != current_status:
+                state_manager.update_task_status(task_id, new_status)
+                logger.info("Updated task status", task_id=task_id, old_status=current_status.value, new_status=new_status.value)
+
         logger.info("Created new workflow state", task_id=task_id, tool_name=self.config.tool_name, state=initial_state)
         return workflow_state
 

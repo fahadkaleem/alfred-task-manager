@@ -72,6 +72,28 @@ class ToolDefinition:
 
     def get_entry_status_map(self) -> Dict[TaskStatus, TaskStatus]:
         """Build entry status map from definition."""
+        # Special cases for tools that need immediate status transitions
+        if self.name == ToolName.IMPLEMENT_TASK:
+            return {
+                TaskStatus.READY_FOR_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT,
+                TaskStatus.IN_DEVELOPMENT: TaskStatus.IN_DEVELOPMENT
+            }
+        elif self.name == ToolName.REVIEW_TASK:
+            return {
+                TaskStatus.READY_FOR_REVIEW: TaskStatus.IN_REVIEW,
+                TaskStatus.IN_REVIEW: TaskStatus.IN_REVIEW
+            }
+        elif self.name == ToolName.TEST_TASK:
+            return {
+                TaskStatus.READY_FOR_TESTING: TaskStatus.IN_TESTING,
+                TaskStatus.IN_TESTING: TaskStatus.IN_TESTING
+            }
+        elif self.name == ToolName.FINALIZE_TASK:
+            return {
+                TaskStatus.READY_FOR_FINALIZATION: TaskStatus.IN_FINALIZATION,
+                TaskStatus.IN_FINALIZATION: TaskStatus.IN_FINALIZATION
+            }
+        
         if not self.exit_status:
             return {}
 

@@ -158,15 +158,23 @@ Task '{task_id}' is now ready for development.
 **Next Action:**
 Call `alfred.work_on_task(task_id='{task_id}')` to start implementation."""
             else:
-                handoff = f"""The '{tool_name}' workflow has completed successfully! 
+                # Check if there's another active workflow tool (meaning we're transitioning between major phases)
+                task_state_check = state_manager.load_or_create(task_id)
+                if task_state_check.active_tool_state is None and next_status != TaskStatus.DONE:
+                    # No active workflow - we're between major phases, approve_and_advance is appropriate
+                    handoff = f"""The '{tool_name}' workflow has completed successfully! 
 
 **Next Actions:**
 1. Call `alfred.work_on_task(task_id='{task_id}')` to check the current status and see what phase comes next
 2. Then use the suggested tool for the next phase (e.g., `review_task`, `test_task`, etc.)
 
-**Quick Option:** If you're confident and want to skip the status check, call `alfred.approve_and_advance(task_id='{task_id}')` to automatically advance to the next phase.
+**Quick Option:** Call `alfred.approve_and_advance(task_id='{task_id}')` to automatically advance to the next phase."""
+                else:
+                    # Still in a workflow or task is complete - don't suggest approve_and_advance
+                    handoff = f"""The '{tool_name}' workflow has completed successfully! 
 
-**Note**: approve_and_advance only works after a workflow is fully complete, not during sub-states."""
+**Next Action:**
+Call `alfred.work_on_task(task_id='{task_id}')` to check the current status and see what comes next."""
         else:
             # Fallback if no next status defined
             handoff = f"""The '{tool_name}' workflow has completed successfully! 

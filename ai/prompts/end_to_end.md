@@ -183,10 +183,11 @@ Await further instructions after reporting the failure.
 ##### **Mark Subtasks Complete**
 4.  **Action:** For each subtask: `alfred.mark_subtask_complete(task_id="{task_id}", subtask_id="ST-001")`.
 5.  **Verify:** Progress updates correctly (e.g., "1/3 subtasks complete (33%)").
-6.  **Action:** Mark remaining subtasks complete: "ST-002", "ST-003".
+6.  **Verify:** Task status has been updated from `"ready_for_development"` to `"in_development"`.
+7.  **Action:** Mark remaining subtasks complete: "ST-002", "ST-003".
 
 ##### **Submit Implementation**
-7.  **Action:** Try submitting **incomplete** implementation to test validation:
+8.  **Action:** Try submitting **incomplete** implementation to test validation:
     ```json
     {
       "summary": "Partial implementation completed",
@@ -194,13 +195,13 @@ Await further instructions after reporting the failure.
       "testing_notes": "Only completed first two subtasks"
     }
     ```
-8.  **Verify:** **VALIDATION SHOULD FAIL** with clear error:
+9.  **Verify:** **VALIDATION SHOULD FAIL** with clear error:
     ```
     "Implementation validation failed: Implementation incomplete. 
     Missing subtasks: ['ST-003']. Expected all subtasks to be completed."
     ```
 
-9.  **Action:** Submit **complete** implementation:
+10. **Action:** Submit **complete** implementation:
     ```json
     {
       "summary": "All validation utilities implemented successfully",
@@ -209,9 +210,9 @@ Await further instructions after reporting the failure.
       "implementation_details": "Created ValidationUtils class with all required methods"
     }
     ```
-10. **Action:** `approve_review` (AI) → `approve_review` (Human).
-11. **Action:** `approve_and_advance`.
-12. **Verify Final State:**
+11. **Action:** `approve_review` (AI) → `approve_review` (Human).
+12. **Action:** Either call `approve_and_advance` or complete the workflow with `work_on_task`.
+13. **Verify Final State:**
     - Task status must be `"ready_for_review"`
     - Scratchpad cleared
     - Archive contains implementation artifacts

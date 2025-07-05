@@ -75,7 +75,17 @@ Cannot mark subtask progress without an active implementation workflow."""
 
         # Optional: Enforce task status validation
         if task.task_status != TaskStatus.IN_DEVELOPMENT:
-            return ToolResponse(status="error", message=f"Task '{task.task_id}' has status '{task.task_status.value}'. Progress can only be marked for tasks in 'in_development' status.")
+            error_msg = f"""Task '{task.task_id}' has status '{task.task_status.value}'. Progress can only be marked for tasks in 'in_development' status.
+
+**What happened**: The task status should have been updated to 'in_development' when the implementation workflow started, but it appears this didn't happen.
+
+**What to do**:
+1. First, try calling `alfred.work_on_task(task_id='{task.task_id}')` to check the current state
+2. If the task is ready for development, call `alfred.implement_task(task_id='{task.task_id}')` to properly start implementation
+3. If this error persists, there may be a synchronization issue - please report this bug
+
+**Note**: This validation is in place to ensure subtasks are only marked complete during active implementation."""
+            return ToolResponse(status="error", message=error_msg)
 
         # Validate subtask_id against the plan
         execution_plan = workflow_state.context_store.get("artifact_content", {}).get("subtasks", [])

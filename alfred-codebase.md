@@ -310,7 +310,7 @@ class ToolName:
 
     CREATE_SPEC: Final[str] = "create_spec"
     CREATE_TASKS_FROM_SPEC: Final[str] = "create_tasks_from_spec"
-    CREATE_TASKS: Final[str] = "create_tasks_from_spec"  # Alias for backward compatibility
+    CREATE_TASKS: Final[str] = "create_tasks_from_spec"
     START_TASK: Final[str] = "start_task"
     PLAN_TASK: Final[str] = "plan_task"
     IMPLEMENT_TASK: Final[str] = "implement_task"
@@ -338,6 +338,7 @@ class Paths:
     TEMPLATES_DIR: Final[str] = "templates"
     DEBUG_DIR: Final[str] = "debug"
     TASKS_DIR: Final[str] = "tasks"
+    ARCHIVE_DIR: Final[str] = "archive"
 
     # Files
     SCRATCHPAD_FILE: Final[str] = "scratchpad.md"
@@ -610,10 +611,7 @@ def load_simple_task_context(task: Task, task_state: TaskState) -> Dict[str, Any
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from transitions.core import Machine
-
 from alfred.constants import ToolName
-from alfred.core.state_machine_builder import workflow_builder
 from alfred.core.workflow import BaseWorkflowTool
 from alfred.models.planning_artifacts import (
     ContextDiscoveryArtifact,
@@ -653,33 +651,16 @@ class PlanTaskTool(BaseWorkflowTool):
         # Handle re-planning context
         if restart_context:
             initial_state = self._determine_restart_state(restart_context)
-            self._load_preserved_artifacts(restart_context)
+            # Note: preserved artifacts are now handled by the context loader
         else:
             initial_state = PlanTaskState.DISCOVERY
 
-        # Initially include all states - we'll skip dynamically during transitions
-        workflow_states = [PlanTaskState.DISCOVERY, PlanTaskState.CLARIFICATION, PlanTaskState.CONTRACTS, PlanTaskState.IMPLEMENTATION_PLAN, PlanTaskState.VALIDATION]
-
-        # Use the builder to create state machine configuration
-        machine_config = workflow_builder.build_workflow_with_reviews(
-            work_states=workflow_states,
-            terminal_state=PlanTaskState.VERIFIED,
-            initial_state=initial_state,
-        )
-
-        # Create the state machine
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
+        # Configuration removed - now uses WorkflowEngine via GenericWorkflowHandler
 
         # Configuration flags
         self._skip_contracts = False
         self.autonomous_mode = autonomous_mode
-
-        # Store autonomous mode in context for templates
-        self.context_store["autonomous_mode"] = autonomous_mode
-        if autonomous_mode:
-            self.context_store["autonomous_note"] = "Running in autonomous mode - human reviews will be skipped"
-        else:
-            self.context_store["autonomous_note"] = "Running in interactive mode - human reviews are enabled for each phase"
+        # Note: context_store is no longer used - context is managed by WorkflowState
 
     def get_final_work_state(self) -> str:
         """Return the final work state that produces the main artifact."""
@@ -689,13 +670,6 @@ class PlanTaskTool(BaseWorkflowTool):
         """Determine initial state for re-planning."""
         restart_from = restart_context.get("restart_from", "DISCOVERY")
         return PlanTaskState(restart_from.lower())
-
-    def _load_preserved_artifacts(self, restart_context: Dict) -> None:
-        """Load preserved artifacts from previous planning attempt."""
-        preserved = restart_context.get("preserve_artifacts", [])
-        for artifact_name in preserved:
-            # Load preserved artifact into context_store
-            self.context_store[f"preserved_{artifact_name}"] = restart_context.get(artifact_name)
 
     def _determine_workflow_states(self, discovery_artifact: Optional[ContextDiscoveryArtifact] = None) -> list:
         """Determine which states to include based on complexity."""
@@ -733,22 +707,12 @@ class PlanTaskTool(BaseWorkflowTool):
         is_low_complexity = complexity == "LOW"
         few_files = len(relevant_files) <= 3
         no_new_integrations = len(integration_points) == 0
-        follows_patterns = len(code_patterns) > 0  # Uses existing patterns
+        follows_patterns = len(code_patterns) > 0
 
         # Skip if it's clearly a simple task
         should_skip = is_low_complexity and few_files and no_new_integrations
 
         return should_skip
-
-    def check_complexity_after_clarification(self) -> None:
-        """Check if we should skip contracts after clarification phase."""
-        # Get discovery artifact from context store
-        discovery_artifact = self.context_store.get("context_discovery_artifact")
-        if discovery_artifact and self.should_skip_contracts(discovery_artifact):
-            self._skip_contracts = True
-            # Add note to context for templates
-            self.context_store["skip_contracts"] = True
-            self.context_store["complexity_note"] = "Skipping CONTRACTS phase due to LOW complexity assessment"
 
     def get_next_state_after_clarification(self) -> str:
         """Determine next state after clarification based on complexity."""
@@ -763,22 +727,6 @@ class PlanTaskTool(BaseWorkflowTool):
     def get_autonomous_config(self) -> Dict[str, Any]:
         """Get configuration for autonomous mode."""
         return {"skip_human_reviews": self.autonomous_mode, "auto_approve_after_ai": self.autonomous_mode, "question_handling": "best_guess" if self.autonomous_mode else "interactive"}
-
-    def initiate_replanning(self, trigger: str, restart_from: str, changes: str, preserve_artifacts: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Initiate re-planning with preserved context."""
-        restart_context = {
-            "trigger": trigger,  # "requirements_changed", "implementation_failed", "review_failed"
-            "restart_from": restart_from,  # State to restart from
-            "changes": changes,  # What changed
-            "preserve_artifacts": preserve_artifacts or [],
-            "timestamp": __import__("datetime").datetime.now().isoformat(),
-            "previous_state": self.state,
-        }
-
-        # Store restart context for next planning session
-        self.context_store["restart_context"] = restart_context
-
-        return restart_context
 
     def can_restart_from_state(self, state: str) -> bool:
         """Check if we can restart planning from a given state."""
@@ -864,7 +812,7 @@ class PromptLibrary:
         count = 0
         for prompt_file in self.prompts_dir.rglob("*.md"):
             if prompt_file.name.startswith("_"):
-                continue  # Skip special files
+                continue
 
             try:
                 content = prompt_file.read_text(encoding="utf-8")
@@ -1323,10 +1271,11 @@ class CreateTasksState(str, Enum):
 class BaseWorkflowTool:
     """
     Stateless base class for workflow tools.
-    
+
     No longer holds machine instance or state. Contains only static configuration
     and utility methods for workflow management.
     """
+
     def __init__(self, task_id: str, tool_name: str):
         self.task_id = task_id
         self.tool_name = tool_name
@@ -1450,139 +1399,117 @@ logger = get_logger(__name__)
 class WorkflowEngine:
     """
     Lightweight state machine engine operating on pure state dictionaries.
-    
+
     This class is responsible for managing state machine transitions without
     holding any state itself. It operates on simple state strings and uses
     the existing ToolDefinition infrastructure.
     """
-    
+
     def __init__(self, tool_definition: "ToolDefinition"):
         """
         Initialize with tool definition for state machine configuration.
-        
+
         Args:
             tool_definition: The tool definition containing state machine config
         """
         self.tool_definition = tool_definition
         self._machine_config = self._build_machine_config()
-        
+
     def _build_machine_config(self) -> Dict[str, Any]:
         """Build machine configuration from tool definition."""
         if len(self.tool_definition.work_states) > 1:
             # Multi-step workflow with reviews
             return workflow_builder.build_workflow_with_reviews(
-                work_states=self.tool_definition.work_states,
-                terminal_state=self.tool_definition.terminal_state,
-                initial_state=self.tool_definition.initial_state
+                work_states=self.tool_definition.work_states, terminal_state=self.tool_definition.terminal_state, initial_state=self.tool_definition.initial_state
             )
         elif self.tool_definition.dispatch_state:
             # Simple workflow with dispatch
             return workflow_builder.build_simple_workflow(
                 dispatch_state=self.tool_definition.dispatch_state,
                 work_state=self.tool_definition.work_states[0] if self.tool_definition.work_states else None,
-                terminal_state=self.tool_definition.terminal_state
+                terminal_state=self.tool_definition.terminal_state,
             )
         else:
             # Minimal configuration
-            states = [state.value if hasattr(state, 'value') else str(state) 
-                     for state in self.tool_definition.work_states]
+            states = [state.value if hasattr(state, "value") else str(state) for state in self.tool_definition.work_states]
             if self.tool_definition.terminal_state:
-                terminal = (self.tool_definition.terminal_state.value 
-                           if hasattr(self.tool_definition.terminal_state, 'value') 
-                           else str(self.tool_definition.terminal_state))
+                terminal = self.tool_definition.terminal_state.value if hasattr(self.tool_definition.terminal_state, "value") else str(self.tool_definition.terminal_state)
                 states.append(terminal)
-            
-            return {
-                "states": states,
-                "transitions": [],
-                "initial": states[0] if states else None
-            }
-    
+
+            return {"states": states, "transitions": [], "initial": states[0] if states else None}
+
     def execute_trigger(self, current_state: str, trigger: str) -> str:
         """
         Execute a state transition and return new state string.
-        
+
         Args:
             current_state: Current state string
             trigger: Trigger name to execute
-            
+
         Returns:
             New state string after transition
-            
+
         Raises:
             ValueError: If transition is invalid
         """
         # Create a temporary state object for the machine
-        state_obj = type('StateObj', (), {'state': current_state})()
-        
+        state_obj = type("StateObj", (), {"state": current_state})()
+
         # Create machine with temporary object
-        machine = Machine(
-            model=state_obj,
-            states=self._machine_config["states"],
-            transitions=self._machine_config["transitions"],
-            initial=current_state,
-            auto_transitions=False
-        )
-        
+        machine = Machine(model=state_obj, states=self._machine_config["states"], transitions=self._machine_config["transitions"], initial=current_state, auto_transitions=False)
+
         # Validate transition exists
         valid_transitions = machine.get_transitions(trigger=trigger, source=current_state)
         if not valid_transitions:
             raise ValueError(f"No valid transition for trigger '{trigger}' from state '{current_state}'")
-        
+
         # Execute transition
         trigger_method = getattr(state_obj, trigger, None)
         if not trigger_method:
             raise ValueError(f"Trigger method '{trigger}' not found")
-            
+
         trigger_method()
-        
+
         return state_obj.state
-    
+
     def get_valid_triggers(self, from_state: str) -> List[str]:
         """
         Get list of valid triggers from a given state.
-        
+
         Args:
             from_state: State to get triggers for
-            
+
         Returns:
             List of valid trigger names
         """
         # Create temporary machine to get transitions
-        state_obj = type('StateObj', (), {'state': from_state})()
-        machine = Machine(
-            model=state_obj,
-            states=self._machine_config["states"],
-            transitions=self._machine_config["transitions"],
-            initial=from_state,
-            auto_transitions=False
-        )
-        
+        state_obj = type("StateObj", (), {"state": from_state})()
+        machine = Machine(model=state_obj, states=self._machine_config["states"], transitions=self._machine_config["transitions"], initial=from_state, auto_transitions=False)
+
         # Get all transitions from this state
         triggers = set()
         for transition in self._machine_config["transitions"]:
             if transition.get("source") == from_state:
                 triggers.add(transition.get("trigger"))
-        
+
         return sorted(list(triggers))
-    
+
     def is_terminal_state(self, state: str) -> bool:
         """
         Check if a state is terminal (workflow complete).
-        
+
         Args:
             state: State string to check
-            
+
         Returns:
             True if state is terminal, False otherwise
         """
         if self.tool_definition.terminal_state:
-            terminal_value = (self.tool_definition.terminal_state.value
-                            if hasattr(self.tool_definition.terminal_state, 'value')
-                            else str(self.tool_definition.terminal_state))
+            terminal_value = self.tool_definition.terminal_state.value if hasattr(self.tool_definition.terminal_state, "value") else str(self.tool_definition.terminal_state)
             return state == terminal_value
-        
-        return False 
+
+        return False
+
 ``````
 ------ src/alfred/lib/fs_utils.py ------
 ``````
@@ -1708,7 +1635,7 @@ class MarkdownTaskParser:
                         # Start of new list item
                         if current_item:
                             list_items.append(current_item.strip())
-                        current_item = line[2:].strip()  # Remove '- '
+                        current_item = line[2:].strip()
                     elif current_item:
                         # Continuation of current item
                         current_item += " " + line
@@ -1818,11 +1745,11 @@ class HumanReadableFormatter(logging.Formatter):
     
     # ANSI color codes
     COLORS = {
-        'DEBUG': '\033[36m',    # Cyan
-        'INFO': '\033[32m',     # Green
-        'WARNING': '\033[33m',  # Yellow
-        'ERROR': '\033[31m',    # Red
-        'CRITICAL': '\033[35m', # Magenta
+        'DEBUG': '\033[36m',
+        'INFO': '\033[32m',
+        'WARNING': '\033[33m',
+        'ERROR': '\033[31m',
+        'CRITICAL': '\033[35m',
     }
     RESET = '\033[0m'
     
@@ -2061,7 +1988,7 @@ def setup_task_logging(task_id: str) -> None:
     # Create a file handler with JSON format for task logs
     handler = logging.FileHandler(log_file, mode="a")
     handler.setFormatter(StructuredFormatter(include_context=True))
-    handler.setLevel(logging.DEBUG)  # Capture all logs for debugging
+    handler.setLevel(logging.DEBUG)
     
     # Add filter to only log messages with this task_id
     class TaskFilter(logging.Filter):
@@ -3046,7 +2973,7 @@ async def _initialize_single_provider(provider_config: AIProviderConfig) -> None
         provider = model_registry.create_provider(
             "openai",
             api_key=api_key,
-            base_url=None,  # Use OpenAI's default API endpoint
+            base_url=None,
         )
     elif provider_config.name == AIProvider.GOOGLE:
         provider = model_registry.create_provider("google", api_key=api_key)
@@ -3170,7 +3097,7 @@ class AnthropicProvider(BaseAIProvider):
                 capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
                 context_window=200000,
                 max_output_tokens=8192,
-                cost_per_input_token=0.003,  # Per 1K tokens
+                cost_per_input_token=0.003,
                 cost_per_output_token=0.015,
             ),
             ModelInfo(
@@ -3179,7 +3106,7 @@ class AnthropicProvider(BaseAIProvider):
                 capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
                 context_window=200000,
                 max_output_tokens=4096,
-                cost_per_input_token=0.015,  # Per 1K tokens
+                cost_per_input_token=0.015,
                 cost_per_output_token=0.075,
             ),
             ModelInfo(
@@ -3247,11 +3174,11 @@ class ModelResponse(BaseModel):
 
     content: str
     model_name: str
-    usage: Dict[str, Any] = Field(default_factory=dict)  # {input_tokens: int, output_tokens: int, cost: float, etc.}
-    metadata: Dict[str, Any] = Field(default_factory=dict)  # Provider-specific data
+    usage: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    model_config = {"frozen": True}  # Immutable value object
+    model_config = {"frozen": True}
 
 
 class ModelInfo(BaseModel):
@@ -3416,18 +3343,18 @@ class GoogleProvider(BaseAIProvider):
                 name="gemini-1.5-pro",
                 provider="google",
                 capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
-                context_window=1048576,  # 1M tokens
+                context_window=1048576,
                 max_output_tokens=8192,
-                cost_per_input_token=0.00125,  # Per 1K tokens
+                cost_per_input_token=0.00125,
                 cost_per_output_token=0.005,
             ),
             ModelInfo(
                 name="gemini-1.5-flash",
                 provider="google",
                 capabilities=[ModelCapability.TEXT_GENERATION, ModelCapability.REASONING, ModelCapability.CODE_GENERATION],
-                context_window=1048576,  # 1M tokens
+                context_window=1048576,
                 max_output_tokens=8192,
-                cost_per_input_token=0.000075,  # Per 1K tokens
+                cost_per_input_token=0.000075,
                 cost_per_output_token=0.0003,
             ),
             ModelInfo(
@@ -3443,9 +3370,9 @@ class GoogleProvider(BaseAIProvider):
                 name="gemini-1.5-flash-8b",
                 provider="google",
                 capabilities=[ModelCapability.TEXT_GENERATION],
-                context_window=1048576,  # 1M tokens
+                context_window=1048576,
                 max_output_tokens=8192,
-                cost_per_input_token=0.0000375,  # Per 1K tokens
+                cost_per_input_token=0.0000375,
                 cost_per_output_token=0.00015,
             ),
         ]
@@ -3573,7 +3500,7 @@ class OpenAIProvider(BaseAIProvider):
                 capabilities=[ModelCapability.REASONING, ModelCapability.CODE_GENERATION, ModelCapability.ANALYSIS],
                 context_window=200000,
                 max_output_tokens=100000,
-                cost_per_input_token=0.0001,  # Placeholder pricing
+                cost_per_input_token=0.0001,
                 cost_per_output_token=0.0002,
             ),
             ModelInfo(
@@ -3935,7 +3862,7 @@ class EngineeringSpec(BaseModel):
 
     # Design Section
     major_design_considerations: str
-    architecture_diagrams: Optional[str] = None  # Text description, link to diagram
+    architecture_diagrams: Optional[str] = None
     api_changes: List[ApiDetails] = Field(default_factory=list)
     api_usage_estimates: Optional[str] = None
     event_flows: Optional[str] = None
@@ -4274,7 +4201,7 @@ class WorkflowState(BaseModel):
 
     task_id: str
     tool_name: str
-    current_state: str  # String representation of the state enum
+    current_state: str
     context_store: Dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -4291,59 +4218,6 @@ class TaskState(BaseModel):
     active_tool_state: Optional[WorkflowState] = Field(default=None)
     completed_tool_outputs: Dict[str, Any] = Field(default_factory=dict)
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
-``````
------- src/alfred/orchestration/__init__.py ------
-``````
-
-``````
------- src/alfred/orchestration/orchestrator.py ------
-``````
-# src/alfred/orchestration/orchestrator.py
-"""
-Legacy orchestrator module - largely deprecated in stateless design.
-
-The orchestrator previously managed active tool sessions but this functionality
-has been replaced by the stateless WorkflowEngine pattern where StateManager
-is the single source of truth.
-"""
-
-from alfred.config import ConfigManager
-from alfred.config.settings import settings
-from alfred.lib.structured_logger import get_logger
-
-logger = get_logger(__name__)
-
-
-class Orchestrator:
-    """
-    Legacy orchestrator class - deprecated in favor of stateless design.
-    
-    Previously managed active tool sessions but this functionality has been
-    replaced by WorkflowEngine + StateManager pattern. Kept for backwards
-    compatibility but no longer holds any state.
-    """
-
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
-    def __init__(self):
-        if self._initialized:
-            return
-        self.config_manager = ConfigManager(settings.alfred_dir)
-        self._initialized = True
-        logger.info("Orchestrator initialized (legacy mode - stateless design active)", 
-                   orchestrator_type="legacy_deprecated", 
-                   alfred_dir=str(settings.alfred_dir))
-
-
-# Global singleton instance - kept for backwards compatibility
-orchestrator = Orchestrator()
 
 ``````
 ------ src/alfred/server.py ------
@@ -4363,7 +4237,7 @@ from typing import AsyncIterator, Callable
 from fastmcp import FastMCP
 
 from alfred.config.settings import settings
-from alfred.core.prompter import prompt_library  # Import the prompt library
+from alfred.core.prompter import prompt_library
 from alfred.lib.structured_logger import get_logger
 from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.constants import ToolName
@@ -4381,6 +4255,7 @@ def register_tool_from_definition(app: FastMCP, tool_name: str):
     """Register a tool using its definition."""
     # Local import to avoid circular dependency
     from alfred.tools.tool_definitions import get_tool_definition
+
     definition = get_tool_definition(tool_name)
     handler = get_tool_handler(tool_name)
 
@@ -4816,10 +4691,10 @@ async def approve_review(task_id: str) -> ToolResponse:
 
     Examples:
         # Approve planning context analysis
-        approve_review("AL-01")  # Advances to strategy phase
+        approve_review("AL-01")
 
         # Approve final implementation
-        approve_review("AL-02")  # Advances to review phase
+        approve_review("AL-02")
 
     Next Actions:
         - Planning phases: Continues to next planning step via submit_work
@@ -4926,7 +4801,7 @@ async def mark_subtask_complete(task_id: str, subtask_id: str) -> ToolResponse:
         mark_subtask_complete("TK-01", "subtask-1")
         # Returns progress update showing 1/5 subtasks complete (20%)
     """
-    pass  # Implementation handled by decorator
+    pass
 
 
 @app.tool()
@@ -4995,7 +4870,7 @@ async def review_task(task_id: str) -> ToolResponse:
             - data.requirements: Original requirements for reference
 
     Examples:
-        review_task("AL-01")  # Starts comprehensive code review
+        review_task("AL-01")
 
     Review Process:
     1. Tool loads implementation details and original requirements
@@ -5054,7 +4929,7 @@ async def test_task(task_id: str) -> ToolResponse:
             - data.acceptance_criteria: Original criteria to validate
 
     Examples:
-        test_task("AL-01")  # Starts comprehensive testing phase
+        test_task("AL-01")
 
     Testing Process:
     1. Tool provides testing checklist and requirements
@@ -5365,27 +5240,6 @@ class StateManager:
         except Exception as e:
             logger.error("Failed to update scratchpad after status change", task_id=task_id, error=str(e))
 
-    def update_tool_state(self, task_id: str, tool: Any) -> None:
-        """Update tool state with proper locking."""
-        with file_lock(self._get_lock_file(task_id)):
-            state = self.load_or_create(task_id)
-
-            # Serialize context store
-            serializable_context = {}
-            for key, value in tool.context_store.items():
-                if isinstance(value, BaseModel):
-                    serializable_context[key] = value.model_dump()
-                else:
-                    serializable_context[key] = value
-
-            # Create workflow state
-            tool_state = WorkflowState(task_id=task_id, tool_name=tool.tool_name, current_state=str(tool.state), context_store=serializable_context)
-
-            state.active_tool_state = tool_state
-            self._atomic_write(state)
-
-        logger.debug("Updated tool state", task_id=task_id, tool_name=tool.tool_name)
-
     def clear_tool_state(self, task_id: str) -> None:
         """Clear active tool state with proper locking."""
         with file_lock(self._get_lock_file(task_id)):
@@ -5446,14 +5300,6 @@ class StateManager:
         archive_path = self._get_task_dir(task_id) / Paths.ARCHIVE_DIR
         archive_path.mkdir(parents=True, exist_ok=True)
         return archive_path
-
-    def register_tool(self, task_id: str, tool: "BaseWorkflowTool") -> None:
-        """Register a tool with the orchestrator and update state."""
-        from alfred.orchestration.orchestrator import orchestrator
-
-        orchestrator.active_tools[task_id] = tool
-        self.update_tool_state(task_id, tool)
-        logger.info("Registered tool", task_id=task_id, tool_name=tool.tool_name)
 
 
 # Singleton instance
@@ -5553,11 +5399,13 @@ def get_provider() -> BaseTaskProvider:
         NotImplementedError: If the configured provider is not yet implemented
     """
     # Import here to avoid circular dependency
-    from alfred.orchestration.orchestrator import orchestrator
+    from alfred.config import ConfigManager
+    from alfred.config.settings import settings
 
     try:
         # Load the current configuration
-        config = orchestrator.config_manager.load()
+        config_manager = ConfigManager(settings.alfred_dir)
+        config = config_manager.load()
         provider_type = config.provider.type
 
         logger.info(f"Instantiating task provider: {provider_type}")
@@ -7799,6 +7647,7 @@ ${artifact_json}
 - Focus on substantive issues, not minor formatting
 - Consider whether a human reviewer would find this acceptable
 - If rejecting, provide specific, actionable feedback
+- **CRITICAL**: If the user provides ANY feedback or notes alongside their approval, you MUST treat this as a revision request by calling request_revision. Only call approve_review for an explicit, unqualified approval with no feedback.
 
 # OUTPUT
 Make a review decision:
@@ -8159,21 +8008,22 @@ def approve_and_advance_logic(task_id: str, **kwargs) -> ToolResponse:
 
         # Check if we need to verify completion against known states
         # Import tool definitions to check if tool is complete
-        from alfred.tools.tool_definitions import tool_definitions
-        
-        tool_definition = tool_definitions.get_tool_definition(workflow_state.tool_name)
+        from alfred.tools.tool_definitions import get_tool_definition
+
+        tool_definition = get_tool_definition(workflow_state.tool_name)
         if tool_definition:
             # Local import to avoid circular dependency
             from alfred.core.workflow_engine import WorkflowEngine
+
             engine = WorkflowEngine(tool_definition)
-            
+
             # Check if current state is terminal
             if not engine.is_terminal_state(state_value):
                 # Create temporary tool instance to get final work state
                 tool_class = tool_definition.tool_class
                 temp_tool = tool_class(task_id=task_id)
                 final_state = temp_tool.get_final_work_state()
-                
+
                 return ToolResponse(
                     status="error",
                     message=f"The workflow tool '{workflow_state.tool_name}' is not complete. "
@@ -8250,11 +8100,8 @@ from typing import Optional, Type, Any
 from alfred.core.prompter import generate_prompt
 from alfred.core.workflow import BaseWorkflowTool
 from alfred.lib.structured_logger import get_logger, setup_task_logging
-from alfred.lib.task_utils import load_task, load_task_with_error_details
+from alfred.lib.task_utils import load_task_with_error_details
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
-from alfred.orchestration.orchestrator import orchestrator
-from alfred.state.manager import state_manager
-from alfred.tools.registry import tool_registry
 
 logger = get_logger(__name__)
 
@@ -8280,49 +8127,22 @@ class BaseToolHandler(ABC):
         if not task:
             return ToolResponse(status="error", message=error_msg or f"Task '{task_id}' not found.")
 
-        get_tool_result = self._get_or_create_tool(task_id, task)
-        if isinstance(get_tool_result, ToolResponse):
-            return get_tool_result
-        tool_instance = get_tool_result
-
-        # The setup_tool hook is now responsible for initial state dispatch if needed
-        setup_response = await self._setup_tool(tool_instance, task, **kwargs)
-        if setup_response and isinstance(setup_response, ToolResponse):
-            return setup_response
-
-        return self._generate_response(tool_instance, task)
-
-    def _get_or_create_tool(self, task_id: str, task: Task) -> BaseWorkflowTool | ToolResponse:
-        """Legacy tool recovery and creation logic - mostly replaced by stateless pattern."""
-        if task_id in orchestrator.active_tools:
-            logger.info("Found active tool", task_id=task_id, tool_name=self.tool_name)
-            return orchestrator.active_tools[task_id]
-
-        # Note: ToolRecovery has been removed in favor of stateless design
-        # This path should not be used with the new GenericWorkflowHandler stateless implementation
-        
+        # Check required status if specified
         if self.required_status and task.task_status != self.required_status:
             return ToolResponse(
                 status="error",
                 message=f"Task '{task_id}' has status '{task.task_status.value}'. Tool '{self.tool_name}' requires status to be '{self.required_status.value}'.",
             )
 
-        # Use the factory method for instantiation
-        new_tool = self._create_new_tool(task_id, task)
-        orchestrator.active_tools[task_id] = new_tool
+        # Always create fresh tool instance - no persistence
+        tool_instance = self._create_new_tool(task_id, task)
 
-        # Get the tool config from the registry to determine status transition
-        tool_config = tool_registry.get_tool_config(self.tool_name)
-        if tool_config and task.task_status in tool_config.entry_status_map:
-            new_status = tool_config.entry_status_map[task.task_status]
-            state_manager.update_task_status(task_id, new_status)
+        # The setup_tool hook is responsible for tool-specific setup
+        setup_response = await self._setup_tool(tool_instance, task, **kwargs)
+        if setup_response and isinstance(setup_response, ToolResponse):
+            return setup_response
 
-        # Note: This method is deprecated in favor of stateless design
-        # New tools should use WorkflowState via StateManager directly
-        logger.warning("Using deprecated stateful tool creation path", task_id=task_id, tool_name=self.tool_name)
-
-        logger.info("Created new tool", task_id=task_id, tool_name=self.tool_name)
-        return new_tool
+        return self._generate_response(tool_instance, task)
 
     def _generate_response(self, tool_instance: BaseWorkflowTool, task: Task) -> ToolResponse:
         """Common logic for generating the final prompt and tool response."""
@@ -8355,69 +8175,40 @@ class BaseToolHandler(ABC):
 ------ src/alfred/tools/create_spec.py ------
 ``````
 # src/alfred/tools/create_spec.py
-from alfred.models.schemas import ToolResponse
+from alfred.models.schemas import ToolResponse, TaskStatus, Task
 from alfred.constants import ToolName
-from alfred.core.workflow import CreateSpecTool
 from alfred.models.planning_artifacts import PRDInputArtifact
-from alfred.models.engineering_spec import EngineeringSpec
 from alfred.state.manager import state_manager
 
 
-# New logic function for GenericWorkflowHandler
-async def create_spec_logic(task_id: str, prd_content: str, **kwargs) -> ToolResponse:
-    """Logic function for create_spec compatible with GenericWorkflowHandler."""
-    return await create_spec_impl(task_id, prd_content)
-
-
-# Note: create_spec_impl is still used as it contains workflow-specific logic
-
-
-async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
+def create_spec_logic(task_id: str, prd_content: str, **kwargs) -> ToolResponse:
     """
-    Initializes the workflow for creating a technical specification from a PRD.
+    Pure context loader function for create_spec tool.
 
-    This is the first tool in the "idea-to-code" pipeline. It takes a Product
-    Requirements Document (PRD) and guides the transformation into a structured
-    Technical Specification that can be used for engineering planning.
+    This function provides the logic for creating a technical specification from a PRD
+    using the stateless context loader pattern. It returns data for the workflow handler
+    to process instead of manipulating context directly.
 
     Args:
         task_id: The unique identifier for the epic/feature (e.g., "EPIC-01")
         prd_content: The raw PRD content to analyze
+        **kwargs: Additional parameters from the workflow handler
 
     Returns:
-        ToolResponse containing the first prompt to guide spec creation
+        ToolResponse containing the initialization data and next prompt
     """
-    # Load or create task state
-    task_state = state_manager.load_or_create_task_state(task_id)
-
     # Update status to creating_spec
-    from alfred.models.schemas import TaskStatus
-
     state_manager.update_task_status(task_id, TaskStatus.CREATING_SPEC)
 
-    # Initialize the create_spec tool
-    tool = CreateSpecTool(task_id)
-
-    # Store the PRD content in context
+    # Create PRD artifact for context
     prd_artifact = PRDInputArtifact(prd_content=prd_content)
-    tool.context_store["prd_input"] = prd_artifact
 
-    # Register the tool
-    state_manager.register_tool(task_id, tool)
-
-    # Dispatch immediately to drafting state
-    tool.dispatch()
-    state_manager.update_tool_state(task_id, tool)
-
-    # Load the drafting prompt
-    from alfred.core.prompter import generate_prompt
+    # Load or create task for prompt generation
     from alfred.lib.task_utils import load_task
 
     task = load_task(task_id)
     if not task:
         # Create a basic task object for the spec creation phase
-        from alfred.models.schemas import Task
-
         task = Task(
             task_id=task_id,
             title=f"Create specification for {task_id}",
@@ -8426,17 +8217,30 @@ async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
             task_status=TaskStatus.CREATING_SPEC,
         )
 
+    # Generate the initial prompt
+    from alfred.core.prompter import generate_prompt
+
     prompt = generate_prompt(
+        task_id=task_id,
+        tool_name=ToolName.CREATE_SPEC,
+        state="dispatching",
         task=task,
-        tool_name=tool.tool_name,
-        state=tool.state,
         additional_context={
             "task_id": task_id,
             "prd_content": prd_content,
         },
     )
 
-    return ToolResponse(status="success", message=f"Starting specification creation for task '{task_id}'.", next_prompt=prompt)
+    # Return response with context data for the workflow handler
+    return ToolResponse(
+        status="success",
+        message=f"Starting specification creation for task '{task_id}'.",
+        next_prompt=prompt,
+        data={
+            "prd_input": prd_artifact.model_dump(),
+            "task_id": task_id,
+        },
+    )
 
 ``````
 ------ src/alfred/tools/create_task.py ------
@@ -8626,9 +8430,8 @@ def generate_next_task_id() -> str:
 ------ src/alfred/tools/create_tasks_from_spec.py ------
 ``````
 # src/alfred/tools/create_tasks_from_spec.py
-from alfred.models.schemas import ToolResponse
+from alfred.models.schemas import ToolResponse, TaskStatus, Task
 from alfred.constants import ToolName
-from alfred.core.workflow import CreateTasksTool
 from alfred.models.engineering_spec import EngineeringSpec
 from alfred.lib.structured_logger import get_logger
 from alfred.state.manager import state_manager
@@ -8636,43 +8439,23 @@ from alfred.state.manager import state_manager
 logger = get_logger(__name__)
 
 
-# New logic function for GenericWorkflowHandler
-async def create_tasks_logic(task_id: str, **kwargs) -> ToolResponse:
-    """Logic function for create_tasks_from_spec compatible with GenericWorkflowHandler."""
-    return await create_tasks_from_spec_impl(task_id)
-
-
-# Note: create_tasks_from_spec_impl is still used as it contains workflow-specific logic
-
-
-async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
+def create_tasks_logic(task_id: str, **kwargs) -> ToolResponse:
     """
-    Creates a list of actionable tasks from a completed engineering specification.
+    Pure context loader function for create_tasks_from_spec tool.
 
-    This is the second tool in the "idea-to-code" pipeline. It takes a completed
-    engineering specification and breaks it down into individual Task objects that
-    can be tracked, assigned, and implemented independently.
-
-    The tool guides through creating tasks that are:
-    - Atomic and focused
-    - Properly ordered with dependencies
-    - Sized appropriately (1-3 days of work)
-    - Complete with acceptance criteria
+    This function provides the logic for creating tasks from a completed engineering spec
+    using the stateless context loader pattern. It returns data for the workflow handler
+    to process instead of manipulating context directly.
 
     Args:
         task_id: The unique identifier for the epic/feature with a completed engineering spec
+        **kwargs: Additional parameters from the workflow handler
 
     Returns:
-        ToolResponse containing the first prompt to guide task breakdown
-
-    Preconditions:
-        - Engineering specification must be completed (via create_spec)
-        - Task status must be "spec_completed"
+        ToolResponse containing the initialization data and next prompt
     """
     # Load the task state
     task_state = state_manager.load_or_create_task_state(task_id)
-
-    from alfred.models.schemas import TaskStatus
 
     # Check if we have a completed technical spec
     if task_state.task_status != TaskStatus.SPEC_COMPLETED:
@@ -8695,31 +8478,15 @@ async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
         logger.error(f"Failed to load technical spec for {task_id}: {e}")
         return ToolResponse(status="error", message=f"Failed to load technical specification: {str(e)}")
 
-    # Update status
+    # Update status to creating_tasks
     state_manager.update_task_status(task_id, TaskStatus.CREATING_TASKS)
 
-    # Initialize the create_tasks_from_spec tool
-    tool = CreateTasksTool(task_id)
-
-    # Store the technical spec in context
-    tool.context_store["technical_spec"] = tech_spec
-
-    # Register the tool
-    state_manager.register_tool(task_id, tool)
-
-    # Dispatch immediately to drafting state
-    tool.dispatch()
-    state_manager.update_tool_state(task_id, tool)
-
-    # Load the drafting prompt with the technical spec
-    from alfred.core.prompter import generate_prompt
+    # Load or create task for prompt generation
     from alfred.lib.task_utils import load_task
 
     task = load_task(task_id)
     if not task:
         # Create a basic task object for the task creation phase
-        from alfred.models.schemas import Task
-
         task = Task(
             task_id=task_id,
             title=f"Create tasks for {task_id}",
@@ -8728,17 +8495,30 @@ async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
             task_status=TaskStatus.CREATING_TASKS,
         )
 
+    # Generate the initial prompt
+    from alfred.core.prompter import generate_prompt
+
     prompt = generate_prompt(
+        task_id=task_id,
+        tool_name=ToolName.CREATE_TASKS_FROM_SPEC,
+        state="dispatching",
         task=task,
-        tool_name=tool.tool_name,
-        state=tool.state,
         additional_context={
             "task_id": task_id,
             "technical_spec": tech_spec.model_dump(),
         },
     )
 
-    return ToolResponse(status="success", message=f"Starting task breakdown for '{task_id}'.", next_prompt=prompt)
+    # Return response with context data for the workflow handler
+    return ToolResponse(
+        status="success",
+        message=f"Starting task breakdown for '{task_id}'.",
+        next_prompt=prompt,
+        data={
+            "technical_spec": tech_spec.model_dump(),
+            "task_id": task_id,
+        },
+    )
 
 ``````
 ------ src/alfred/tools/finalize_task.py ------
@@ -8831,7 +8611,7 @@ class GenericWorkflowHandler(BaseToolHandler):
 
         # Load or create task state
         task_state = state_manager.load_or_create(task_id)
-        
+
         # Check required status
         if self.required_status and task.task_status != self.required_status:
             return ToolResponse(
@@ -8849,10 +8629,10 @@ class GenericWorkflowHandler(BaseToolHandler):
 
         # Get or create workflow state
         workflow_state = self._get_or_create_workflow_state(task_state, task_id)
-        
+
         # Create stateless tool instance for configuration access
         tool_instance = self.config.tool_class(task_id=task_id)
-        
+
         # Setup context and handle dispatch
         setup_response = await self._setup_stateless_tool(workflow_state, tool_instance, task, **kwargs)
         if setup_response:
@@ -8864,37 +8644,30 @@ class GenericWorkflowHandler(BaseToolHandler):
     def _get_or_create_workflow_state(self, task_state: TaskState, task_id: str) -> WorkflowState:
         """Get or create workflow state for this tool."""
         # Check if we already have an active workflow state for this tool
-        if (task_state.active_tool_state and 
-            task_state.active_tool_state.tool_name == self.config.tool_name):
+        if task_state.active_tool_state and task_state.active_tool_state.tool_name == self.config.tool_name:
             return task_state.active_tool_state
-        
+
         # Create new workflow state (local import to avoid circular dependency)
-        from alfred.tools.tool_definitions import tool_definitions
-        tool_definition = tool_definitions.get_tool_definition(self.config.tool_name)
+        from alfred.tools.tool_definitions import get_tool_definition
+
+        tool_definition = get_tool_definition(self.config.tool_name)
         if not tool_definition:
             raise ValueError(f"No tool definition found for {self.config.tool_name}")
-        
-        initial_state = (tool_definition.initial_state.value 
-                        if hasattr(tool_definition.initial_state, 'value')
-                        else str(tool_definition.initial_state))
-        
-        workflow_state = WorkflowState(
-            task_id=task_id,
-            tool_name=self.config.tool_name,
-            current_state=initial_state,
-            context_store={}
-        )
-        
+
+        initial_state = tool_definition.initial_state.value if hasattr(tool_definition.initial_state, "value") else str(tool_definition.initial_state)
+
+        workflow_state = WorkflowState(task_id=task_id, tool_name=self.config.tool_name, current_state=initial_state, context_store={})
+
         # Update task state with new workflow state
-        task_state.active_tool_state = workflow_state
-        state_manager.save_task_state(task_state)
-        
+        with state_manager.complex_update(task_id) as state:
+            state.active_tool_state = workflow_state
+
         logger.info("Created new workflow state", task_id=task_id, tool_name=self.config.tool_name, state=initial_state)
         return workflow_state
 
     async def _setup_stateless_tool(self, workflow_state: WorkflowState, tool_instance: BaseWorkflowTool, task: Task, **kwargs: Any) -> Optional[ToolResponse]:
         """Setup context and handle dispatch using stateless pattern."""
-        
+
         # Load context if configured
         if self.config.context_loader:
             # Load task state for context
@@ -8917,23 +8690,23 @@ class GenericWorkflowHandler(BaseToolHandler):
             try:
                 # Local import to avoid circular dependency
                 from alfred.core.workflow_engine import WorkflowEngine
-                
+
                 # Use WorkflowEngine for state transition (local import to avoid circular dependency)
-                from alfred.tools.tool_definitions import tool_definitions
-                tool_definition = tool_definitions.get_tool_definition(self.config.tool_name)
+                from alfred.tools.tool_definitions import get_tool_definition
+
+                tool_definition = get_tool_definition(self.config.tool_name)
                 engine = WorkflowEngine(tool_definition)
-                
+
                 # Execute dispatch transition
                 new_state = engine.execute_trigger(workflow_state.current_state, self.config.target_state_method)
                 workflow_state.current_state = new_state
-                
+
                 # Persist the state change
-                task_state = state_manager.load_or_create(task.task_id)
-                task_state.active_tool_state = workflow_state
-                state_manager.save_task_state(task_state)
+                with state_manager.complex_update(task.task_id) as state:
+                    state.active_tool_state = workflow_state
 
                 logger.info("Dispatched tool to state", task_id=task.task_id, tool_name=self.config.tool_name, state=new_state)
-                
+
             except Exception as e:
                 logger.error("Auto-dispatch failed", task_id=task.task_id, tool_name=self.config.tool_name, error=str(e))
                 return ToolResponse(status="error", message=f"Failed to dispatch tool: {str(e)}")
@@ -9364,7 +9137,7 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
         # So, it doesn't need a tool_class or status maps.
         super().__init__(
             tool_name=ToolName.MARK_SUBTASK_COMPLETE,
-            tool_class=None,  # Not a workflow-initiating tool
+            tool_class=None,
             required_status=None,
         )
 
@@ -9375,14 +9148,14 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
     async def execute(self, task_id: str = None, **kwargs: Any) -> ToolResponse:
         """Execute mark_subtask_complete using stateless pattern."""
         from alfred.lib.task_utils import load_task
-        
+
         task = load_task(task_id)
         if not task:
             return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
-        
+
         # Load task state
         task_state = state_manager.load_or_create(task_id)
-        
+
         # Check if we have an active workflow state
         if not task_state.active_tool_state:
             error_msg = f"""No active implementation workflow found for task '{task_id}'. 
@@ -9403,7 +9176,7 @@ Cannot mark subtask progress without an active implementation workflow."""
             return ToolResponse(status="error", message=error_msg)
 
         workflow_state = task_state.active_tool_state
-        
+
         # Ensure we are operating on an ImplementTaskTool
         if workflow_state.tool_name != ToolName.IMPLEMENT_TASK:
             return ToolResponse(status="error", message=f"Progress can only be marked during the '{ToolName.IMPLEMENT_TASK}' workflow.")
@@ -9433,11 +9206,11 @@ Cannot mark subtask progress without an active implementation workflow."""
             return ToolResponse(status="success", message=f"Subtask '{subtask_id}' was already marked as complete.")
 
         completed_subtasks.add(subtask_id)
-        workflow_state.context_store["completed_subtasks"] = sorted(list(completed_subtasks))  # Store sorted for consistency
+        workflow_state.context_store["completed_subtasks"] = sorted(list(completed_subtasks))
 
         # Persist the updated workflow state
-        task_state.active_tool_state = workflow_state
-        state_manager.save_task_state(task_state)
+        with state_manager.complex_update(task_id) as state:
+            state.active_tool_state = workflow_state
 
         # Generate a progress report message
         completed_count = len(completed_subtasks)
@@ -9504,31 +9277,39 @@ logger = get_logger(__name__)
 
 async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
     """Provide review logic using stateless WorkflowEngine pattern."""
-    
+
     # Load task and task state
     task = load_task(task_id)
     if not task:
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
-    
+
     task_state = state_manager.load_or_create(task_id)
-    
+
     # Check if we have an active workflow state
     if not task_state.active_tool_state:
         return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
 
     workflow_state = task_state.active_tool_state
     current_state = workflow_state.current_state
-    
+
+    # CRITICAL FIX: Override approval if feedback_notes is provided
+    # If feedback is provided, treat it as a revision request regardless of is_approved flag
+    if feedback_notes:
+        logger.info("Feedback provided, overriding approval to revision request", task_id=task_id, original_is_approved=is_approved, feedback_length=len(feedback_notes))
+        is_approved = False
+
     logger.info("Processing review", task_id=task_id, tool_name=workflow_state.tool_name, state=current_state, approved=is_approved)
 
     # Get tool definition and engine for state transitions (local import to avoid circular dependency)
-    from alfred.tools.tool_definitions import tool_definitions
-    tool_definition = tool_definitions.get_tool_definition(workflow_state.tool_name)
+    from alfred.tools.tool_definitions import TOOL_DEFINITIONS
+
+    tool_definition = TOOL_DEFINITIONS.get(workflow_state.tool_name)
     if not tool_definition:
         return ToolResponse(status="error", message=f"No tool definition found for {workflow_state.tool_name}")
-    
+
     # Local import to avoid circular dependency
     from alfred.core.workflow_engine import WorkflowEngine
+
     engine = WorkflowEngine(tool_definition)
 
     if not is_approved:
@@ -9546,7 +9327,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         except Exception as e:
             logger.error("Revision transition failed", task_id=task_id, error=str(e))
             return ToolResponse(status="error", message=f"Failed to process revision: {str(e)}")
-        
+
         message = "Revision requested. Returning to previous step."
     else:
         # Clear any previous feedback when approving
@@ -9557,11 +9338,11 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         if current_state.endswith("_awaiting_ai_review"):
             trigger = Triggers.AI_APPROVE
             message = "AI review approved. Awaiting human review."
-            
+
             try:
                 new_state = engine.execute_trigger(current_state, trigger)
                 workflow_state.current_state = new_state
-                
+
                 # Check for autonomous mode to bypass human review
                 try:
                     if ConfigManager(settings.alfred_dir).load().features.autonomous_mode:
@@ -9572,15 +9353,15 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
                         message = "AI review approved. Autonomous mode bypassed human review."
                 except FileNotFoundError:
                     logger.warning("Config file not found; autonomous mode unchecked.")
-                    
+
             except Exception as e:
                 logger.error("AI approval transition failed", task_id=task_id, error=str(e))
                 return ToolResponse(status="error", message=f"Failed to process AI approval: {str(e)}")
-                
+
         elif current_state.endswith("_awaiting_human_review"):
             trigger = Triggers.HUMAN_APPROVE
             message = "Human review approved. Proceeding to next step."
-            
+
             try:
                 new_state = engine.execute_trigger(current_state, trigger)
                 workflow_state.current_state = new_state
@@ -9591,31 +9372,31 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
             return ToolResponse(status="error", message=f"Cannot provide review from non-review state '{current_state}'.")
 
     # Persist the updated workflow state
-    task_state.active_tool_state = workflow_state
-    state_manager.save_task_state(task_state)
+    with state_manager.complex_update(task_id) as state:
+        state.active_tool_state = workflow_state
 
     # Check if we've reached a terminal state
     is_terminal = engine.is_terminal_state(workflow_state.current_state)
-    
+
     if is_terminal:
         # Handle terminal state completion
         tool_name = workflow_state.tool_name
-        
+
         # Create temporary tool instance to get final work state
         tool_class = tool_definition.tool_class
         temp_tool = tool_class(task_id=task_id)
         final_state = temp_tool.get_final_work_state()
-        
+
         key = ArtifactKeys.get_artifact_key(final_state)
         artifact = workflow_state.context_store.get(key)
 
         if artifact:
             state_manager.add_completed_output(task_id, tool_name, artifact)
-        
+
         # Clear active tool state
-        task_state.active_tool_state = None
-        state_manager.save_task_state(task_state)
-        
+        with state_manager.complex_update(task_id) as state:
+            state.active_tool_state = None
+
         cleanup_task_logging(task_id)
 
         # Import here to avoid circular dependency
@@ -9660,8 +9441,8 @@ Call `alfred.work_on_task(task_id='{task_id}')` to check the current status."""
         # Store feedback in the workflow state's context for persistence
         workflow_state.context_store["feedback_notes"] = feedback_notes
         # Persist the updated workflow state with feedback
-        task_state.active_tool_state = workflow_state
-        state_manager.save_task_state(task_state)
+        with state_manager.complex_update(task_id) as state:
+            state.active_tool_state = workflow_state
 
     # Always use the workflow state's context (which now includes feedback if present)
     ctx = workflow_state.context_store.copy()
@@ -9705,7 +9486,7 @@ class ToolConfig:
     """Immutable configuration for a registered tool."""
 
     name: str
-    handler_class: Any  # Can be Type or Callable returning instance
+    handler_class: Any
     tool_class: Type[BaseWorkflowTool]
     entry_status_map: Dict[TaskStatus, TaskStatus]
     implementation: Callable[..., Coroutine[Any, Any, ToolResponse]]
@@ -9726,7 +9507,7 @@ class ToolRegistry:
     def register(
         self,
         name: str,
-        handler_class: Any,  # Can be Type or Callable returning instance
+        handler_class: Any,
         tool_class: Type[BaseWorkflowTool],
         entry_status_map: Dict[TaskStatus, TaskStatus],
     ):
@@ -9803,7 +9584,7 @@ logger = get_logger(__name__)
 def start_task_impl(task_id: str) -> ToolResponse:
     """
     Simple task start using stateless design.
-    
+
     This function has been simplified to use the stateless workflow pattern.
     The actual workflow management is handled by GenericWorkflowHandler.
     """
@@ -9812,30 +9593,25 @@ def start_task_impl(task_id: str) -> ToolResponse:
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
 
     task_state = state_manager.load_or_create(task_id)
-    
+
     # Check if task is already started
     if task_state.active_tool_state:
         return ToolResponse(
-            status="error", 
-            message=f"Task '{task_id}' already has an active workflow: {task_state.active_tool_state.tool_name}. "
-            f"Use `alfred.work_on_task('{task_id}')` to continue the current workflow."
+            status="error",
+            message=f"Task '{task_id}' already has an active workflow: {task_state.active_tool_state.tool_name}. Use `alfred.work_on_task('{task_id}')` to continue the current workflow.",
         )
 
     # Check task status
     if task.task_status not in [TaskStatus.NEW, TaskStatus.PLANNING]:
-        return ToolResponse(
-            status="error",
-            message=f"Task '{task_id}' has status '{task.task_status.value}'. "
-            f"start_task can only be used on tasks with 'new' or 'planning' status."
-        )
+        return ToolResponse(status="error", message=f"Task '{task_id}' has status '{task.task_status.value}'. start_task can only be used on tasks with 'new' or 'planning' status.")
 
     # Note: The actual workflow creation is handled by the tool registry and GenericWorkflowHandler
     # This function just validates that the task can be started
-    
+
     return ToolResponse(
         status="success",
         message=f"Task '{task_id}' is ready to start. Use the appropriate workflow tool to begin.",
-        next_prompt=f"Call `alfred.work_on_task('{task_id}')` to begin working on this task."
+        next_prompt=f"Call `alfred.work_on_task('{task_id}')` to begin working on this task.",
     )
 
 ``````
@@ -9864,7 +9640,7 @@ class SubmitWorkHandler(BaseToolHandler):
 
     def __init__(self):
         super().__init__(
-            tool_name="submit_work",  # Not from constants, as it's a generic name
+            tool_name="submit_work",
             tool_class=None,
             required_status=None,
         )
@@ -9880,13 +9656,13 @@ class SubmitWorkHandler(BaseToolHandler):
 
         # Load task state
         task_state = state_manager.load_or_create(task_id)
-        
+
         # Check if we have an active workflow state
         if not task_state.active_tool_state:
             return ToolResponse(status=ResponseStatus.ERROR, message=f"{LogMessages.NO_ACTIVE_TOOL.format(task_id=task_id)} Cannot submit work.")
 
         workflow_state = task_state.active_tool_state
-        
+
         # Execute the submit work logic
         return await self._execute_submit_work(task, task_state, workflow_state, **kwargs)
 
@@ -9902,11 +9678,12 @@ class SubmitWorkHandler(BaseToolHandler):
         normalized_artifact = self._normalize_artifact(artifact)
 
         # 2. Create stateless tool instance for artifact validation (local import to avoid circular dependency)
-        from alfred.tools.tool_definitions import tool_definitions
-        tool_definition = tool_definitions.get_tool_definition(workflow_state.tool_name)
+        from alfred.tools.tool_definitions import get_tool_definition
+
+        tool_definition = get_tool_definition(workflow_state.tool_name)
         if not tool_definition:
             return ToolResponse(status=ResponseStatus.ERROR, message=f"No tool definition found for {workflow_state.tool_name}")
-        
+
         # Create temporary tool instance for artifact_map access
         tool_class = tool_definition.tool_class
         temp_tool = tool_class(task_id=task.task_id)
@@ -9915,7 +9692,7 @@ class SubmitWorkHandler(BaseToolHandler):
         # Convert state string back to enum for artifact_map lookup
         current_state_enum = None
         for state_enum in temp_tool.artifact_map.keys():
-            if (hasattr(state_enum, 'value') and state_enum.value == current_state_val) or str(state_enum) == current_state_val:
+            if (hasattr(state_enum, "value") and state_enum.value == current_state_val) or str(state_enum) == current_state_val:
                 current_state_enum = state_enum
                 break
 
@@ -9947,7 +9724,7 @@ class SubmitWorkHandler(BaseToolHandler):
                 error_msg = f"{ErrorMessages.VALIDATION_FAILED.format(state=current_state_val)}. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
                 return ToolResponse(status=ResponseStatus.ERROR, message=error_msg)
         else:
-            validated_artifact = normalized_artifact  # No model to validate against
+            validated_artifact = normalized_artifact
 
         # 4. Store artifact and update context_store
         artifact_key = ArtifactKeys.get_artifact_key(current_state_val)
@@ -9982,23 +9759,23 @@ class SubmitWorkHandler(BaseToolHandler):
 
         # 5. Use WorkflowEngine for state transition
         trigger_name = Triggers.submit_trigger(current_state_val)
-        
+
         try:
             # Local import to avoid circular dependency
             from alfred.core.workflow_engine import WorkflowEngine
-            
+
             # Create WorkflowEngine and execute transition
             engine = WorkflowEngine(tool_definition)
-            
+
             # Check if transition is valid
             valid_triggers = engine.get_valid_triggers(current_state_val)
             if trigger_name not in valid_triggers:
                 return ToolResponse(status=ResponseStatus.ERROR, message=f"No valid transition for trigger '{trigger_name}' from state '{current_state_val}'.")
-            
+
             # Execute the transition
             new_state = engine.execute_trigger(current_state_val, trigger_name)
             workflow_state.current_state = new_state
-            
+
             logger.info(LogMessages.STATE_TRANSITION.format(task_id=task.task_id, trigger=trigger_name, state=new_state))
 
         except Exception as e:
@@ -10006,8 +9783,8 @@ class SubmitWorkHandler(BaseToolHandler):
             return ToolResponse(status=ResponseStatus.ERROR, message=f"State transition failed: {str(e)}")
 
         # 6. Persist the new state
-        task_state.active_tool_state = workflow_state
-        state_manager.save_task_state(task_state)
+        with state_manager.complex_update(task.task_id) as state:
+            state.active_tool_state = workflow_state
 
         # 7. Generate response
         try:
@@ -10171,10 +9948,6 @@ from alfred.core.workflow import (
     TestTaskState,
     FinalizeTaskTool,
     FinalizeTaskState,
-    CreateSpecTool,
-    CreateSpecState,
-    CreateTasksTool,
-    CreateTasksState,
 )
 from alfred.core.discovery_workflow import PlanTaskTool, PlanTaskState
 from alfred.core.discovery_context import load_plan_task_context
@@ -10314,12 +10087,6 @@ def load_finalize_context(task, task_state):
     return {"test_results": test_results} if test_results else {}
 
 
-def load_spec_context(task, task_state):
-    """Load technical spec for create_tasks."""
-    # This is loaded from archive, not task state
-    return {}  # Handled specially in create_tasks_impl
-
-
 # Custom validators
 def validate_plan_task_status(task) -> Optional[str]:
     """Validate that task is in correct status for planning."""
@@ -10441,29 +10208,15 @@ TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
     ),
     ToolName.CREATE_SPEC: ToolDefinition(
         name=ToolName.CREATE_SPEC,
-        tool_class=CreateSpecTool,
+        tool_class=None,
         description="Create technical specification from PRD",
-        work_states=[CreateSpecState.DRAFTING_SPEC],
-        dispatch_state=CreateSpecState.DISPATCHING,
-        terminal_state=CreateSpecState.VERIFIED,
-        initial_state=CreateSpecState.DISPATCHING,
-        entry_statuses=[TaskStatus.NEW, TaskStatus.CREATING_SPEC],
-        exit_status=TaskStatus.CREATING_SPEC,
-        dispatch_on_init=True,
+        context_loader=create_spec_logic,
     ),
     ToolName.CREATE_TASKS_FROM_SPEC: ToolDefinition(
         name=ToolName.CREATE_TASKS_FROM_SPEC,
-        tool_class=CreateTasksTool,
+        tool_class=None,
         description="Break down spec into actionable tasks",
-        work_states=[CreateTasksState.DRAFTING_TASKS],
-        dispatch_state=CreateTasksState.DISPATCHING,
-        terminal_state=CreateTasksState.VERIFIED,
-        initial_state=CreateTasksState.DISPATCHING,
-        entry_statuses=[TaskStatus.SPEC_COMPLETED, TaskStatus.CREATING_TASKS],
-        exit_status=TaskStatus.CREATING_TASKS,
-        required_status=TaskStatus.SPEC_COMPLETED,
-        dispatch_on_init=True,
-        context_loader=load_spec_context,
+        context_loader=create_tasks_logic,
     ),
     # Simple tools (tool_class=None, logic in context_loader)
     ToolName.GET_NEXT_TASK: ToolDefinition(
@@ -10709,14 +10462,14 @@ class WorkflowToolConfig:
 
     # Dispatch configuration
     dispatch_on_init: bool = False
-    dispatch_state_attr: Optional[str] = None  # e.g., "DISPATCHING"
-    target_state_method: str = "dispatch"  # method to call for state transition
+    dispatch_state_attr: Optional[str] = None
+    target_state_method: str = "dispatch"
 
     # Context loading configuration
     context_loader: Optional[Callable[[Any, Any], Dict[str, Any]]] = None
 
     # Validation
-    requires_artifact_from: Optional[str] = None  # e.g., ToolName.PLAN_TASK
+    requires_artifact_from: Optional[str] = None
 
     def __post_init__(self):
         """Validate configuration consistency."""
@@ -10807,4 +10560,3 @@ def get_next_status(current_status: TaskStatus) -> Optional[TaskStatus]:
     return tool_def.exit_status if tool_def else None
 
 ``````
-    
