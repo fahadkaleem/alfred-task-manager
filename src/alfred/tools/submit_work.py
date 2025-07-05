@@ -37,13 +37,13 @@ class SubmitWorkHandler(BaseToolHandler):
 
         # Load task state
         task_state = state_manager.load_or_create(task_id)
-
+        
         # Check if we have an active workflow state
         if not task_state.active_tool_state:
             return ToolResponse(status=ResponseStatus.ERROR, message=f"{LogMessages.NO_ACTIVE_TOOL.format(task_id=task_id)} Cannot submit work.")
 
         workflow_state = task_state.active_tool_state
-
+        
         # Execute the submit work logic
         return await self._execute_submit_work(task, task_state, workflow_state, **kwargs)
 
@@ -60,11 +60,10 @@ class SubmitWorkHandler(BaseToolHandler):
 
         # 2. Create stateless tool instance for artifact validation (local import to avoid circular dependency)
         from alfred.tools.tool_definitions import tool_definitions
-
         tool_definition = tool_definitions.get_tool_definition(workflow_state.tool_name)
         if not tool_definition:
             return ToolResponse(status=ResponseStatus.ERROR, message=f"No tool definition found for {workflow_state.tool_name}")
-
+        
         # Create temporary tool instance for artifact_map access
         tool_class = tool_definition.tool_class
         temp_tool = tool_class(task_id=task.task_id)
@@ -73,7 +72,7 @@ class SubmitWorkHandler(BaseToolHandler):
         # Convert state string back to enum for artifact_map lookup
         current_state_enum = None
         for state_enum in temp_tool.artifact_map.keys():
-            if (hasattr(state_enum, "value") and state_enum.value == current_state_val) or str(state_enum) == current_state_val:
+            if (hasattr(state_enum, 'value') and state_enum.value == current_state_val) or str(state_enum) == current_state_val:
                 current_state_enum = state_enum
                 break
 
@@ -140,23 +139,23 @@ class SubmitWorkHandler(BaseToolHandler):
 
         # 5. Use WorkflowEngine for state transition
         trigger_name = Triggers.submit_trigger(current_state_val)
-
+        
         try:
             # Local import to avoid circular dependency
             from alfred.core.workflow_engine import WorkflowEngine
-
+            
             # Create WorkflowEngine and execute transition
             engine = WorkflowEngine(tool_definition)
-
+            
             # Check if transition is valid
             valid_triggers = engine.get_valid_triggers(current_state_val)
             if trigger_name not in valid_triggers:
                 return ToolResponse(status=ResponseStatus.ERROR, message=f"No valid transition for trigger '{trigger_name}' from state '{current_state_val}'.")
-
+            
             # Execute the transition
             new_state = engine.execute_trigger(current_state_val, trigger_name)
             workflow_state.current_state = new_state
-
+            
             logger.info(LogMessages.STATE_TRANSITION.format(task_id=task.task_id, trigger=trigger_name, state=new_state))
 
         except Exception as e:

@@ -55,7 +55,7 @@ class BaseToolHandler(ABC):
 
         # Note: ToolRecovery has been removed in favor of stateless design
         # This path should not be used with the new GenericWorkflowHandler stateless implementation
-
+        
         if self.required_status and task.task_status != self.required_status:
             return ToolResponse(
                 status="error",

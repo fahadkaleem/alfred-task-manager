@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 class Orchestrator:
     """
     Legacy orchestrator class - deprecated in favor of stateless design.
-
+    
     Previously managed active tool sessions but this functionality has been
     replaced by WorkflowEngine + StateManager pattern. Kept for backwards
     compatibility but no longer holds any state.
@@ -36,7 +36,9 @@ class Orchestrator:
             return
         self.config_manager = ConfigManager(settings.alfred_dir)
         self._initialized = True
-        logger.info("Orchestrator initialized (legacy mode - stateless design active)", orchestrator_type="legacy_deprecated", alfred_dir=str(settings.alfred_dir))
+        logger.info("Orchestrator initialized (legacy mode - stateless design active)", 
+                   orchestrator_type="legacy_deprecated", 
+                   alfred_dir=str(settings.alfred_dir))
 
 
 # Global singleton instance - kept for backwards compatibility

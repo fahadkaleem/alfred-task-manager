@@ -33,21 +33,20 @@ def approve_and_advance_logic(task_id: str, **kwargs) -> ToolResponse:
         # Check if we need to verify completion against known states
         # Import tool definitions to check if tool is complete
         from alfred.tools.tool_definitions import tool_definitions
-
+        
         tool_definition = tool_definitions.get_tool_definition(workflow_state.tool_name)
         if tool_definition:
             # Local import to avoid circular dependency
             from alfred.core.workflow_engine import WorkflowEngine
-
             engine = WorkflowEngine(tool_definition)
-
+            
             # Check if current state is terminal
             if not engine.is_terminal_state(state_value):
                 # Create temporary tool instance to get final work state
                 tool_class = tool_definition.tool_class
                 temp_tool = tool_class(task_id=task_id)
                 final_state = temp_tool.get_final_work_state()
-
+                
                 return ToolResponse(
                     status="error",
                     message=f"The workflow tool '{workflow_state.tool_name}' is not complete. "

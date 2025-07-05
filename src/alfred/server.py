@@ -31,7 +31,6 @@ def register_tool_from_definition(app: FastMCP, tool_name: str):
     """Register a tool using its definition."""
     # Local import to avoid circular dependency
     from alfred.tools.tool_definitions import get_tool_definition
-
     definition = get_tool_definition(tool_name)
     handler = get_tool_handler(tool_name)
 

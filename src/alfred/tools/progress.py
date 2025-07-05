@@ -31,14 +31,14 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
     async def execute(self, task_id: str = None, **kwargs: Any) -> ToolResponse:
         """Execute mark_subtask_complete using stateless pattern."""
         from alfred.lib.task_utils import load_task
-
+        
         task = load_task(task_id)
         if not task:
             return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
-
+        
         # Load task state
         task_state = state_manager.load_or_create(task_id)
-
+        
         # Check if we have an active workflow state
         if not task_state.active_tool_state:
             error_msg = f"""No active implementation workflow found for task '{task_id}'. 
@@ -59,7 +59,7 @@ Cannot mark subtask progress without an active implementation workflow."""
             return ToolResponse(status="error", message=error_msg)
 
         workflow_state = task_state.active_tool_state
-
+        
         # Ensure we are operating on an ImplementTaskTool
         if workflow_state.tool_name != ToolName.IMPLEMENT_TASK:
             return ToolResponse(status="error", message=f"Progress can only be marked during the '{ToolName.IMPLEMENT_TASK}' workflow.")

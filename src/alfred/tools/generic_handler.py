@@ -69,7 +69,7 @@ class GenericWorkflowHandler(BaseToolHandler):
 
         # Load or create task state
         task_state = state_manager.load_or_create(task_id)
-
+        
         # Check required status
         if self.required_status and task.task_status != self.required_status:
             return ToolResponse(
@@ -87,10 +87,10 @@ class GenericWorkflowHandler(BaseToolHandler):
 
         # Get or create workflow state
         workflow_state = self._get_or_create_workflow_state(task_state, task_id)
-
+        
         # Create stateless tool instance for configuration access
         tool_instance = self.config.tool_class(task_id=task_id)
-
+        
         # Setup context and handle dispatch
         setup_response = await self._setup_stateless_tool(workflow_state, tool_instance, task, **kwargs)
         if setup_response:
@@ -102,30 +102,37 @@ class GenericWorkflowHandler(BaseToolHandler):
     def _get_or_create_workflow_state(self, task_state: TaskState, task_id: str) -> WorkflowState:
         """Get or create workflow state for this tool."""
         # Check if we already have an active workflow state for this tool
-        if task_state.active_tool_state and task_state.active_tool_state.tool_name == self.config.tool_name:
+        if (task_state.active_tool_state and 
+            task_state.active_tool_state.tool_name == self.config.tool_name):
             return task_state.active_tool_state
-
+        
         # Create new workflow state (local import to avoid circular dependency)
         from alfred.tools.tool_definitions import tool_definitions
-
         tool_definition = tool_definitions.get_tool_definition(self.config.tool_name)
         if not tool_definition:
             raise ValueError(f"No tool definition found for {self.config.tool_name}")
-
-        initial_state = tool_definition.initial_state.value if hasattr(tool_definition.initial_state, "value") else str(tool_definition.initial_state)
-
-        workflow_state = WorkflowState(task_id=task_id, tool_name=self.config.tool_name, current_state=initial_state, context_store={})
-
+        
+        initial_state = (tool_definition.initial_state.value 
+                        if hasattr(tool_definition.initial_state, 'value')
+                        else str(tool_definition.initial_state))
+        
+        workflow_state = WorkflowState(
+            task_id=task_id,
+            tool_name=self.config.tool_name,
+            current_state=initial_state,
+            context_store={}
+        )
+        
         # Update task state with new workflow state
         task_state.active_tool_state = workflow_state
         state_manager.save_task_state(task_state)
-
+        
         logger.info("Created new workflow state", task_id=task_id, tool_name=self.config.tool_name, state=initial_state)
         return workflow_state
 
     async def _setup_stateless_tool(self, workflow_state: WorkflowState, tool_instance: BaseWorkflowTool, task: Task, **kwargs: Any) -> Optional[ToolResponse]:
         """Setup context and handle dispatch using stateless pattern."""
-
+        
         # Load context if configured
         if self.config.context_loader:
             # Load task state for context
@@ -148,24 +155,23 @@ class GenericWorkflowHandler(BaseToolHandler):
             try:
                 # Local import to avoid circular dependency
                 from alfred.core.workflow_engine import WorkflowEngine
-
+                
                 # Use WorkflowEngine for state transition (local import to avoid circular dependency)
                 from alfred.tools.tool_definitions import tool_definitions
-
                 tool_definition = tool_definitions.get_tool_definition(self.config.tool_name)
                 engine = WorkflowEngine(tool_definition)
-
+                
                 # Execute dispatch transition
                 new_state = engine.execute_trigger(workflow_state.current_state, self.config.target_state_method)
                 workflow_state.current_state = new_state
-
+                
                 # Persist the state change
                 task_state = state_manager.load_or_create(task.task_id)
                 task_state.active_tool_state = workflow_state
                 state_manager.save_task_state(task_state)
 
                 logger.info("Dispatched tool to state", task_id=task.task_id, tool_name=self.config.tool_name, state=new_state)
-
+                
             except Exception as e:
                 logger.error("Auto-dispatch failed", task_id=task.task_id, tool_name=self.config.tool_name, error=str(e))
                 return ToolResponse(status="error", message=f"Failed to dispatch tool: {str(e)}")

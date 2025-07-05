@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 def start_task_impl(task_id: str) -> ToolResponse:
     """
     Simple task start using stateless design.
-
+    
     This function has been simplified to use the stateless workflow pattern.
     The actual workflow management is handled by GenericWorkflowHandler.
     """
@@ -21,23 +21,28 @@ def start_task_impl(task_id: str) -> ToolResponse:
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
 
     task_state = state_manager.load_or_create(task_id)
-
+    
     # Check if task is already started
     if task_state.active_tool_state:
         return ToolResponse(
-            status="error",
-            message=f"Task '{task_id}' already has an active workflow: {task_state.active_tool_state.tool_name}. Use `alfred.work_on_task('{task_id}')` to continue the current workflow.",
+            status="error", 
+            message=f"Task '{task_id}' already has an active workflow: {task_state.active_tool_state.tool_name}. "
+            f"Use `alfred.work_on_task('{task_id}')` to continue the current workflow."
         )
 
     # Check task status
     if task.task_status not in [TaskStatus.NEW, TaskStatus.PLANNING]:
-        return ToolResponse(status="error", message=f"Task '{task_id}' has status '{task.task_status.value}'. start_task can only be used on tasks with 'new' or 'planning' status.")
+        return ToolResponse(
+            status="error",
+            message=f"Task '{task_id}' has status '{task.task_status.value}'. "
+            f"start_task can only be used on tasks with 'new' or 'planning' status."
+        )
 
     # Note: The actual workflow creation is handled by the tool registry and GenericWorkflowHandler
     # This function just validates that the task can be started
-
+    
     return ToolResponse(
         status="success",
         message=f"Task '{task_id}' is ready to start. Use the appropriate workflow tool to begin.",
-        next_prompt=f"Call `alfred.work_on_task('{task_id}')` to begin working on this task.",
+        next_prompt=f"Call `alfred.work_on_task('{task_id}')` to begin working on this task."
     )
