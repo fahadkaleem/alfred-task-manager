@@ -9,7 +9,6 @@ from alfred.lib.task_utils import load_task, load_task_with_error_details
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
 from alfred.orchestration.orchestrator import orchestrator
 from alfred.state.manager import state_manager
-from alfred.state.recovery import ToolRecovery
 from alfred.tools.registry import tool_registry
 
 logger = get_logger(__name__)
@@ -49,16 +48,13 @@ class BaseToolHandler(ABC):
         return self._generate_response(tool_instance, task)
 
     def _get_or_create_tool(self, task_id: str, task: Task) -> BaseWorkflowTool | ToolResponse:
-        """Common tool recovery and creation logic."""
+        """Legacy tool recovery and creation logic - mostly replaced by stateless pattern."""
         if task_id in orchestrator.active_tools:
             logger.info("Found active tool", task_id=task_id, tool_name=self.tool_name)
             return orchestrator.active_tools[task_id]
 
-        tool_instance = ToolRecovery.recover_tool(task_id)
-        if tool_instance:
-            orchestrator.active_tools[task_id] = tool_instance
-            logger.info("Recovered tool", task_id=task_id, tool_name=self.tool_name)
-            return tool_instance
+        # Note: ToolRecovery has been removed in favor of stateless design
+        # This path should not be used with the new GenericWorkflowHandler stateless implementation
 
         if self.required_status and task.task_status != self.required_status:
             return ToolResponse(
@@ -76,8 +72,9 @@ class BaseToolHandler(ABC):
             new_status = tool_config.entry_status_map[task.task_status]
             state_manager.update_task_status(task_id, new_status)
 
-        # Persist the initial state of the newly created tool
-        state_manager.update_tool_state(task_id, new_tool)
+        # Note: This method is deprecated in favor of stateless design
+        # New tools should use WorkflowState via StateManager directly
+        logger.warning("Using deprecated stateful tool creation path", task_id=task_id, tool_name=self.tool_name)
 
         logger.info("Created new tool", task_id=task_id, tool_name=self.tool_name)
         return new_tool

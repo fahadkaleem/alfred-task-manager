@@ -1,12 +1,14 @@
 # src/alfred/orchestration/orchestrator.py
 """
-A simplified, central session manager for Alfred's active workflow tools.
+Legacy orchestrator module - largely deprecated in stateless design.
+
+The orchestrator previously managed active tool sessions but this functionality
+has been replaced by the stateless WorkflowEngine pattern where StateManager
+is the single source of truth.
 """
 
-from typing import Dict
 from alfred.config import ConfigManager
 from alfred.config.settings import settings
-from alfred.core.workflow import BaseWorkflowTool
 from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
@@ -14,9 +16,11 @@ logger = get_logger(__name__)
 
 class Orchestrator:
     """
-    Singleton class to manage active tool sessions.
-    This class holds a dictionary of active tool instances, keyed by task_id.
-    It no longer manages workflows or personas directly.
+    Legacy orchestrator class - deprecated in favor of stateless design.
+
+    Previously managed active tool sessions but this functionality has been
+    replaced by WorkflowEngine + StateManager pattern. Kept for backwards
+    compatibility but no longer holds any state.
     """
 
     _instance = None
@@ -30,11 +34,10 @@ class Orchestrator:
     def __init__(self):
         if self._initialized:
             return
-        self.active_tools: Dict[str, BaseWorkflowTool] = {}
         self.config_manager = ConfigManager(settings.alfred_dir)
         self._initialized = True
-        logger.info("Orchestrator initialized as a simple tool session manager", orchestrator_type="simple_session_manager", alfred_dir=str(settings.alfred_dir))
+        logger.info("Orchestrator initialized (legacy mode - stateless design active)", orchestrator_type="legacy_deprecated", alfred_dir=str(settings.alfred_dir))
 
 
-# Global singleton instance
+# Global singleton instance - kept for backwards compatibility
 orchestrator = Orchestrator()

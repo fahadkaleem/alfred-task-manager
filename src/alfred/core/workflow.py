@@ -3,7 +3,6 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Type
 
 from pydantic import BaseModel
-from transitions.core import Machine
 
 from alfred.constants import ToolName, Triggers
 from alfred.core.state_machine_builder import workflow_builder
@@ -65,17 +64,17 @@ class CreateTasksState(str, Enum):
 
 
 class BaseWorkflowTool:
+    """
+    Stateless base class for workflow tools.
+
+    No longer holds machine instance or state. Contains only static configuration
+    and utility methods for workflow management.
+    """
+
     def __init__(self, task_id: str, tool_name: str):
         self.task_id = task_id
         self.tool_name = tool_name
-        self.state: Optional[str] = None
-        self.machine: Optional[Machine] = None
         self.artifact_map: Dict[Enum, Type[BaseModel]] = {}
-        self.context_store: Dict[str, Any] = {}
-
-    @property
-    def is_terminal(self) -> bool:
-        return self.state == "verified"
 
     def get_review_states_for_state(self, state: str) -> List[str]:
         """Get the review states for a given work state."""
@@ -101,13 +100,6 @@ class StartTaskTool(BaseWorkflowTool):
             StartTaskState.AWAITING_BRANCH_CREATION: BranchCreationArtifact,
         }
 
-        # Use builder for the two-step workflow
-        machine_config = workflow_builder.build_workflow_with_reviews(
-            work_states=[StartTaskState.AWAITING_GIT_STATUS, StartTaskState.AWAITING_BRANCH_CREATION], terminal_state=StartTaskState.VERIFIED, initial_state=StartTaskState.AWAITING_GIT_STATUS
-        )
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
-
     def get_final_work_state(self) -> str:
         return StartTaskState.AWAITING_BRANCH_CREATION.value
 
@@ -118,11 +110,6 @@ class ImplementTaskTool(BaseWorkflowTool):
         self.artifact_map = {
             ImplementTaskState.IMPLEMENTING: ImplementationManifestArtifact,
         }
-
-        # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(dispatch_state=ImplementTaskState.DISPATCHING, work_state=ImplementTaskState.IMPLEMENTING, terminal_state=ImplementTaskState.VERIFIED)
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return ImplementTaskState.IMPLEMENTING.value
@@ -135,11 +122,6 @@ class ReviewTaskTool(BaseWorkflowTool):
             ReviewTaskState.REVIEWING: ReviewArtifact,
         }
 
-        # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(dispatch_state=ReviewTaskState.DISPATCHING, work_state=ReviewTaskState.REVIEWING, terminal_state=ReviewTaskState.VERIFIED)
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
-
     def get_final_work_state(self) -> str:
         return ReviewTaskState.REVIEWING.value
 
@@ -150,11 +132,6 @@ class TestTaskTool(BaseWorkflowTool):
         self.artifact_map = {
             TestTaskState.TESTING: TestResultArtifact,
         }
-
-        # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(dispatch_state=TestTaskState.DISPATCHING, work_state=TestTaskState.TESTING, terminal_state=TestTaskState.VERIFIED)
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return TestTaskState.TESTING.value
@@ -167,11 +144,6 @@ class FinalizeTaskTool(BaseWorkflowTool):
             FinalizeTaskState.FINALIZING: FinalizeArtifact,
         }
 
-        # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(dispatch_state=FinalizeTaskState.DISPATCHING, work_state=FinalizeTaskState.FINALIZING, terminal_state=FinalizeTaskState.VERIFIED)
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
-
     def get_final_work_state(self) -> str:
         return FinalizeTaskState.FINALIZING.value
 
@@ -183,11 +155,6 @@ class CreateSpecTool(BaseWorkflowTool):
             CreateSpecState.DRAFTING_SPEC: EngineeringSpec,
         }
 
-        # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(dispatch_state=CreateSpecState.DISPATCHING, work_state=CreateSpecState.DRAFTING_SPEC, terminal_state=CreateSpecState.VERIFIED)
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
-
     def get_final_work_state(self) -> str:
         return CreateSpecState.DRAFTING_SPEC.value
 
@@ -198,11 +165,6 @@ class CreateTasksTool(BaseWorkflowTool):
         self.artifact_map = {
             CreateTasksState.DRAFTING_TASKS: TaskCreationArtifact,
         }
-
-        # Use builder for simple workflow
-        machine_config = workflow_builder.build_simple_workflow(dispatch_state=CreateTasksState.DISPATCHING, work_state=CreateTasksState.DRAFTING_TASKS, terminal_state=CreateTasksState.VERIFIED)
-
-        self.machine = Machine(model=self, states=machine_config["states"], transitions=machine_config["transitions"], initial=machine_config["initial"], auto_transitions=False)
 
     def get_final_work_state(self) -> str:
         return CreateTasksState.DRAFTING_TASKS.value

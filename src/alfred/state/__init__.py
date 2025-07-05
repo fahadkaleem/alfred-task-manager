@@ -1,11 +1,10 @@
 """
-State management module for Alfred workflow tools.
+State management package.
 
-This module provides persistence and recovery capabilities for workflow tools,
-ensuring that task progress survives crashes and restarts.
+This package provides the state management infrastructure for Alfred,
+including the StateManager for task state persistence.
 """
 
 from alfred.state.manager import StateManager, state_manager
-from alfred.state.recovery import ToolRecovery
 
-__all__ = ["StateManager", "state_manager", "ToolRecovery"]
+__all__ = ["StateManager", "state_manager"]

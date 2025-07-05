@@ -20,7 +20,6 @@ from alfred.constants import ToolName
 from alfred.tools.registry import tool_registry
 from alfred.tools.progress import mark_subtask_complete_handler
 from alfred.tools.submit_work import submit_work_handler
-from alfred.tools.tool_definitions import TOOL_DEFINITIONS, get_tool_definition
 from alfred.tools.tool_factory import get_tool_handler
 from alfred.llm.initialization import initialize_ai_providers
 
@@ -30,6 +29,9 @@ logger = get_logger(__name__)
 # Create a helper function to register tools
 def register_tool_from_definition(app: FastMCP, tool_name: str):
     """Register a tool using its definition."""
+    # Local import to avoid circular dependency
+    from alfred.tools.tool_definitions import get_tool_definition
+
     definition = get_tool_definition(tool_name)
     handler = get_tool_handler(tool_name)
 

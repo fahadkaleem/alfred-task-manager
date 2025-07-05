@@ -4,8 +4,8 @@ from alfred.lib.structured_logger import get_logger, cleanup_task_logging
 from alfred.lib.task_utils import load_task
 from alfred.lib.turn_manager import turn_manager
 from alfred.models.schemas import ToolResponse
+from alfred.models.state import TaskState, WorkflowState
 from alfred.constants import Triggers, ToolName
-from alfred.orchestration.orchestrator import orchestrator
 from alfred.state.manager import state_manager
 from alfred.constants import ArtifactKeys
 from alfred.config.manager import ConfigManager
@@ -15,21 +15,35 @@ logger = get_logger(__name__)
 
 
 async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: str = "") -> ToolResponse:
-    if task_id not in orchestrator.active_tools:
-        from alfred.state.recovery import ToolRecovery
+    """Provide review logic using stateless WorkflowEngine pattern."""
 
-        recovered_tool = ToolRecovery.recover_tool(task_id)
-        if not recovered_tool:
-            return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
-        orchestrator.active_tools[task_id] = recovered_tool
-
-    active_tool = orchestrator.active_tools[task_id]
+    # Load task and task state
     task = load_task(task_id)
     if not task:
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
 
-    current_state = active_tool.state
-    logger.info("Processing review", task_id=task_id, tool_name=active_tool.tool_name, state=current_state, approved=is_approved)
+    task_state = state_manager.load_or_create(task_id)
+
+    # Check if we have an active workflow state
+    if not task_state.active_tool_state:
+        return ToolResponse(status="error", message=f"No active tool found for task '{task_id}'.")
+
+    workflow_state = task_state.active_tool_state
+    current_state = workflow_state.current_state
+
+    logger.info("Processing review", task_id=task_id, tool_name=workflow_state.tool_name, state=current_state, approved=is_approved)
+
+    # Get tool definition and engine for state transitions (local import to avoid circular dependency)
+    from alfred.tools.tool_definitions import tool_definitions
+
+    tool_definition = tool_definitions.get_tool_definition(workflow_state.tool_name)
+    if not tool_definition:
+        return ToolResponse(status="error", message=f"No tool definition found for {workflow_state.tool_name}")
+
+    # Local import to avoid circular dependency
+    from alfred.core.workflow_engine import WorkflowEngine
+
+    engine = WorkflowEngine(tool_definition)
 
     if not is_approved:
         # Record revision request as a turn
@@ -37,44 +51,85 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
             state_to_revise = current_state.replace("_awaiting_ai_review", "").replace("_awaiting_human_review", "")
             revision_turn = turn_manager.request_revision(task_id=task_id, state_to_revise=state_to_revise, feedback=feedback_notes, requested_by="human")
             # Store the revision turn number in context for next submission
-            active_tool.context_store["revision_turn_number"] = revision_turn.turn_number
+            workflow_state.context_store["revision_turn_number"] = revision_turn.turn_number
 
-        active_tool.trigger(Triggers.REQUEST_REVISION)
+        # Execute revision transition
+        try:
+            new_state = engine.execute_trigger(current_state, Triggers.REQUEST_REVISION)
+            workflow_state.current_state = new_state
+        except Exception as e:
+            logger.error("Revision transition failed", task_id=task_id, error=str(e))
+            return ToolResponse(status="error", message=f"Failed to process revision: {str(e)}")
+
         message = "Revision requested. Returning to previous step."
     else:
         # Clear any previous feedback when approving
-        if "feedback_notes" in active_tool.context_store:
-            del active_tool.context_store["feedback_notes"]
+        if "feedback_notes" in workflow_state.context_store:
+            del workflow_state.context_store["feedback_notes"]
 
+        # Determine the appropriate approval trigger
         if current_state.endswith("_awaiting_ai_review"):
-            active_tool.trigger(Triggers.AI_APPROVE)
+            trigger = Triggers.AI_APPROVE
             message = "AI review approved. Awaiting human review."
+
             try:
-                if ConfigManager(settings.alfred_dir).load().features.autonomous_mode:
-                    logger.info("Autonomous mode enabled, bypassing human review", task_id=task_id, tool_name=active_tool.tool_name)
-                    active_tool.trigger(Triggers.HUMAN_APPROVE)
-                    message = "AI review approved. Autonomous mode bypassed human review."
-            except FileNotFoundError:
-                logger.warning("Config file not found; autonomous mode unchecked.")
+                new_state = engine.execute_trigger(current_state, trigger)
+                workflow_state.current_state = new_state
+
+                # Check for autonomous mode to bypass human review
+                try:
+                    if ConfigManager(settings.alfred_dir).load().features.autonomous_mode:
+                        logger.info("Autonomous mode enabled, bypassing human review", task_id=task_id, tool_name=workflow_state.tool_name)
+                        # Execute another transition for human approve
+                        new_state = engine.execute_trigger(workflow_state.current_state, Triggers.HUMAN_APPROVE)
+                        workflow_state.current_state = new_state
+                        message = "AI review approved. Autonomous mode bypassed human review."
+                except FileNotFoundError:
+                    logger.warning("Config file not found; autonomous mode unchecked.")
+
+            except Exception as e:
+                logger.error("AI approval transition failed", task_id=task_id, error=str(e))
+                return ToolResponse(status="error", message=f"Failed to process AI approval: {str(e)}")
+
         elif current_state.endswith("_awaiting_human_review"):
-            active_tool.trigger(Triggers.HUMAN_APPROVE)
+            trigger = Triggers.HUMAN_APPROVE
             message = "Human review approved. Proceeding to next step."
+
+            try:
+                new_state = engine.execute_trigger(current_state, trigger)
+                workflow_state.current_state = new_state
+            except Exception as e:
+                logger.error("Human approval transition failed", task_id=task_id, error=str(e))
+                return ToolResponse(status="error", message=f"Failed to process human approval: {str(e)}")
         else:
             return ToolResponse(status="error", message=f"Cannot provide review from non-review state '{current_state}'.")
 
-    state_manager.update_tool_state(task_id, active_tool)
+    # Persist the updated workflow state
+    task_state.active_tool_state = workflow_state
+    state_manager.save_task_state(task_state)
 
-    if active_tool.is_terminal:
-        tool_name = active_tool.tool_name
-        final_state = active_tool.get_final_work_state()
+    # Check if we've reached a terminal state
+    is_terminal = engine.is_terminal_state(workflow_state.current_state)
+
+    if is_terminal:
+        # Handle terminal state completion
+        tool_name = workflow_state.tool_name
+
+        # Create temporary tool instance to get final work state
+        tool_class = tool_definition.tool_class
+        temp_tool = tool_class(task_id=task_id)
+        final_state = temp_tool.get_final_work_state()
+
         key = ArtifactKeys.get_artifact_key(final_state)
-        artifact = active_tool.context_store.get(key)
+        artifact = workflow_state.context_store.get(key)
 
         if artifact:
             state_manager.add_completed_output(task_id, tool_name, artifact)
-        state_manager.clear_tool_state(task_id)
 
-        orchestrator.active_tools.pop(task_id, None)
+        # Clear active tool state
+        task_state.active_tool_state = None
+        state_manager.save_task_state(task_state)
+
         cleanup_task_logging(task_id)
 
         # Import here to avoid circular dependency
@@ -116,18 +171,19 @@ Call `alfred.work_on_task(task_id='{task_id}')` to check the current status."""
         return ToolResponse(status="success", message=f"'{tool_name}' completed.", next_prompt=handoff)
 
     if not is_approved and feedback_notes:
-        # Store feedback in the tool's context for persistence
-        active_tool.context_store["feedback_notes"] = feedback_notes
-        # Persist the updated tool state with feedback
-        state_manager.update_tool_state(task_id, active_tool)
+        # Store feedback in the workflow state's context for persistence
+        workflow_state.context_store["feedback_notes"] = feedback_notes
+        # Persist the updated workflow state with feedback
+        task_state.active_tool_state = workflow_state
+        state_manager.save_task_state(task_state)
 
-    # Always use the tool's context (which now includes feedback if present)
-    ctx = active_tool.context_store.copy()
+    # Always use the workflow state's context (which now includes feedback if present)
+    ctx = workflow_state.context_store.copy()
 
     prompt = generate_prompt(
         task_id=task.task_id,
-        tool_name=active_tool.tool_name,
-        state=active_tool.state,
+        tool_name=workflow_state.tool_name,
+        state=workflow_state.current_state,
         task=task,
         additional_context=ctx,
     )
