@@ -8,7 +8,9 @@ from alfred.state.recovery import ToolRecovery
 logger = get_logger(__name__)
 
 
-def approve_and_advance_impl(task_id: str) -> ToolResponse:
+# New logic function for GenericWorkflowHandler
+def approve_and_advance_logic(task_id: str, **kwargs) -> ToolResponse:
+    """Logic function for approve_and_advance compatible with GenericWorkflowHandler."""
     """Approve current phase and advance to next using centralized workflow config."""
     task_state = state_manager.load_or_create(task_id)
     current_status = task_state.task_status

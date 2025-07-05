@@ -31,6 +31,17 @@ from alfred.core.discovery_context import load_plan_task_context
 from alfred.models.schemas import TaskStatus
 from alfred.constants import ToolName
 
+# Import logic functions for simple tools
+from alfred.tools.get_next_task import get_next_task_logic
+from alfred.tools.work_on import work_on_logic
+from alfred.tools.create_task import create_task_logic
+from alfred.tools.approve_review import approve_review_logic
+from alfred.tools.request_revision import request_revision_logic
+from alfred.tools.approve_and_advance import approve_and_advance_logic
+from alfred.tools.initialize import initialize_project_logic
+from alfred.tools.create_spec import create_spec_logic
+from alfred.tools.create_tasks_from_spec import create_tasks_logic
+
 
 @dataclass
 class ToolDefinition:
@@ -92,15 +103,31 @@ class ToolDefinition:
         return states
 
     def validate(self) -> None:
-        """Validate the tool definition for consistency."""
-        if self.dispatch_on_init and not self.dispatch_state:
-            raise ValueError(f"Tool {self.name} has dispatch_on_init=True but no dispatch_state")
+        """Enhanced validation supporting simple tools."""
+        # Case 1: Workflow tool (existing logic)
+        if self.tool_class is not None:
+            if self.dispatch_on_init and not self.dispatch_state:
+                raise ValueError(f"Tool {self.name} has dispatch_on_init=True but no dispatch_state")
 
-        if self.work_states and not self.terminal_state:
-            raise ValueError(f"Tool {self.name} has work states but no terminal state")
+            if self.work_states and not self.terminal_state:
+                raise ValueError(f"Tool {self.name} has work states but no terminal state")
 
-        if self.entry_statuses and not self.exit_status:
-            raise ValueError(f"Tool {self.name} has entry statuses but no exit status")
+            if self.entry_statuses and not self.exit_status:
+                raise ValueError(f"Tool {self.name} has entry statuses but no exit status")
+
+        # Case 2: Simple tool (new logic)
+        elif self.tool_class is None:
+            if self.context_loader is None:
+                raise ValueError(f"Simple tool {self.name} must have context_loader as logic function")
+
+            if any([self.work_states, self.dispatch_state, self.terminal_state, self.initial_state]):
+                raise ValueError(f"Simple tool {self.name} cannot have workflow states")
+
+            if self.dispatch_on_init:
+                raise ValueError(f"Simple tool {self.name} cannot use dispatch_on_init")
+
+        else:
+            raise ValueError(f"Tool {self.name} must have either tool_class or context_loader")
 
 
 # Context loaders
@@ -287,6 +314,49 @@ TOOL_DEFINITIONS: Dict[str, ToolDefinition] = {
         required_status=TaskStatus.SPEC_COMPLETED,
         dispatch_on_init=True,
         context_loader=load_spec_context,
+    ),
+    # Simple tools (tool_class=None, logic in context_loader)
+    ToolName.GET_NEXT_TASK: ToolDefinition(
+        name=ToolName.GET_NEXT_TASK,
+        tool_class=None,
+        description="Intelligently determines and recommends the next task to work on",
+        context_loader=get_next_task_logic,
+    ),
+    ToolName.WORK_ON_TASK: ToolDefinition(
+        name=ToolName.WORK_ON_TASK,
+        tool_class=None,
+        description="Primary entry point for working on any task - Smart Dispatch model",
+        context_loader=work_on_logic,
+    ),
+    ToolName.CREATE_TASK: ToolDefinition(
+        name=ToolName.CREATE_TASK,
+        tool_class=None,
+        description="Creates a new task in the Alfred system using standardized template format",
+        context_loader=create_task_logic,
+    ),
+    ToolName.APPROVE_REVIEW: ToolDefinition(
+        name=ToolName.APPROVE_REVIEW,
+        tool_class=None,
+        description="Approves the artifact in the current review step and advances the workflow",
+        context_loader=approve_review_logic,
+    ),
+    ToolName.REQUEST_REVISION: ToolDefinition(
+        name=ToolName.REQUEST_REVISION,
+        tool_class=None,
+        description="Rejects the artifact in the current review step and sends it back for revision",
+        context_loader=request_revision_logic,
+    ),
+    ToolName.APPROVE_AND_ADVANCE: ToolDefinition(
+        name=ToolName.APPROVE_AND_ADVANCE,
+        tool_class=None,
+        description="Approves the current phase and advances to the next phase in the workflow",
+        context_loader=approve_and_advance_logic,
+    ),
+    ToolName.INITIALIZE_PROJECT: ToolDefinition(
+        name=ToolName.INITIALIZE_PROJECT,
+        tool_class=None,
+        description="Initializes the project workspace for Alfred",
+        context_loader=initialize_project_logic,
     ),
 }
 

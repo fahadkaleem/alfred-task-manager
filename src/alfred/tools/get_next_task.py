@@ -7,19 +7,12 @@ from alfred.lib.structured_logger import get_logger
 logger = get_logger(__name__)
 
 
-async def get_next_task_impl() -> ToolResponse:
-    """Gets the next recommended task using the configured provider.
+# New logic function for GenericWorkflowHandler
+async def get_next_task_logic(**kwargs) -> ToolResponse:
+    """Logic function for get_next_task compatible with GenericWorkflowHandler.
 
-    This tool intelligently determines which task should be worked on next
-    based on task status, priority, and other factors. It uses the configured
-    task provider (local, jira, linear) to fetch and rank tasks.
-
-    Returns:
-        ToolResponse containing:
-        - The recommended task ID and details
-        - Reasoning for the recommendation
-        - Alternative tasks that could be worked on
-        - A prompt suggesting how to proceed
+    Gets the next recommended task using the configured provider.
+    This tool doesn't require a task_id parameter.
     """
     try:
         # Get the configured task provider

@@ -23,9 +23,14 @@ class ToolName:
     TEST_TASK: Final[str] = "test_task"
     FINALIZE_TASK: Final[str] = "finalize_task"
     WORK_ON: Final[str] = "work_on"
+    WORK_ON_TASK: Final[str] = "work_on_task"
     APPROVE_AND_ADVANCE: Final[str] = "approve_and_advance"
     MARK_SUBTASK_COMPLETE: Final[str] = "mark_subtask_complete"
     CREATE_TASK: Final[str] = "create_task"
+    GET_NEXT_TASK: Final[str] = "get_next_task"
+    APPROVE_REVIEW: Final[str] = "approve_review"
+    REQUEST_REVISION: Final[str] = "request_revision"
+    INITIALIZE_PROJECT: Final[str] = "initialize_project"
 
 
 # Directory and File Names

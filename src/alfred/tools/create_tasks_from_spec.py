@@ -9,6 +9,15 @@ from alfred.state.manager import state_manager
 logger = get_logger(__name__)
 
 
+# New logic function for GenericWorkflowHandler
+async def create_tasks_logic(task_id: str, **kwargs) -> ToolResponse:
+    """Logic function for create_tasks_from_spec compatible with GenericWorkflowHandler."""
+    return await create_tasks_from_spec_impl(task_id)
+
+
+# Note: create_tasks_from_spec_impl is still used as it contains workflow-specific logic
+
+
 async def create_tasks_from_spec_impl(task_id: str) -> ToolResponse:
     """
     Creates a list of actionable tasks from a completed engineering specification.

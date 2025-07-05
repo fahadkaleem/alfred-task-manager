@@ -18,6 +18,15 @@ from alfred.models.schemas import ToolResponse
 logger = get_logger(__name__)
 
 
+# New logic function for GenericWorkflowHandler
+def initialize_project_logic(provider: str | None = None, **kwargs) -> ToolResponse:
+    """Logic function for initialize_project compatible with GenericWorkflowHandler."""
+    return initialize_project(provider)
+
+
+# Note: initialize_project function already exists and is the main implementation
+
+
 def initialize_project(provider: str | None = None, test_dir: Path | None = None) -> ToolResponse:
     """Initialize Alfred with provider selection.
 

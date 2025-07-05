@@ -10,7 +10,6 @@ from alfred.core.workflow import BaseWorkflowTool
 from alfred.lib.structured_logger import get_logger
 from alfred.state.manager import state_manager
 from alfred.constants import ToolName
-from alfred.tools.tool_definitions import TOOL_DEFINITIONS
 
 logger = get_logger(__name__)
 
@@ -18,8 +17,17 @@ logger = get_logger(__name__)
 class ToolRecovery:
     """Handles recovery of workflow tools from persisted state."""
 
-    # Build registry from definitions
-    TOOL_REGISTRY: Dict[str, Type[BaseWorkflowTool]] = {name: definition.tool_class for name, definition in TOOL_DEFINITIONS.items()}
+    # Lazy-loaded registry to avoid circular imports
+    _TOOL_REGISTRY: Optional[Dict[str, Type[BaseWorkflowTool]]] = None
+
+    @classmethod
+    def _get_tool_registry(cls) -> Dict[str, Type[BaseWorkflowTool]]:
+        """Lazy-load the tool registry to avoid circular imports."""
+        if cls._TOOL_REGISTRY is None:
+            from alfred.tools.tool_definitions import TOOL_DEFINITIONS
+
+            cls._TOOL_REGISTRY = {name: definition.tool_class for name, definition in TOOL_DEFINITIONS.items() if definition.tool_class is not None}
+        return cls._TOOL_REGISTRY
 
     @classmethod
     def recover_tool(cls, task_id: str) -> Optional[BaseWorkflowTool]:
@@ -32,7 +40,7 @@ class ToolRecovery:
             return None
 
         tool_name = persisted_tool_state.tool_name
-        tool_class = cls.TOOL_REGISTRY.get(tool_name)
+        tool_class = cls._get_tool_registry().get(tool_name)
         if not tool_class:
             logger.error(f"Unknown tool type: {tool_name}. Cannot recover.")
             return None
@@ -51,7 +59,7 @@ class ToolRecovery:
     @classmethod
     def register_tool(cls, tool_name: str, tool_class: Type[BaseWorkflowTool]) -> None:
         """Register a new tool type for recovery."""
-        cls.TOOL_REGISTRY[tool_name] = tool_class
+        cls._get_tool_registry()[tool_name] = tool_class
         logger.debug(f"Registered tool type: {tool_name}")
 
     @classmethod
@@ -63,7 +71,7 @@ class ToolRecovery:
             return False
 
         tool_name = persisted_tool_state.tool_name
-        return tool_name in cls.TOOL_REGISTRY
+        return tool_name in cls._get_tool_registry()
 
 
 def recover_tool_from_state(task_id: str, tool_name: str) -> BaseWorkflowTool:
@@ -87,7 +95,7 @@ def recover_tool_from_state(task_id: str, tool_name: str) -> BaseWorkflowTool:
         return tool_instance
 
     # Create new tool
-    tool_class = ToolRecovery.TOOL_REGISTRY.get(tool_name)
+    tool_class = ToolRecovery._get_tool_registry().get(tool_name)
     if not tool_class:
         raise ValueError(f"Unknown tool type: {tool_name}")
 

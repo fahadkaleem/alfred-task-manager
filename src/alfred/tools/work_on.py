@@ -8,9 +8,12 @@ from alfred.lib.structured_logger import get_logger
 logger = get_logger(__name__)
 
 
-def work_on_impl(task_id: str) -> ToolResponse:
-    """Smart dispatch using centralized workflow configuration."""
+# New logic function for GenericWorkflowHandler
+def work_on_logic(task_id: str, **kwargs) -> ToolResponse:
+    """Logic function for work_on_task compatible with GenericWorkflowHandler.
 
+    Smart dispatch using centralized workflow configuration.
+    """
     # Step 1: Check if the task exists locally first (cache-first architecture)
     if not does_task_exist_locally(task_id):
         logger.info(f"Task '{task_id}' not found in local cache. Fetching from provider...")

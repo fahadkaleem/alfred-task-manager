@@ -84,12 +84,11 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         # Update task status using workflow utilities for direct exit_status mapping
         current_task_status = task.task_status
         next_status = get_next_status(current_task_status)
-        
+
         if next_status:
             state_manager.update_task_status(task_id, next_status)
-            logger.info("Tool completed, status updated", task_id=task_id, tool_name=tool_name, 
-                       old_status=current_task_status.value, new_status=next_status.value)
-            
+            logger.info("Tool completed, status updated", task_id=task_id, tool_name=tool_name, old_status=current_task_status.value, new_status=next_status.value)
+
             if tool_name == ToolName.PLAN_TASK:
                 handoff = f"""The planning workflow has completed successfully!
 

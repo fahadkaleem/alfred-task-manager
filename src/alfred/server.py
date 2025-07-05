@@ -16,26 +16,10 @@ from alfred.config.settings import settings
 from alfred.core.prompter import prompt_library  # Import the prompt library
 from alfred.lib.structured_logger import get_logger
 from alfred.models.schemas import TaskStatus, ToolResponse
-from alfred.tools.approve_and_advance import approve_and_advance_impl
 from alfred.constants import ToolName
 from alfred.tools.registry import tool_registry
-from alfred.tools.create_spec import create_spec_impl
-from alfred.tools.create_tasks_from_spec import create_tasks_from_spec_impl
-from alfred.tools.create_task import create_task_impl
-from alfred.tools.finalize_task import finalize_task_impl
-from alfred.tools.get_next_task import get_next_task_impl
-from alfred.tools.implement_task import implement_task_impl
-from alfred.tools.initialize import initialize_project as initialize_project_impl
-from alfred.tools.plan_task import plan_task_impl
-from alfred.tools.review_task import review_task_impl
-from alfred.tools.test_task import test_task_impl
-from alfred.core.workflow import ImplementTaskTool, ReviewTaskTool, TestTaskTool, FinalizeTaskTool
-from alfred.core.discovery_workflow import PlanTaskTool
-from alfred.tools.progress import mark_subtask_complete_impl, mark_subtask_complete_handler
-from alfred.tools.approve_review import approve_review_impl
-from alfred.tools.request_revision import request_revision_impl
+from alfred.tools.progress import mark_subtask_complete_handler
 from alfred.tools.submit_work import submit_work_handler
-from alfred.tools.work_on import work_on_impl
 from alfred.tools.tool_definitions import TOOL_DEFINITIONS, get_tool_definition
 from alfred.tools.tool_factory import get_tool_handler
 from alfred.llm.initialization import initialize_ai_providers
@@ -121,7 +105,6 @@ def log_tool_transaction(impl_func: Callable) -> Callable:
 
 
 @app.tool()
-@log_tool_transaction(initialize_project_impl)
 async def initialize_project(provider: str | None = None) -> ToolResponse:
     """
     Initializes the project workspace for Alfred by creating the .alfred directory with default configurations for workflows.
@@ -142,11 +125,11 @@ async def initialize_project(provider: str | None = None) -> ToolResponse:
     - **provider** `[string]` (optional): The task source provider to configure. Valid values: "jira", "linear", or "local".
       If not provided, the tool will return available choices for interactive selection.
     """
-    return initialize_project_impl(provider)
+    handler = get_tool_handler(ToolName.INITIALIZE_PROJECT)
+    return await handler.execute(provider=provider)
 
 
 @app.tool()
-@log_tool_transaction(get_next_task_impl)
 async def get_next_task() -> ToolResponse:
     """
     Intelligently determines and recommends the next task to work on.
@@ -174,11 +157,11 @@ async def get_next_task() -> ToolResponse:
     Example:
         get_next_task() -> Recommends "AL-42" with reasoning and alternatives
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.GET_NEXT_TASK)
+    return await handler.execute()
 
 
 @app.tool()
-@log_tool_transaction(work_on_impl)
 async def work_on_task(task_id: str) -> ToolResponse:
     """
     Primary entry point for working on any task - the Smart Dispatch model.
@@ -204,11 +187,11 @@ async def work_on_task(task_id: str) -> ToolResponse:
         work_on_task("TK-01") -> Guides to plan_task if task is new
         work_on_task("TK-02") -> Guides to implement_task if planning is complete
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.WORK_ON_TASK)
+    return await handler.execute(task_id=task_id)
 
 
 @app.tool()
-@log_tool_transaction(create_spec_impl)
 async def create_spec(task_id: str, prd_content: str) -> ToolResponse:
     """
     Creates a technical specification from a Product Requirements Document (PRD).
@@ -236,11 +219,11 @@ async def create_spec(task_id: str, prd_content: str) -> ToolResponse:
     Example:
         create_spec("EPIC-01", "Build a notification system...") -> Guides spec creation
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.CREATE_SPEC)
+    return await handler.execute(task_id=task_id, prd_content=prd_content)
 
 
 @app.tool()
-@log_tool_transaction(create_tasks_from_spec_impl)
 async def create_tasks_from_spec(task_id: str) -> ToolResponse:
     """
     Creates a list of actionable tasks from a completed engineering specification.
@@ -268,11 +251,11 @@ async def create_tasks_from_spec(task_id: str) -> ToolResponse:
     Example:
         create_tasks_from_spec("EPIC-01") -> Guides creation of task list from spec
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.CREATE_TASKS_FROM_SPEC)
+    return await handler.execute(task_id=task_id)
 
 
 @app.tool()
-@log_tool_transaction(create_task_impl)
 async def create_task(task_content: str) -> ToolResponse:
     """
     Creates a new task in the Alfred system using the standardized task template format.
@@ -364,7 +347,8 @@ async def create_task(task_content: str) -> ToolResponse:
     all tasks in the Alfred system. The template format is non-negotiable and must
     be followed precisely for successful task creation.
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.CREATE_TASK)
+    return await handler.execute(task_content=task_content)
 
 
 @app.tool()
@@ -454,7 +438,6 @@ async def submit_work(task_id: str, artifact: dict) -> ToolResponse:
 
 
 @app.tool()
-@log_tool_transaction(approve_review_impl)
 async def approve_review(task_id: str) -> ToolResponse:
     """
     Approves the artifact in the current review step and advances the workflow.
@@ -496,11 +479,11 @@ async def approve_review(task_id: str) -> ToolResponse:
         - Must be in a review state (awaiting_ai_review or awaiting_human_review)
         - Artifact must have been submitted for current state
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.APPROVE_REVIEW)
+    return await handler.execute(task_id=task_id)
 
 
 @app.tool()
-@log_tool_transaction(request_revision_impl)
 async def request_revision(task_id: str, feedback_notes: str) -> ToolResponse:
     """
     Rejects the artifact in the current review step and sends it back for revision.
@@ -559,7 +542,8 @@ async def request_revision(task_id: str, feedback_notes: str) -> ToolResponse:
         - "Don't like the approach" (not actionable)
         - "Try again" (no guidance)
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.REQUEST_REVISION)
+    return await handler.execute(task_id=task_id, feedback_notes=feedback_notes)
 
 
 @app.tool()
@@ -835,7 +819,6 @@ register_tool_from_definition(app, ToolName.FINALIZE_TASK)
 
 
 @app.tool()
-@log_tool_transaction(approve_and_advance_impl)
 async def approve_and_advance(task_id: str) -> ToolResponse:
     """
     Approves the current phase and advances to the next phase in the workflow.
@@ -901,7 +884,8 @@ async def approve_and_advance(task_id: str) -> ToolResponse:
     Note: This tool enforces the standard workflow order.
     You cannot skip phases or move backward.
     """
-    pass  # Implementation handled by decorator
+    handler = get_tool_handler(ToolName.APPROVE_AND_ADVANCE)
+    return await handler.execute(task_id=task_id)
 
 
 if __name__ == "__main__":

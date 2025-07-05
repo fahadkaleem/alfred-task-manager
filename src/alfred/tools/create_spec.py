@@ -7,6 +7,15 @@ from alfred.models.engineering_spec import EngineeringSpec
 from alfred.state.manager import state_manager
 
 
+# New logic function for GenericWorkflowHandler
+async def create_spec_logic(task_id: str, prd_content: str, **kwargs) -> ToolResponse:
+    """Logic function for create_spec compatible with GenericWorkflowHandler."""
+    return await create_spec_impl(task_id, prd_content)
+
+
+# Note: create_spec_impl is still used as it contains workflow-specific logic
+
+
 async def create_spec_impl(task_id: str, prd_content: str) -> ToolResponse:
     """
     Initializes the workflow for creating a technical specification from a PRD.
