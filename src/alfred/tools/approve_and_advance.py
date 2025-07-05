@@ -1,6 +1,6 @@
 from alfred.state.manager import state_manager
 from alfred.models.schemas import TaskStatus, ToolResponse
-from alfred.core.workflow_config import WorkflowConfiguration
+from alfred.tools.workflow_utils import get_phase_info, get_next_status
 from alfred.lib.structured_logger import get_logger
 from alfred.orchestration.orchestrator import orchestrator
 from alfred.state.recovery import ToolRecovery
@@ -70,32 +70,25 @@ def approve_and_advance_impl(task_id: str) -> ToolResponse:
                         f"Use 'submit_work' to submit artifacts and 'approve_review' to advance through each planning phase.",
                     )
 
-    # Get current phase from workflow config
-    current_phase = WorkflowConfiguration.get_phase(current_status)
-    if not current_phase:
-        return ToolResponse(status="error", message=f"Unknown workflow phase for status '{current_status.value}'.")
+    # Get next status using simplified workflow utilities
+    next_status = get_next_status(current_status)
+    if not next_status:
+        return ToolResponse(status="error", message=f"No next status defined for '{current_status.value}'.")
 
-    # Check if this phase can be advanced from
-    if current_phase.terminal:
+    # Check if current status is terminal (cannot advance from DONE)
+    if current_status == TaskStatus.DONE:
         return ToolResponse(status="error", message=f"Cannot advance from terminal status '{current_status.value}'.")
-
-    if not current_phase.next_status:
-        return ToolResponse(status="error", message=f"No next phase defined for status '{current_status.value}'.")
 
     # Note: Archiving is no longer needed with turn-based storage system
     # All artifacts are already stored as immutable turns
 
-    # Advance to next status
-    next_phase = WorkflowConfiguration.get_next_phase(current_status)
-    if not next_phase:
-        return ToolResponse(status="error", message=f"Failed to determine next phase for status '{current_status.value}'.")
+    # Advance to next status using direct status mapping
+    state_manager.update_task_status(task_id, next_status)
 
-    state_manager.update_task_status(task_id, next_phase.status)
-
-    message = f"Phase '{current_status.value}' approved. Task '{task_id}' is now in status '{next_phase.status.value}'."
+    message = f"Phase '{current_status.value}' approved. Task '{task_id}' is now in status '{next_status.value}'."
     logger.info(message)
 
-    if next_phase.terminal:
+    if next_status == TaskStatus.DONE:
         message += "\n\nThe task is fully complete."
         return ToolResponse(status="success", message=message)
 

@@ -65,10 +65,13 @@ class TestModelResponse:
         """Test that ModelResponse is immutable."""
         response = ModelResponse(content="Test content", model_name="test-model")
 
-        with pytest.raises(AttributeError):
+        # Pydantic raises ValidationError for frozen models
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
             response.content = "Modified content"
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             response.model_name = "modified-model"
 
     def test_model_response_timestamp_auto_generation(self):
@@ -124,10 +127,13 @@ class TestModelInfo:
         """Test that ModelInfo is immutable."""
         info = ModelInfo(name="test-model", provider="test-provider", capabilities=[ModelCapability.TEXT_GENERATION], context_window=4096)
 
-        with pytest.raises(AttributeError):
+        # Pydantic raises ValidationError for frozen models
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
             info.name = "modified-model"
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             info.provider = "modified-provider"
 
     def test_model_info_multiple_capabilities(self):

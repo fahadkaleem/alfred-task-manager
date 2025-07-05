@@ -114,13 +114,14 @@ class TestModelProviderRegistry:
         """Test successful provider creation."""
         registry = ModelProviderRegistry()
 
-        with patch("alfred.llm.registry.OpenAIProvider") as mock_openai:
-            mock_instance = Mock()
-            mock_openai.return_value = mock_instance
+        mock_provider_class = Mock()
+        mock_instance = Mock()
+        mock_provider_class.return_value = mock_instance
 
+        with patch.object(registry, "_provider_classes", {"openai": mock_provider_class}):
             result = registry.create_provider("openai", api_key="test-key")
 
-            mock_openai.assert_called_once_with(api_key="test-key")
+            mock_provider_class.assert_called_once_with(api_key="test-key")
             assert result == mock_instance
 
     def test_create_provider_unknown_type(self):

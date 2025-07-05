@@ -108,14 +108,16 @@ class TestModelResponseValidation:
         """Test that ModelResponse is immutable after creation."""
         response = ModelResponse(content="original", model_name="test-model")
 
-        # Should not be able to modify fields
-        with pytest.raises(AttributeError):
+        # Should not be able to modify fields (Pydantic raises ValidationError for frozen models)
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
             response.content = "modified"
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             response.model_name = "modified-model"
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             response.timestamp = datetime.now(timezone.utc)
 
     def test_response_serialization(self):
@@ -228,14 +230,16 @@ class TestModelInfoValidation:
         """Test that ModelInfo is immutable after creation."""
         info = ModelInfo(name="test-model", provider="test-provider", capabilities=[ModelCapability.TEXT_GENERATION], context_window=4096)
 
-        # Should not be able to modify fields
-        with pytest.raises(AttributeError):
+        # Should not be able to modify fields (Pydantic raises ValidationError for frozen models)
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
             info.name = "modified-model"
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             info.provider = "modified-provider"
 
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             info.context_window = 8192
 
     def test_model_info_serialization(self):

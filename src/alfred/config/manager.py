@@ -1,12 +1,12 @@
 """Configuration manager for Alfred."""
 
-import logging
 import yaml
 from pathlib import Path
 
 from alfred.models.alfred_config import AlfredConfig
+import logging
 
-logger = logging.getLogger("alfred.config.manager")
+logger = logging.getLogger(__name__)
 
 
 class ConfigManager:
@@ -41,10 +41,10 @@ class ConfigManager:
                 data = yaml.safe_load(f)
 
             self._config = AlfredConfig(**data)
-            logger.info(f"Loaded configuration from {self.config_path}")
+            logger.info("Configuration loaded successfully", extra={"config_path": str(self.config_path), "component": "config_manager"})
             return self._config
         except Exception as e:
-            logger.exception(f"Failed to load configuration: {e}")
+            logger.error("Failed to load configuration", extra={"config_path": str(self.config_path), "error": str(e), "component": "config_manager"}, exc_info=True)
             raise
 
     def save(self, config: AlfredConfig) -> None:
@@ -60,9 +60,9 @@ class ConfigManager:
                 yaml.dump(config.model_dump(mode="json"), f, default_flow_style=False, sort_keys=False)
 
             self._config = config
-            logger.info(f"Saved configuration to {self.config_path}")
+            logger.info("Configuration saved successfully", extra={"config_path": str(self.config_path), "component": "config_manager"})
         except Exception as e:
-            logger.exception(f"Failed to save configuration: {e}")
+            logger.error("Failed to save configuration", extra={"config_path": str(self.config_path), "error": str(e), "component": "config_manager"}, exc_info=True)
             raise
 
     def get(self) -> AlfredConfig:

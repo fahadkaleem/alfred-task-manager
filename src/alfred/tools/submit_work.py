@@ -58,24 +58,25 @@ class SubmitWorkHandler(BaseToolHandler):
             try:
                 validated_artifact = artifact_model.model_validate(normalized_artifact)
                 logger.info(LogMessages.ARTIFACT_VALIDATED.format(state=current_state_val, model=artifact_model.__name__))
-                
+
                 # Additional validation for ImplementationManifestArtifact
                 from alfred.models.planning_artifacts import ImplementationManifestArtifact
+
                 if isinstance(validated_artifact, ImplementationManifestArtifact):
                     # Get the planned subtasks from the execution plan
                     execution_plan = tool_instance.context_store.get("artifact_content", {})
                     planned_subtasks = [st["subtask_id"] for st in execution_plan.get("subtasks", [])]
-                    
+
                     if planned_subtasks:
                         validation_error = validated_artifact.validate_against_plan(planned_subtasks)
                         if validation_error:
                             return ToolResponse(status=ResponseStatus.ERROR, message=f"Implementation validation failed: {validation_error}")
-                        
+
                         # Log successful validation
                         completed_count = len(validated_artifact.completed_subtasks)
                         total_count = len(planned_subtasks)
                         logger.info(f"Implementation validation passed: {completed_count}/{total_count} subtasks completed")
-                        
+
             except ValidationError as e:
                 error_msg = f"{ErrorMessages.VALIDATION_FAILED.format(state=current_state_val)}. The submitted artifact does not match the required structure.\n\nValidation Errors:\n{e}"
                 return ToolResponse(status=ResponseStatus.ERROR, message=error_msg)

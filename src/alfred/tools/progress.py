@@ -68,18 +68,20 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
 
         # Create an encouraging message based on progress
         if completed_count == total_count:
-            message = (f"🎉 Excellent! Subtask '{subtask_id}' is complete. All {total_count} subtasks are now finished! "
-                      f"\n\n**Next Action**: Call `alfred.submit_work` with your ImplementationManifestArtifact to complete the implementation phase.")
+            message = (
+                f"🎉 Excellent! Subtask '{subtask_id}' is complete. All {total_count} subtasks are now finished! "
+                f"\n\n**Next Action**: Call `alfred.submit_work` with your ImplementationManifestArtifact to complete the implementation phase."
+            )
         elif progress >= 80:
-            message = (f"Great progress! Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
-                      f"Almost there - only {remaining} subtask{'s' if remaining > 1 else ''} left!")
+            message = (
+                f"Great progress! Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
+                f"Almost there - only {remaining} subtask{'s' if remaining > 1 else ''} left!"
+            )
         elif progress >= 50:
-            message = (f"Good work! Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
-                      f"You're over halfway done!")
+            message = f"Good work! Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). You're over halfway done!"
         else:
-            message = (f"✓ Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
-                      f"Keep going - {remaining} subtasks remaining.")
-        
+            message = f"✓ Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). Keep going - {remaining} subtasks remaining."
+
         logger.info(f"Subtask '{subtask_id}' marked complete for task {task.task_id}")
 
         # This tool does not return a next_prompt, as the AI should continue its work.
@@ -98,9 +100,10 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
 
         # Provide helpful context about the task state
         from alfred.lib.task_utils import load_task
+
         task_info = load_task(task_id)
         task_status = task_info.task_status.value if task_info else "unknown"
-        
+
         error_msg = f"""No active implementation workflow found for task '{task_id}'. 
 
 **Current Status**: {task_status}
@@ -116,7 +119,7 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
 - To see current status: Use `alfred.work_on_task('{task_id}')`
 
 Cannot mark subtask progress without an active implementation workflow."""
-        
+
         return ToolResponse(status="error", message=error_msg)
 
 

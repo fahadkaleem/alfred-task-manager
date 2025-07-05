@@ -133,36 +133,38 @@ class ImplementationManifestArtifact(BaseModel):
     summary: str
     completed_subtasks: List[str]
     testing_notes: str
-    
+
     def validate_against_plan(self, planned_subtasks: List[str]) -> Optional[str]:
         """Validate completed subtasks against the original plan.
-        
+
         Args:
             planned_subtasks: List of subtask IDs from the original execution plan
-            
+
         Returns:
             None if validation passes, error message if validation fails
         """
         planned_set = set(planned_subtasks)
         completed_set = set(self.completed_subtasks)
-        
+
         missing = planned_set - completed_set
         extra = completed_set - planned_set
-        
+
         if missing:
             completed_count = len(self.completed_subtasks)
             total_count = len(planned_subtasks)
             percentage = (completed_count / total_count * 100) if total_count > 0 else 0
-            
-            return (f"Implementation incomplete: {completed_count} of {total_count} subtasks completed ({percentage:.0f}%). "
-                    f"Missing: {sorted(missing)}. "
-                    f"\n\n**Next Action**: Complete the remaining subtasks and mark each one with "
-                    f"`alfred.mark_subtask_complete(task_id, subtask_id)` before submitting again.")
-        
+
+            return (
+                f"Implementation incomplete: {completed_count} of {total_count} subtasks completed ({percentage:.0f}%). "
+                f"Missing: {sorted(missing)}. "
+                f"\n\n**Next Action**: Complete the remaining subtasks and mark each one with "
+                f"`alfred.mark_subtask_complete(task_id, subtask_id)` before submitting again."
+            )
+
         if extra:
             # Extra subtasks are a warning, not an error
             pass
-            
+
         return None
 
 

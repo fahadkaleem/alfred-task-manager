@@ -787,159 +787,6 @@ class PlanTaskTool(BaseWorkflowTool):
         return state in valid_restart_states
 
 ``````
------- src/alfred/core/prompt_templates.py ------
-``````
-"""
-Concrete prompt template implementations.
-
-Each template is a data structure - no logic, just content definition.
-"""
-
-from typing import List
-from alfred.core.template_base import WorkflowPromptTemplate, WorkflowWithTaskDetailsTemplate, SubmitWorkPromptTemplate, ReviewPromptTemplate
-
-
-# Plan Task Templates
-
-
-class PlanTaskContextualizeTemplate(SubmitWorkPromptTemplate):
-    """Template for plan_task.contextualize state."""
-
-    def _get_objective_content(self) -> str:
-        return "Analyze the existing codebase and identify any ambiguities or questions that need clarification before planning can begin."
-
-    def _get_instructions_content(self) -> str:
-        return """1. Analyze the codebase starting from the project root
-2. Identify all files and components relevant to this task
-3. Note any existing patterns or conventions that should be followed
-4. Create a list of specific questions about any ambiguities or unclear requirements
-5. Prepare a comprehensive context analysis"""
-
-    def _get_constraints_content(self) -> str:
-        return """- Focus only on understanding, not designing solutions yet
-- Questions should be specific and actionable
-- Identify actual ambiguities, not hypothetical issues
-- Consider both technical and business context"""
-
-    def _get_examples_content(self) -> str:
-        return """Good question: "Should the new authentication system integrate with the existing UserService or create a separate AuthService?"
-Bad question: "How should I implement this?" (too vague)"""
-
-    def get_required_variables(self) -> List[str]:
-        base_vars = super().get_required_variables()
-        # Remove generic artifact vars, add specific ones
-        filtered_vars = [v for v in base_vars if v not in ["artifact_type", "artifact_fields"]]
-        return filtered_vars
-
-
-class PlanTaskStrategizeTemplate(SubmitWorkPromptTemplate):
-    """Template for plan_task.strategize state."""
-
-    def _get_objective_content(self) -> str:
-        return "Create a high-level technical strategy that will guide the detailed design and implementation of the task."
-
-    def _get_background_content(self) -> str:
-        base = super()._get_background_content()
-        return f"""Context has been verified and any necessary clarifications have been provided. You must now develop a technical strategy that:
-- Defines the overall approach to solving the problem
-- Identifies key components that need to be created or modified
-- Considers dependencies and potential risks
-- Serves as the foundation for detailed design
-
-{base}"""
-
-    def _get_instructions_content(self) -> str:
-        return """1. Review the verified context and requirements
-2. Define the overall technical approach (e.g., "Create a new microservice," "Refactor the existing UserService," "Add a new middleware layer")
-3. List the major components, classes, or modules that will be created or modified
-4. Identify any new third-party libraries or dependencies required
-5. Analyze potential risks or important architectural trade-offs
-6. Create a concise technical strategy document"""
-
-    def _get_constraints_content(self) -> str:
-        return """- Focus on high-level approach, not implementation details
-- Ensure the strategy aligns with existing architecture patterns
-- Consider scalability, maintainability, and performance
-- Be realistic about risks and trade-offs"""
-
-
-# Review Templates
-
-
-class AIReviewTemplate(ReviewPromptTemplate):
-    """Template for AI review states."""
-
-    def _get_instructions_content(self) -> str:
-        return """1. Review the submitted artifact below
-2. Check against the original requirements for this step
-3. Evaluate completeness, clarity, and correctness
-4. Determine if any critical issues need to be addressed
-5. Provide your review decision
-
-**Submitted Artifact:**
-```json
-${artifact_json}
-```"""
-
-    def get_required_variables(self) -> List[str]:
-        base_vars = super().get_required_variables()
-        return base_vars + ["artifact_json"]
-
-
-class HumanReviewTemplate(ReviewPromptTemplate):
-    """Template for human review states."""
-
-    def _get_background_content(self) -> str:
-        return """The artifact has passed AI self-review and is now ready for human validation. The human will provide a simple approval decision or request specific changes.
-
-**Artifact Summary:** ${artifact_summary}"""
-
-    def _get_instructions_content(self) -> str:
-        return """1. Present the complete artifact below to the human developer
-2. Wait for their review decision
-3. If they approve, proceed with approval
-4. If they request changes, capture their exact feedback
-5. Submit the review decision
-
-**Artifact for Review:**
-```json
-${artifact_json}
-```"""
-
-    def _get_constraints_content(self) -> str:
-        return """- Present the artifact clearly and completely
-- Capture human feedback verbatim if changes are requested
-- Do not modify or interpret the human's feedback"""
-
-    def get_required_variables(self) -> List[str]:
-        base_vars = super().get_required_variables()
-        return base_vars + ["artifact_json", "artifact_summary"]
-
-
-# Dispatching Templates
-
-
-class SimpleDispatchingTemplate(WorkflowPromptTemplate):
-    """Template for simple dispatching states."""
-
-    def _get_objective_content(self) -> str:
-        return "${dispatch_objective}"
-
-    def _get_background_content(self) -> str:
-        return "${dispatch_context}"
-
-    def _get_instructions_content(self) -> str:
-        return "${dispatch_instructions}"
-
-    def _get_output_content(self) -> str:
-        return """Once ${dispatch_action}, call `alfred.submit_work` with ${artifact_type} containing:
-${artifact_requirements}"""
-
-    def get_required_variables(self) -> List[str]:
-        base_vars = super().get_required_variables()
-        return base_vars + ["dispatch_objective", "dispatch_context", "dispatch_instructions", "dispatch_action", "artifact_type", "artifact_requirements"]
-
-``````
 ------ src/alfred/core/prompter.py ------
 ``````
 # src/alfred/core/prompter_new.py
@@ -951,9 +798,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from alfred.config.settings import settings
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.lib.turn_manager import turn_manager
-from alfred.core.template_registry import template_registry
 
 logger = get_logger(__name__)
 
@@ -1033,28 +879,17 @@ class PromptLibrary:
         parts = list(relative.parts[:-1]) + [relative.stem]
         return ".".join(parts)
 
-    def get(self, prompt_key: str, context: Dict[str, Any] = None) -> Union[PromptTemplate, str]:
+    def get(self, prompt_key: str, context: Dict[str, Any] = None) -> PromptTemplate:
         """
-        Get a prompt template by key.
-
-        First checks for file-based template, then falls back to template class.
+        Get a prompt template by key from .md files only.
         """
-        # Check file-based cache first
+        # Check file-based cache
         if prompt_key in self._cache:
             return self._cache[prompt_key]
 
-        # Check if we have a template class
-        if context and "." in prompt_key:
-            tool_name, state = prompt_key.rsplit(".", 1)
-            template_class = template_registry.get_template(tool_name, state)
-            if template_class:
-                # Render directly from template class
-                template_instance = template_class()
-                return template_instance.render(context)
-
-        # Fallback to not found
+        # Explicit failure - no fallback
         available = ", ".join(sorted(self._cache.keys()))
-        raise KeyError(f"Prompt '{prompt_key}' not found in files or template registry.\nAvailable file prompts: {available}")
+        raise KeyError(f"Prompt '{prompt_key}' not found.\nAvailable file prompts: {available}")
 
     def get_prompt_key(self, tool_name: str, state: str) -> str:
         """Map tool and state to the correct prompt key."""
@@ -1079,14 +914,10 @@ class PromptLibrary:
         return "errors.not_found"
 
     def render(self, prompt_key: str, context: Dict[str, Any], strict: bool = True) -> str:
-        """Render a prompt with context."""
+        """Render a prompt with context - file-based only."""
         template = self.get(prompt_key, context)
 
-        # If we got a string back, it's already rendered
-        if isinstance(template, str):
-            return template
-
-        # Otherwise it's a file-based PromptTemplate
+        # File-based PromptTemplate only
         if not strict:
             # Add empty strings for missing vars
             for var in template._required_vars:
@@ -1267,7 +1098,7 @@ from typing import List, Dict, Any, Type, Optional, Union
 from transitions import Machine
 
 from alfred.constants import Triggers
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -1415,245 +1246,6 @@ class WorkflowStateMachineBuilder:
 
 # Singleton instance for convenience
 workflow_builder = WorkflowStateMachineBuilder()
-
-``````
------- src/alfred/core/template_base.py ------
-``````
-"""
-Base template system for reducing prompt duplication.
-
-This system respects the template principles:
-- Templates are data, not code
-- Simple variable substitution only
-- No conditional logic in templates
-"""
-
-from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Dict, Any, Optional, List
-import re
-
-from alfred.lib.logger import get_logger
-
-logger = get_logger(__name__)
-
-
-class TemplateSection:
-    """Represents a single section of a template."""
-
-    def __init__(self, name: str, content: str = ""):
-        self.name = name
-        self.content = content
-
-    def render(self, context: Dict[str, Any]) -> str:
-        """Render this section with variable substitution."""
-        if not self.content:
-            return ""
-
-        # Simple variable substitution using regex
-        def replace_var(match):
-            var_name = match.group(1)
-            if var_name in context:
-                value = context[var_name]
-                return str(value) if value is not None else ""
-            return match.group(0)  # Return unchanged if var not found
-
-        rendered = re.sub(r"\$\{(\w+)\}", replace_var, self.content)
-        return f"# {self.name}\n{rendered}"
-
-
-class BasePromptTemplate(ABC):
-    """
-    Base class for all prompt templates.
-
-    This provides the standard structure while allowing customization
-    of individual sections. No logic in templates - only data.
-    """
-
-    # Standard sections in order
-    SECTION_NAMES = ["CONTEXT", "OBJECTIVE", "BACKGROUND", "INSTRUCTIONS", "CONSTRAINTS", "OUTPUT", "EXAMPLES"]
-
-    def __init__(self):
-        self.sections: Dict[str, TemplateSection] = {}
-        self._initialize_sections()
-
-    def _initialize_sections(self):
-        """Initialize all sections, subclasses override to provide content."""
-        for section_name in self.SECTION_NAMES:
-            method_name = f"_get_{section_name.lower()}_content"
-            if hasattr(self, method_name):
-                content = getattr(self, method_name)()
-            else:
-                content = ""
-            self.sections[section_name] = TemplateSection(section_name, content)
-
-    @abstractmethod
-    def get_required_variables(self) -> List[str]:
-        """Return list of required variables for this template."""
-        pass
-
-    def render(self, context: Dict[str, Any]) -> str:
-        """Render the complete template with the given context."""
-        # Validate required variables
-        required = set(self.get_required_variables())
-        provided = set(context.keys())
-        missing = required - provided
-
-        if missing:
-            raise ValueError(f"Missing required variables: {', '.join(sorted(missing))}\nRequired: {', '.join(sorted(required))}\nProvided: {', '.join(sorted(provided))}")
-
-        # Render each section
-        rendered_sections = []
-        for section_name in self.SECTION_NAMES:
-            if section_name in self.sections:
-                rendered = self.sections[section_name].render(context)
-                if rendered:  # Only include non-empty sections
-                    rendered_sections.append(rendered)
-
-        return "\n\n".join(rendered_sections)
-
-
-class WorkflowPromptTemplate(BasePromptTemplate):
-    """Base template for all workflow state prompts."""
-
-    def _get_context_content(self) -> str:
-        """Standard context section for workflow prompts."""
-        return """Task: ${task_id}
-Tool: ${tool_name}
-State: ${current_state}
-Title: ${task_title}"""
-
-    def get_required_variables(self) -> List[str]:
-        """Base required variables for workflow prompts."""
-        return ["task_id", "tool_name", "current_state", "task_title"]
-
-
-class WorkflowWithTaskDetailsTemplate(WorkflowPromptTemplate):
-    """Base template for workflow prompts that need task details."""
-
-    def _get_background_content(self) -> str:
-        """Standard background with task details."""
-        return """**Task Requirements:**
-- Goal: ${task_context}
-- Implementation Overview: ${implementation_details}
-- Acceptance Criteria:
-${acceptance_criteria}
-
-${feedback_section}"""
-
-    def get_required_variables(self) -> List[str]:
-        """Extended required variables including task details."""
-        base_vars = super().get_required_variables()
-        return base_vars + ["task_context", "implementation_details", "acceptance_criteria", "feedback_section"]
-
-
-class SubmitWorkPromptTemplate(WorkflowWithTaskDetailsTemplate):
-    """Base template for prompts that end with submit_work."""
-
-    def _get_output_content(self) -> str:
-        """Standard output section for submit_work prompts."""
-        return """Create a ${artifact_type} with:
-${artifact_fields}
-
-**Required Action:** Call `alfred.submit_work` with a `${artifact_type}`"""
-
-    def get_required_variables(self) -> List[str]:
-        """Add artifact-related variables."""
-        base_vars = super().get_required_variables()
-        return base_vars + ["artifact_type", "artifact_fields"]
-
-
-class ReviewPromptTemplate(BasePromptTemplate):
-    """Base template for review state prompts."""
-
-    def _get_context_content(self) -> str:
-        """Standard context for review prompts."""
-        return """Task: ${task_id}
-Tool: ${tool_name}
-State: ${current_state}"""
-
-    def _get_objective_content(self) -> str:
-        """Standard objective for review prompts."""
-        return """${review_objective}"""
-
-    def _get_background_content(self) -> str:
-        """Standard background for review prompts."""
-        return """${review_background}"""
-
-    def _get_constraints_content(self) -> str:
-        """Standard constraints for review prompts."""
-        return """- ${review_constraints}"""
-
-    def _get_output_content(self) -> str:
-        """Standard output for review prompts."""
-        return """${review_action}
-
-**Required Action:** Call `alfred.provide_review` with your decision
-- For approval: `is_approved=true`
-- For revision: `is_approved=false` with detailed `feedback_notes`"""
-
-    def get_required_variables(self) -> List[str]:
-        return ["task_id", "tool_name", "current_state", "review_objective", "review_background", "review_constraints", "review_action"]
-
-``````
------- src/alfred/core/template_registry.py ------
-``````
-"""
-Registry for mapping states to template classes.
-
-This maintains the explicit path principle - each state maps to one template.
-"""
-
-from typing import Dict, Type, Optional
-
-from alfred.core.template_base import BasePromptTemplate
-from alfred.core.prompt_templates import PlanTaskContextualizeTemplate, PlanTaskStrategizeTemplate, AIReviewTemplate, HumanReviewTemplate, SimpleDispatchingTemplate
-
-
-class TemplateRegistry:
-    """Maps tool.state combinations to template classes."""
-
-    def __init__(self):
-        self._templates: Dict[str, Type[BasePromptTemplate]] = {}
-        self._register_default_templates()
-
-    def _register_default_templates(self):
-        """Register all default templates."""
-        # Plan task templates
-        self.register("plan_task.contextualize", PlanTaskContextualizeTemplate)
-        self.register("plan_task.strategize", PlanTaskStrategizeTemplate)
-
-        # Generic review templates
-        self.register("review.ai_review", AIReviewTemplate)
-        self.register("review.human_review", HumanReviewTemplate)
-
-        # Add more registrations as we migrate templates
-
-    def register(self, key: str, template_class: Type[BasePromptTemplate]):
-        """Register a template class for a tool.state combination."""
-        self._templates[key] = template_class
-
-    def get_template(self, tool_name: str, state: str) -> Optional[Type[BasePromptTemplate]]:
-        """Get template class for the given tool and state."""
-        # Try exact match first
-        key = f"{tool_name}.{state}"
-        if key in self._templates:
-            return self._templates[key]
-
-        # Handle review states
-        if state.endswith("_awaiting_ai_review"):
-            return self._templates.get("review.ai_review")
-        elif state.endswith("_awaiting_human_review"):
-            return self._templates.get("review.human_review")
-
-        return None
-
-    def has_template_class(self, tool_name: str, state: str) -> bool:
-        """Check if a template class exists for this state."""
-        return self.get_template(tool_name, state) is not None
-
-
-template_registry = TemplateRegistry()
 
 ``````
 ------ src/alfred/core/workflow.py ------
@@ -2175,66 +1767,6 @@ def file_lock(lock_file_path: Path) -> Generator[None, None, None]:
             except OSError:
                 pass
 ``````
------- src/alfred/lib/logger.py ------
-``````
-"""
-Centralized logging configuration for Alfred.
-"""
-
-import logging
-
-from alfred.config.settings import settings
-
-# A dictionary to hold task-specific handlers to avoid duplication
-_task_handlers = {}
-
-
-def get_logger(name: str) -> logging.Logger:
-    """Gets a logger instance with the specified name."""
-    return logging.getLogger(name)
-
-
-def setup_task_logging(task_id: str) -> None:
-    """
-    Sets up a specific file handler for a given task ID.
-    This function is idempotent.
-    """
-    if not settings.debugging_mode or task_id in _task_handlers:
-        return
-
-    # Create the debug directory for the task
-    debug_dir = settings.alfred_dir / "debug" / task_id
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    log_file = debug_dir / "alfred.log"
-
-    # Create a file handler with standard log format
-    handler = logging.FileHandler(log_file, mode="a")
-    # Standard format: [LEVEL] YYYY-MM-DD HH:MM:SS.mmm - module_name - message
-    formatter = logging.Formatter("[%(levelname)s] %(asctime)s - %(name)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    handler.setFormatter(formatter)
-
-    # Set the level for this specific handler, not the root logger
-    handler.setLevel(logging.INFO)
-
-    # Add the handler to the root logger to capture logs from all modules
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
-    
-    # Ensure the root logger level allows INFO messages to pass through
-    if root_logger.level > logging.INFO:
-        root_logger.setLevel(logging.INFO)
-
-    _task_handlers[task_id] = handler
-
-
-def cleanup_task_logging(task_id: str) -> None:
-    """Removes a task-specific log handler."""
-    if task_id in _task_handlers:
-        handler = _task_handlers.pop(task_id)
-        logging.getLogger().removeHandler(handler)
-        handler.close()
-
-``````
 ------ src/alfred/lib/md_parser.py ------
 ``````
 # src/alfred/lib/md_parser.py
@@ -2614,8 +2146,8 @@ def configure_logging(
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
     
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Console handler - use stderr for MCP server compatibility
+    console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setLevel(level)
     
     if format_type == "json":
@@ -2752,7 +2284,7 @@ from pathlib import Path
 from typing import Optional
 
 from alfred.models.schemas import Task
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.config.settings import settings
 
 logger = get_logger(__name__)
@@ -2784,15 +2316,12 @@ def load_task(task_id: str, root_dir: Optional[Path] = None) -> Task | None:
         # but is only relevant for local providers. Other providers (Jira, Linear)
         # will ignore this parameter.
         if root_dir:
-            logger.warning(
-                f"root_dir parameter provided to load_task, but may be ignored by "
-                f"non-local task providers. Consider removing this parameter."
-            )
+            logger.warning("root_dir parameter provided but may be ignored by non-local providers", task_id=task_id, root_dir=str(root_dir))
         
         return provider.get_task(task_id)
         
     except Exception as e:
-        logger.error(f"Failed to load task {task_id}: {e}")
+        logger.error("Failed to load task", task_id=task_id, error=str(e))
         return None
 
 
@@ -2825,7 +2354,7 @@ def load_task_with_error_details(task_id: str, root_dir: Optional[Path] = None) 
         
     except Exception as e:
         error_msg = f"Failed to load task {task_id}: {e}"
-        logger.error(error_msg)
+        logger.error("Failed to load task with error details", task_id=task_id, error=str(e))
         return None, error_msg
 
 
@@ -2886,7 +2415,7 @@ def write_task_to_markdown(task: Task) -> None:
     task_file = tasks_dir / f"{task.task_id}.md"
     task_file.write_text("\n".join(content_parts), encoding="utf-8")
     
-    logger.info(f"Wrote task {task.task_id} to {task_file}")
+    logger.info("Wrote task to file", task_id=task.task_id, file_path=str(task_file))
 
 
 def get_local_task_path(task_id: str) -> Path:
@@ -2901,65 +2430,6 @@ def get_local_task_path(task_id: str) -> Path:
     """
     return settings.alfred_dir / "tasks" / f"{task_id}.md"
 ``````
------- src/alfred/lib/transaction_logger.py ------
-``````
-"""
-Logs MCP tool requests and responses for debugging and analysis.
-"""
-
-from datetime import datetime, timezone
-import json
-
-from alfred.config.settings import settings
-from alfred.models.schemas import ToolResponse
-
-
-class TransactionLogger:
-    """Logs a single transaction to a task-specific .jsonl file."""
-
-    def log(self, task_id: str, tool_name: str, request_data: dict, response: ToolResponse) -> None:
-        """Appends a transaction record to the log."""
-        if not settings.debugging_mode:
-            return
-
-        if not task_id:
-            # Handle transactions that don't have a task_id (like initialize_project)
-            task_id = "SYSTEM"
-
-        # Create the debug directory for the task
-        debug_dir = settings.alfred_dir / "debug" / task_id
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        log_file = debug_dir / "transactions.jsonl"
-
-        # Get the response data and format the next_prompt for readability
-        response_data = response.model_dump(mode="json")
-
-        # Format next_prompt as an array of lines if it exists and contains newlines
-        if response_data.get("next_prompt"):
-            next_prompt = response_data["next_prompt"]
-            if isinstance(next_prompt, str) and "\n" in next_prompt:
-                # Split into lines - keep empty strings for empty lines for better readability
-                response_data["next_prompt"] = next_prompt.split("\n")
-
-        log_entry = {
-            tool_name: {
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                "request": request_data,
-                "response": response_data,
-            }
-        }
-
-        try:
-            with log_file.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(log_entry, indent=4) + "\n")
-        except OSError:
-            pass
-
-
-# Singleton instance
-transaction_logger = TransactionLogger()
-
-``````
 ------ src/alfred/lib/turn_manager.py ------
 ``````
 # src/alfred/lib/turn_manager.py
@@ -2972,13 +2442,13 @@ No JSON-to-Markdown conversions, just pure data storage.
 import json
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from pydantic import BaseModel, Field
 
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.models.schemas import TaskStatus
 from alfred.lib.task_utils import load_task
 from alfred.constants import Paths
@@ -2994,7 +2464,7 @@ class Turn(BaseModel):
     turn_number: int = Field(..., ge=1, description="Sequential turn number")
     state_name: str = Field(..., description="State/phase name when turn was created")
     tool_name: str = Field(..., description="Tool that created this turn")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When turn was created")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When turn was created")
     artifact_data: Dict[str, Any] = Field(..., description="The actual artifact/data for this turn")
     
     # Optional metadata
@@ -3079,7 +2549,7 @@ class TurnManager:
             turn_number=turn_number,
             state_name=state_name,
             tool_name=tool_name,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             artifact_data=artifact_data,
             revision_of=revision_of,
             revision_feedback=revision_feedback
@@ -3102,12 +2572,9 @@ class TurnManager:
             
             # Atomic rename
             os.replace(temp_path, filepath)
-            logger.info(
-                f"Appended turn {turn_number} for state '{state_name}' "
-                f"in task {task_id}"
-            )
+            logger.info("Appended turn", task_id=task_id, turn_number=turn_number, state_name=state_name, tool_name=tool_name)
         except Exception as e:
-            logger.error(f"Failed to append turn for {task_id}: {e}")
+            logger.error("Failed to append turn", task_id=task_id, state_name=state_name, error=str(e))
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             raise
@@ -3128,14 +2595,14 @@ class TurnManager:
         else:
             manifest = TaskManifest(
                 task_id=task_id,
-                created_at=datetime.utcnow(),
-                last_updated=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                last_updated=datetime.now(timezone.utc),
                 current_state=state_name,
                 total_turns=0
             )
         
         # Update manifest
-        manifest.last_updated = datetime.utcnow()
+        manifest.last_updated = datetime.now(timezone.utc)
         manifest.current_state = state_name
         manifest.total_turns = turn_number
         manifest.latest_turns_by_state[state_name] = turn_number
@@ -3168,9 +2635,7 @@ class TurnManager:
                 turn = Turn.model_validate(data)
                 turns.append(turn)
             except Exception as e:
-                logger.warning(
-                    f"Skipping invalid turn file {turn_file}: {e}"
-                )
+                logger.warning("Skipping invalid turn file", task_id=task_id, turn_file=str(turn_file), error=str(e))
                 continue
         
         return turns
@@ -3207,7 +2672,7 @@ class TurnManager:
             data = json.loads(manifest_path.read_text())
             return TaskManifest.model_validate(data)
         except Exception as e:
-            logger.error(f"Failed to load manifest for {task_id}: {e}")
+            logger.error("Failed to load manifest", task_id=task_id, error=str(e))
             return None
     
     def request_revision(
@@ -3235,7 +2700,7 @@ class TurnManager:
             "state_to_revise": state_to_revise,
             "feedback": feedback,
             "requested_by": requested_by,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         return self.append_turn(
@@ -3267,7 +2732,12 @@ class TurnManager:
         
         # Get current state from manifest
         manifest = self.get_manifest(task_id)
-        current_state = manifest.current_state if manifest else "unknown"
+        
+        # Fix: Use task status for completed tasks, workflow state for active tasks
+        if task and task.task_status.value == "done":
+            current_state = "done"
+        else:
+            current_state = manifest.current_state if manifest else "unknown"
         
         # Build markdown content
         content_parts = [
@@ -3277,7 +2747,7 @@ class TurnManager:
             ""
         ]
         
-        # Add status info as a simple table
+        # Add status info as a simple table  
         formatted_status = self._format_status_display(task.task_status.value) if task else 'Unknown'
         formatted_state = self._format_state_display(current_state)
         
@@ -3380,9 +2850,9 @@ class TurnManager:
             with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(content_parts))
             os.replace(temp_path, scratchpad_path)
-            logger.info(f"Generated scratchpad for task {task_id}")
+            logger.info("Generated scratchpad", task_id=task_id)
         except Exception as e:
-            logger.error(f"Failed to generate scratchpad for {task_id}: {e}")
+            logger.error("Failed to generate scratchpad", task_id=task_id, error=str(e))
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             raise
@@ -3399,14 +2869,17 @@ class TurnManager:
             "ready_for_testing": "Ready for Testing",
             "in_testing": "In Testing",
             "ready_for_finalization": "Ready for Finalization",
-            "finalizing": "Finalizing",
-            "completed": "Completed"
+            "in_finalization": "In Finalization",
+            "done": "Completed"
         }
         return status_map.get(status, status.replace('_', ' ').title())
     
     def _format_state_display(self, state: str) -> str:
         """Format state names for human-readable display."""
-        # Simply capitalize first letter of each word
+        # Handle special cases for task statuses vs workflow states
+        if state == "done":
+            return "Completed"
+        # Simply capitalize first letter of each word for workflow states
         return state.replace('_', ' ').title()
     
     def _strip_markdown_headers(self, content: str) -> str:
@@ -3649,7 +3122,7 @@ Following Alfred's principles:
 from typing import List, Optional
 from alfred.config import ConfigManager
 from alfred.config.settings import settings
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.models.alfred_config import AIProvider, AIProviderConfig
 
 from .registry import model_registry
@@ -4799,7 +4272,14 @@ class ImplementationManifestArtifact(BaseModel):
         extra = completed_set - planned_set
         
         if missing:
-            return f"Implementation incomplete. Missing subtasks: {sorted(missing)}. Expected all subtasks to be completed: {sorted(planned_subtasks)}"
+            completed_count = len(self.completed_subtasks)
+            total_count = len(planned_subtasks)
+            percentage = (completed_count / total_count * 100) if total_count > 0 else 0
+            
+            return (f"Implementation incomplete: {completed_count} of {total_count} subtasks completed ({percentage:.0f}%). "
+                    f"Missing: {sorted(missing)}. "
+                    f"\n\n**Next Action**: Complete the remaining subtasks and mark each one with "
+                    f"`alfred.mark_subtask_complete(task_id, subtask_id)` before submitting again.")
         
         if extra:
             # Extra subtasks are a warning, not an error
@@ -4979,7 +4459,7 @@ from typing import Dict
 from alfred.config import ConfigManager
 from alfred.config.settings import settings
 from alfred.core.workflow import BaseWorkflowTool
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -5005,7 +4485,7 @@ class Orchestrator:
         self.active_tools: Dict[str, BaseWorkflowTool] = {}
         self.config_manager = ConfigManager(settings.alfred_dir)
         self._initialized = True
-        logger.info("Orchestrator initialized as a simple tool session manager.")
+        logger.info("Orchestrator initialized as a simple tool session manager", orchestrator_type="simple_session_manager", alfred_dir=str(settings.alfred_dir))
 
 
 # Global singleton instance
@@ -5030,8 +4510,7 @@ from fastmcp import FastMCP
 
 from alfred.config.settings import settings
 from alfred.core.prompter import prompt_library  # Import the prompt library
-from alfred.lib.logger import get_logger
-from alfred.lib.transaction_logger import transaction_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.tools.approve_and_advance import approve_and_advance_impl
 from alfred.constants import ToolName
@@ -5077,7 +4556,7 @@ def register_tool_from_definition(app: FastMCP, tool_name: str):
 async def lifespan(server: FastMCP) -> AsyncIterator[None]:
     """Lifespan context manager for FastMCP server."""
     # Startup
-    logger.info(f"Starting Alfred server with {len(prompt_library._cache)} prompts loaded")
+    logger.info("Starting Alfred server", server_name=settings.server_name, prompts_loaded=len(prompt_library._cache))
 
     # Initialize AI providers (following Alfred's immutable startup principle)
     await initialize_ai_providers()
@@ -5085,7 +4564,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
     yield
 
     # Shutdown (if needed in the future)
-    logger.info("Server shutting down")
+    logger.info("Server shutting down", server_name=settings.server_name)
 
 
 app = FastMCP(settings.server_name, lifespan=lifespan)
@@ -5109,16 +4588,31 @@ def log_tool_transaction(impl_func: Callable) -> Callable:
             # Build request data from kwargs
             request_data = {k: v for k, v in kwargs.items() if v is not None}
 
-            # Call the implementation function (handle both async and sync)
-            if inspect.iscoroutinefunction(impl_func):
-                response = await impl_func(**kwargs)
-            else:
-                response = impl_func(**kwargs)
+            # Log tool execution start with structured context
+            logger.info("Tool execution started", task_id=task_id, tool_name=tool_name, request_params=list(request_data.keys()))
 
-            # Log the transaction
-            transaction_logger.log(task_id=task_id, tool_name=tool_name, request_data=request_data, response=response)
+            try:
+                # Call the implementation function (handle both async and sync)
+                if inspect.iscoroutinefunction(impl_func):
+                    response = await impl_func(**kwargs)
+                else:
+                    response = impl_func(**kwargs)
 
-            return response
+                # Log successful completion
+                logger.info("Tool execution completed", task_id=task_id, tool_name=tool_name, status=response.status)
+
+                # Log the detailed transaction with structured context
+                with logger.context(task_id=task_id, tool_name=tool_name):
+                    logger.info("Tool transaction completed", 
+                               request_params=request_data, 
+                               response_status=response.status,
+                               response_message=response.message)
+
+                return response
+            except Exception as e:
+                # Log tool execution error with structured context
+                logger.error("Tool execution failed", task_id=task_id, tool_name=tool_name, error=str(e), exc_info=True)
+                raise
 
         return wrapper
 
@@ -5937,10 +5431,13 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, TYPE_CHECKING
 
 from alfred.lib.fs_utils import file_lock
-from alfred.lib.logger import get_logger
+
+if TYPE_CHECKING:
+    from alfred.core.workflow import BaseWorkflowTool
+from alfred.lib.structured_logger import get_logger
 from alfred.models.state import TaskState, WorkflowState
 from alfred.models.schemas import TaskStatus
 from alfred.config.settings import settings
@@ -5987,7 +5484,7 @@ class StateManager:
             with os.fdopen(fd, "w") as f:
                 f.write(state.model_dump_json(indent=2))
             os.replace(temp_path, state_file)
-            logger.debug(f"Atomically wrote state for task {state.task_id}")
+            logger.debug("Atomically wrote state", task_id=state.task_id)
         except Exception:
             if temp_path.exists():
                 os.remove(temp_path)
@@ -5998,7 +5495,7 @@ class StateManager:
         state_file = self._get_task_state_file(task_id)
 
         if not state_file.exists():
-            logger.info(f"No state file for task {task_id}. Creating new state.")
+            logger.info("No state file found, creating new state", task_id=task_id)
             return TaskState(task_id=task_id)
 
         try:
@@ -6006,7 +5503,7 @@ class StateManager:
                 data = json.load(f)
             return TaskState.model_validate(data)
         except Exception as e:
-            logger.error(f"Failed to load or validate state for task {task_id}, creating new. Error: {e}")
+            logger.error("Failed to load or validate state, creating new", task_id=task_id, error=str(e))
             return TaskState(task_id=task_id)
 
     # Backward compatibility alias
@@ -6022,7 +5519,15 @@ class StateManager:
             state.task_status = new_status
             self._atomic_write(state)
 
-        logger.info(f"Updated task {task_id} status: {old_status.value} -> {new_status.value}")
+        logger.info("Updated task status", task_id=task_id, old_status=old_status.value, new_status=new_status.value)
+        
+        # Update scratchpad to reflect the new status
+        from alfred.lib.turn_manager import turn_manager
+        try:
+            turn_manager.generate_scratchpad(task_id)
+            logger.debug("Updated scratchpad after status change", task_id=task_id, new_status=new_status.value)
+        except Exception as e:
+            logger.error("Failed to update scratchpad after status change", task_id=task_id, error=str(e))
 
     def update_tool_state(self, task_id: str, tool: Any) -> None:
         """Update tool state with proper locking."""
@@ -6043,7 +5548,7 @@ class StateManager:
             state.active_tool_state = tool_state
             self._atomic_write(state)
 
-        logger.debug(f"Updated tool state for task {task_id}, tool {tool.tool_name}")
+        logger.debug("Updated tool state", task_id=task_id, tool_name=tool.tool_name)
 
     def clear_tool_state(self, task_id: str) -> None:
         """Clear active tool state with proper locking."""
@@ -6052,7 +5557,7 @@ class StateManager:
             state.active_tool_state = None
             self._atomic_write(state)
 
-        logger.info(f"Cleared tool state for task {task_id}")
+        logger.info("Cleared tool state", task_id=task_id)
 
     def add_completed_output(self, task_id: str, tool_name: str, artifact: Any) -> None:
         """Add completed tool output with proper locking."""
@@ -6068,7 +5573,7 @@ class StateManager:
             state.completed_tool_outputs[tool_name] = serializable_artifact
             self._atomic_write(state)
 
-        logger.info(f"Added completed output for task {task_id}, tool {tool_name}")
+        logger.info("Added completed output", task_id=task_id, tool_name=tool_name)
 
     @contextmanager
     def complex_update(self, task_id: str):
@@ -6093,9 +5598,9 @@ class StateManager:
                 # Only write if state actually changed
                 if state.model_dump_json() != original_data:
                     self._atomic_write(state)
-                    logger.debug(f"Complex update completed for task {task_id}")
+                    logger.debug("Complex update completed", task_id=task_id)
             except Exception as e:
-                logger.error(f"Complex update failed for task {task_id}: {e}", exc_info=True)
+                logger.error("Complex update failed", task_id=task_id, error=str(e), exc_info=True)
                 raise
 
     def get_archive_path(self, task_id: str) -> Path:
@@ -6112,7 +5617,7 @@ class StateManager:
 
         orchestrator.active_tools[task_id] = tool
         self.update_tool_state(task_id, tool)
-        logger.info(f"Registered {tool.tool_name} tool for task {task_id}")
+        logger.info("Registered tool", task_id=task_id, tool_name=tool.tool_name)
 
 
 # Singleton instance
@@ -6130,7 +5635,7 @@ Handles reconstruction of workflow tools from persisted state.
 from typing import Dict, Optional, Type
 
 from alfred.core.workflow import BaseWorkflowTool
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.state.manager import state_manager
 from alfred.constants import ToolName
 from alfred.tools.tool_definitions import TOOL_DEFINITIONS
@@ -6295,7 +5800,7 @@ class BaseTaskProvider(ABC):
 """Task provider factory for instantiating the correct provider based on configuration."""
 
 from alfred.models.alfred_config import TaskProvider as ProviderType
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from .base import BaseTaskProvider
 from .local_provider import LocalTaskProvider
 from .jira_provider import JiraTaskProvider
@@ -6351,7 +5856,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from .base import BaseTaskProvider
 
 logger = get_logger(__name__)
@@ -6459,7 +5964,7 @@ from datetime import datetime
 
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
 from alfred.lib.md_parser import MarkdownTaskParser
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.config.settings import settings
 from alfred.state.manager import state_manager
 from .base import BaseTaskProvider
@@ -7601,8 +7106,8 @@ ${artifact_json}
 2. Implement each subtask in order, following the LOST specifications
 3. After completing each subtask, call `alfred.mark_subtask_complete` with the task_id and subtask_id
 4. Test your implementation as you go
-5. Once all subtasks are complete, create an implementation manifest
-6. Submit the final manifest for review
+5. **IMPORTANT**: Only after ALL subtasks show 100% completion, create your implementation manifest
+6. Submit the final manifest ONLY when you see the message "All X subtasks are now finished!"
 
 # CONSTRAINTS
 - Follow the execution plan precisely
@@ -7613,10 +7118,12 @@ ${artifact_json}
 # OUTPUT
 When all subtasks are complete, create an ImplementationManifestArtifact with:
 - `summary`: Brief summary of what was implemented
-- `completed_subtasks`: List of completed subtask IDs
+- `completed_subtasks`: List of completed subtask IDs (must match ALL planned subtasks)
 - `testing_notes`: Any notes about testing or validation
 
 **Required Action:** Call `alfred.submit_work` with your `ImplementationManifestArtifact`
+
+**Warning**: If you submit before completing all subtasks, you'll get an error showing completion percentage and missing subtasks.
 ``````
 ------ src/alfred/templates/prompts/plan_task/clarification.md ------
 ``````
@@ -8890,7 +8397,7 @@ This file serves as both documentation and a working example. When creating new 
 from alfred.state.manager import state_manager
 from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.core.workflow_config import WorkflowConfiguration
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.orchestration.orchestrator import orchestrator
 from alfred.state.recovery import ToolRecovery
 
@@ -8923,9 +8430,10 @@ def approve_and_advance_impl(task_id: str) -> ToolResponse:
                 return ToolResponse(
                     status="error",
                     message=f"Cannot use approve_and_advance while in sub-state '{state_value}'. "
-                    f"The workflow tool '{active_tool.tool_name}' has internal states that must be completed first. "
-                    f"Use 'approve_review' to advance through the current workflow's sub-states, "
-                    f"or complete the workflow before advancing to the next major phase.",
+                    f"The workflow tool '{active_tool.tool_name}' has internal states that must be completed first.\n\n"
+                    f"**Next Action**: Call `alfred.approve_review(task_id='{task_id}')` to continue through the current workflow.\n\n"
+                    f"**Note**: approve_and_advance is only for moving between major phases (e.g., implementation → review), "
+                    f"not for approving sub-states within a workflow.",
                 )
 
             # Check if the tool has a method to determine if it's complete
@@ -9010,7 +8518,7 @@ from typing import Optional, Type, Any
 
 from alfred.core.prompter import generate_prompt
 from alfred.core.workflow import BaseWorkflowTool
-from alfred.lib.logger import get_logger, setup_task_logging
+from alfred.lib.structured_logger import get_logger, setup_task_logging
 from alfred.lib.task_utils import load_task, load_task_with_error_details
 from alfred.models.schemas import Task, TaskStatus, ToolResponse
 from alfred.orchestration.orchestrator import orchestrator
@@ -9057,13 +8565,13 @@ class BaseToolHandler(ABC):
     def _get_or_create_tool(self, task_id: str, task: Task) -> BaseWorkflowTool | ToolResponse:
         """Common tool recovery and creation logic."""
         if task_id in orchestrator.active_tools:
-            logger.info(f"Found active tool '{self.tool_name}' for task {task_id}.")
+            logger.info("Found active tool", task_id=task_id, tool_name=self.tool_name)
             return orchestrator.active_tools[task_id]
 
         tool_instance = ToolRecovery.recover_tool(task_id)
         if tool_instance:
             orchestrator.active_tools[task_id] = tool_instance
-            logger.info(f"Recovered tool '{self.tool_name}' for task {task_id}.")
+            logger.info("Recovered tool", task_id=task_id, tool_name=self.tool_name)
             return tool_instance
 
         if self.required_status and task.task_status != self.required_status:
@@ -9085,7 +8593,7 @@ class BaseToolHandler(ABC):
         # Persist the initial state of the newly created tool
         state_manager.update_tool_state(task_id, new_tool)
 
-        logger.info(f"Created new '{self.tool_name}' tool for task {task_id}.")
+        logger.info("Created new tool", task_id=task_id, tool_name=self.tool_name)
         return new_tool
 
     def _generate_response(self, tool_instance: BaseWorkflowTool, task: Task) -> ToolResponse:
@@ -9102,7 +8610,7 @@ class BaseToolHandler(ABC):
             return ToolResponse(status="success", message=message, next_prompt=prompt)
         except (ValueError, RuntimeError, KeyError) as e:
             # Handle errors from the new prompter
-            logger.error(f"Prompt generation failed: {e}", exc_info=True)
+            logger.error("Prompt generation failed", task_id=task.task_id, tool_name=tool_instance.tool_name, error=str(e), exc_info=True)
             return ToolResponse(status="error", message=f"A critical error occurred while preparing the next step: {e}")
 
     @abstractmethod
@@ -9204,7 +8712,7 @@ import os
 import json
 from pathlib import Path
 from typing import Dict, Any
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.lib.md_parser import MarkdownTaskParser
 from alfred.models.schemas import ToolResponse
 from alfred.config.settings import settings
@@ -9395,7 +8903,7 @@ from alfred.models.schemas import ToolResponse
 from alfred.constants import ToolName
 from alfred.core.workflow import CreateTasksTool
 from alfred.models.engineering_spec import EngineeringSpec
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.state.manager import state_manager
 
 logger = get_logger(__name__)
@@ -9527,7 +9035,7 @@ from alfred.models.schemas import Task, TaskStatus, ToolResponse
 from alfred.tools.base_tool_handler import BaseToolHandler
 from alfred.tools.workflow_config import WorkflowToolConfig
 from alfred.state.manager import state_manager
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -9585,7 +9093,7 @@ class GenericWorkflowHandler(BaseToolHandler):
                 # Context loader can raise ValueError for missing dependencies
                 return ToolResponse(status="error", message=str(e))
             except Exception as e:
-                logger.error(f"Context loader failed for {self.config.tool_name}: {e}")
+                logger.error("Context loader failed", task_id=task.task_id, tool_name=self.config.tool_name, error=str(e))
                 return ToolResponse(status="error", message=f"Failed to load required context for {self.config.tool_name}: {str(e)}")
 
         # Check if we should dispatch on initialization
@@ -9597,7 +9105,7 @@ class GenericWorkflowHandler(BaseToolHandler):
             # Persist the state change
             state_manager.update_tool_state(task.task_id, tool_instance)
 
-            logger.info(f"Dispatched '{self.config.tool_name}' for task {task.task_id} to state '{tool_instance.state}'.")
+            logger.info("Dispatched tool to state", task_id=task.task_id, tool_name=self.config.tool_name, state=tool_instance.state)
 
         return None
 
@@ -9608,7 +9116,7 @@ class GenericWorkflowHandler(BaseToolHandler):
 
 from alfred.models.schemas import ToolResponse
 from alfred.task_providers.factory import get_provider
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -9984,7 +9492,7 @@ from alfred.tools.base_tool_handler import BaseToolHandler
 from alfred.constants import ToolName
 from alfred.state.manager import state_manager
 from alfred.state.recovery import ToolRecovery
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.orchestration.orchestrator import orchestrator
 
 logger = get_logger(__name__)
@@ -10041,9 +9549,23 @@ class MarkSubtaskCompleteHandler(BaseToolHandler):
         completed_count = len(completed_subtasks)
         total_count = len(valid_subtask_ids)
         progress = (completed_count / total_count) * 100 if total_count > 0 else 0
+        remaining = total_count - completed_count
 
-        message = f"Acknowledged: Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%)."
-        logger.info(message)
+        # Create an encouraging message based on progress
+        if completed_count == total_count:
+            message = (f"🎉 Excellent! Subtask '{subtask_id}' is complete. All {total_count} subtasks are now finished! "
+                      f"\n\n**Next Action**: Call `alfred.submit_work` with your ImplementationManifestArtifact to complete the implementation phase.")
+        elif progress >= 80:
+            message = (f"Great progress! Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
+                      f"Almost there - only {remaining} subtask{'s' if remaining > 1 else ''} left!")
+        elif progress >= 50:
+            message = (f"Good work! Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
+                      f"You're over halfway done!")
+        else:
+            message = (f"✓ Subtask '{subtask_id}' is complete. Progress: {completed_count}/{total_count} ({progress:.0f}%). "
+                      f"Keep going - {remaining} subtasks remaining.")
+        
+        logger.info(f"Subtask '{subtask_id}' marked complete for task {task.task_id}")
 
         # This tool does not return a next_prompt, as the AI should continue its work.
         return ToolResponse(status="success", message=message, data={"completed_count": completed_count, "total_count": total_count})
@@ -10099,7 +9621,7 @@ def mark_subtask_complete_impl(task_id: str, subtask_id: str) -> ToolResponse:
 ``````
 # src/alfred/tools/provide_review_logic.py
 from alfred.core.prompter import generate_prompt
-from alfred.lib.logger import get_logger, cleanup_task_logging
+from alfred.lib.structured_logger import get_logger, cleanup_task_logging
 from alfred.lib.task_utils import load_task
 from alfred.lib.turn_manager import turn_manager
 from alfred.models.schemas import ToolResponse
@@ -10128,7 +9650,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         return ToolResponse(status="error", message=f"Task '{task_id}' not found.")
 
     current_state = active_tool.state
-    logger.info(f"Processing review for task {task_id} in state '{current_state}', approved={is_approved}")
+    logger.info("Processing review", task_id=task_id, tool_name=active_tool.tool_name, state=current_state, approved=is_approved)
 
     if not is_approved:
         # Record revision request as a turn
@@ -10150,7 +9672,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
             message = "AI review approved. Awaiting human review."
             try:
                 if ConfigManager(settings.alfred_dir).load().features.autonomous_mode:
-                    logger.info(f"Autonomous mode enabled. Bypassing human review for task {task_id}.")
+                    logger.info("Autonomous mode enabled, bypassing human review", task_id=task_id, tool_name=active_tool.tool_name)
                     active_tool.trigger(Triggers.HUMAN_APPROVE)
                     message = "AI review approved. Autonomous mode bypassed human review."
             except FileNotFoundError:
@@ -10185,7 +9707,7 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
         if tool_name == ToolName.PLAN_TASK and current_task_status == TaskStatus.PLANNING:
             # Planning completed, update to READY_FOR_DEVELOPMENT
             state_manager.update_task_status(task_id, TaskStatus.READY_FOR_DEVELOPMENT)
-            logger.info(f"Planning completed for task {task_id}. Status updated to READY_FOR_DEVELOPMENT.")
+            logger.info("Planning completed, status updated", task_id=task_id, tool_name=tool_name, new_status="READY_FOR_DEVELOPMENT")
             handoff = f"""The planning workflow has completed successfully!
 
 Task '{task_id}' is now ready for development.
@@ -10196,13 +9718,13 @@ Call `alfred.work_on_task(task_id='{task_id}')` to start implementation."""
             # For other tools, provide the standard handoff message
             handoff = f"""The '{tool_name}' workflow has completed successfully! 
 
-**Next Action Required:**
-Call `alfred.approve_and_advance(task_id='{task_id}')` to:
-- Archive the completed work
-- Advance to the next phase  
-- Update task status
+**Next Actions:**
+1. Call `alfred.work_on_task(task_id='{task_id}')` to check the current status and see what phase comes next
+2. Then use the suggested tool for the next phase (e.g., `review_task`, `test_task`, etc.)
 
-**Alternative:** If you need to review the work first, call `alfred.work_on_task(task_id='{task_id}')` to see current status."""
+**Quick Option:** If you're confident and want to skip the status check, call `alfred.approve_and_advance(task_id='{task_id}')` to automatically advance to the next phase.
+
+**Note**: approve_and_advance only works after a workflow is fully complete, not during sub-states."""
 
         return ToolResponse(status="success", message=f"'{tool_name}' completed.", next_prompt=handoff)
 
@@ -10234,7 +9756,7 @@ import inspect
 
 from alfred.core.workflow import BaseWorkflowTool
 from alfred.models.schemas import TaskStatus, ToolResponse
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 # THIS IS THE FIX for Blocker #3
 if TYPE_CHECKING:
@@ -10341,7 +9863,7 @@ The start_task tool, re-architected as a stateful workflow tool.
 
 from alfred.core.prompter import generate_prompt
 from alfred.core.workflow import StartTaskTool
-from alfred.lib.logger import get_logger, setup_task_logging
+from alfred.lib.structured_logger import get_logger, setup_task_logging
 from alfred.lib.task_utils import load_task
 from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.orchestration.orchestrator import orchestrator
@@ -10399,7 +9921,7 @@ from pydantic import ValidationError
 from alfred.core.prompter import generate_prompt
 from alfred.core.workflow import BaseWorkflowTool
 from alfred.lib.turn_manager import turn_manager
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 from alfred.lib.task_utils import load_task
 from alfred.models.schemas import Task, ToolResponse
 from alfred.orchestration.orchestrator import orchestrator
@@ -10967,7 +10489,7 @@ from alfred.tools.tool_definitions import TOOL_DEFINITIONS, ToolDefinition
 from alfred.tools.generic_handler import GenericWorkflowHandler
 from alfred.tools.workflow_config import WorkflowToolConfig
 from alfred.models.schemas import ToolResponse
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -11042,7 +10564,7 @@ from alfred.models.schemas import TaskStatus, ToolResponse
 from alfred.core.workflow_config import WorkflowConfiguration
 from alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
 from alfred.task_providers.factory import get_provider
-from alfred.lib.logger import get_logger
+from alfred.lib.structured_logger import get_logger
 
 logger = get_logger(__name__)
 

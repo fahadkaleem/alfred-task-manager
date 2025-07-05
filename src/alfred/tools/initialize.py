@@ -5,17 +5,17 @@ This module provides the interactive initialize_project tool that sets up the
 .alfred directory with provider-specific configuration.
 """
 
-import logging
 from pathlib import Path
 import shutil
 
 from alfred.config.manager import ConfigManager
 from alfred.config.settings import settings
 from alfred.constants import ResponseStatus
+from alfred.lib.structured_logger import get_logger
 from alfred.models.alfred_config import TaskProvider
 from alfred.models.schemas import ToolResponse
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def initialize_project(provider: str | None = None, test_dir: Path | None = None) -> ToolResponse:
@@ -128,14 +128,14 @@ def _create_project_directories(alfred_dir: Path) -> None:
     (alfred_dir / "workspace").mkdir(exist_ok=True)
     (alfred_dir / "specs").mkdir(exist_ok=True)
     (alfred_dir / "tasks").mkdir(exist_ok=True)
-    logger.info(f"Created project directories at {alfred_dir}")
+    logger.info("Created project directories", extra={"alfred_dir": str(alfred_dir), "component": "initialize", "action": "create_directories"})
 
 
 def _copy_config_file(alfred_dir: Path) -> None:
     """Copy the default config file."""
     config_file = alfred_dir / settings.config_filename
     shutil.copyfile(settings.packaged_config_file, config_file)
-    logger.info(f"Copied config file to {config_file}")
+    logger.info("Copied config file", extra={"config_file": str(config_file), "source": str(settings.packaged_config_file), "component": "initialize", "action": "copy_config"})
 
 
 def _setup_provider_configuration(provider_choice: str, alfred_dir: Path) -> dict:
@@ -159,7 +159,7 @@ def _setup_jira_provider(config_manager: ConfigManager, alfred_dir: Path) -> dic
         config.provider.type = TaskProvider.JIRA
         config_manager.save(config)
         _setup_provider_resources("jira", alfred_dir)
-        logger.info("Configured Jira provider")
+        logger.info("Configured Jira provider", extra={"provider": "jira", "alfred_dir": str(alfred_dir), "component": "initialize", "action": "setup_provider"})
         return {"status": ResponseStatus.SUCCESS}
     return {
         "status": ResponseStatus.ERROR,
@@ -174,7 +174,7 @@ def _setup_linear_provider(config_manager: ConfigManager, alfred_dir: Path) -> d
         config.provider.type = TaskProvider.LINEAR
         config_manager.save(config)
         _setup_provider_resources("linear", alfred_dir)
-        logger.info("Configured Linear provider")
+        logger.info("Configured Linear provider", extra={"provider": "linear", "alfred_dir": str(alfred_dir), "component": "initialize", "action": "setup_provider"})
         return {"status": ResponseStatus.SUCCESS}
     return {
         "status": ResponseStatus.ERROR,
@@ -192,7 +192,7 @@ def _setup_local_provider(config_manager: ConfigManager, alfred_dir: Path) -> di
     # Setup provider resources
     _setup_provider_resources("local", alfred_dir)
 
-    logger.info("Configured local provider")
+    logger.info("Configured local provider", extra={"provider": "local", "alfred_dir": str(alfred_dir), "component": "initialize", "action": "setup_provider"})
     return {"status": ResponseStatus.SUCCESS}
 
 
@@ -262,7 +262,7 @@ Tasks will be automatically cached here when you work on them using `work_on("TA
 """
 
     readme_path.write_text(readme_content, encoding="utf-8")
-    logger.info(f"Created {provider} provider resources at {tasks_dir}")
+    logger.info("Created provider resources", extra={"provider": provider, "tasks_dir": str(tasks_dir), "readme_path": str(readme_path), "component": "initialize", "action": "setup_resources"})
 
 
 def _validate_mcp_connectivity(provider: str) -> bool:
@@ -274,5 +274,5 @@ def _validate_mcp_connectivity(provider: str) -> bool:
     """
     # TODO: Implement actual MCP tool availability check
     # For now, we'll simulate the check and return True
-    logger.info(f"Simulating MCP connectivity check for {provider} provider")
+    logger.info("Simulating MCP connectivity check", extra={"provider": provider, "component": "initialize", "action": "validate_mcp"})
     return True

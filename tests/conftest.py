@@ -3,95 +3,104 @@ Shared test fixtures and configuration for Alfred Task Manager tests.
 
 This configuration uses REAL data and minimal mocking to ensure tests
 run against actual implementation with proper isolation.
+
+CRITICAL: Tests MUST use temporary directories and NEVER touch production .alfred
+
+Test Isolation Strategy:
+1. Each test gets a fresh temporary directory created with tempfile.TemporaryDirectory
+2. All alfred settings are mocked to point to the temp directory
+3. Tests verify files are created in temp directories, not production
+4. Temp directories are automatically cleaned up after each test
+5. Production .alfred directory is completely isolated from tests
+
+This prevents any accidental data loss or corruption of production data.
 """
 
 import pytest
 import shutil
+import tempfile
+import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-from src.alfred.models.schemas import Task, TaskStatus, ToolResponse, Subtask
-from src.alfred.models.planning_artifacts import ContextDiscoveryArtifact
-
-
-# Test data directory - use real directory for test isolation
-TEST_DATA_DIR = Path(__file__).parent / "test_data"
-TEST_ALFRED_DIR = TEST_DATA_DIR / ".alfred"
+from alfred.models.schemas import Task, TaskStatus, ToolResponse, Subtask
+from alfred.models.planning_artifacts import ContextDiscoveryArtifact
 
 
 @pytest.fixture(scope="function", autouse=True)
-def setup_test_environment():
-    """Setup and cleanup test environment for each test."""
-    # Ensure test data directory exists
-    TEST_ALFRED_DIR.mkdir(parents=True, exist_ok=True)
-    (TEST_ALFRED_DIR / "tasks").mkdir(exist_ok=True)
-    (TEST_ALFRED_DIR / "workspace").mkdir(exist_ok=True)
-    (TEST_ALFRED_DIR / "debug").mkdir(exist_ok=True)
-    (TEST_ALFRED_DIR / "specs").mkdir(exist_ok=True)
+def setup_test_environment(monkeypatch):
+    """Setup and cleanup test environment for each test using temporary directories."""
+    # Create a temporary directory for this test
+    with tempfile.TemporaryDirectory(prefix="alfred_test_") as temp_dir:
+        test_dir = Path(temp_dir)
+        test_alfred_dir = test_dir / ".alfred"
 
-    # Create basic config if it doesn't exist
-    config_file = TEST_ALFRED_DIR / "config.json"
-    if not config_file.exists():
+        # Create Alfred directory structure
+        test_alfred_dir.mkdir(parents=True, exist_ok=True)
+        (test_alfred_dir / "tasks").mkdir(exist_ok=True)
+        (test_alfred_dir / "workspace").mkdir(exist_ok=True)
+        (test_alfred_dir / "debug").mkdir(exist_ok=True)
+        (test_alfred_dir / "specs").mkdir(exist_ok=True)
+
+        # Create basic config
+        config_file = test_alfred_dir / "config.json"
         config_file.write_text('{"provider": "local", "project_name": "test_project", "version": "1.0.0"}')
 
-    # Patch settings to use test directory - patch multiple import locations
-    patches = [
-        patch("alfred.config.settings.settings"),  # Patch the actual settings object
-        patch("src.alfred.tools.create_task.settings"),
-        patch("src.alfred.config.settings.settings"),
-        patch("src.alfred.lib.logger.settings"),
-        patch("src.alfred.lib.md_parser.settings", create=True),
-        patch("src.alfred.state.manager.settings"),
-        patch("src.alfred.task_providers.local_provider.settings"),
-    ]
+        # CRITICAL: We need to patch the settings BEFORE any imports happen
+        # First, check if modules are already imported and reload them if needed
+        import sys
 
-    try:
-        # Start all patches
-        mock_settings_list = []
-        for p in patches:
-            try:
-                mock_settings = p.start()
-                mock_settings.alfred_dir = str(TEST_ALFRED_DIR)
-                mock_settings.project_root = str(TEST_DATA_DIR)
-                mock_settings_list.append(mock_settings)
-            except (ImportError, AttributeError):
-                # Skip patches that don't apply
-                pass
+        # Create a real settings object that matches the expected interface
+        class MockSettings:
+            def __init__(self, test_dir):
+                self.alfred_dir = str(test_dir)
+                self.project_root = str(test_dir.parent)
+                # Add any other attributes that settings might have
 
-        yield mock_settings_list[0] if mock_settings_list else None
+        mock_settings = MockSettings(test_alfred_dir)
 
-    finally:
-        # Stop all patches
-        for p in patches:
-            try:
-                p.stop()
-            except:
-                pass
+        # Patch at the source - the alfred.config.settings module
+        if "alfred.config.settings" in sys.modules:
+            monkeypatch.setattr("alfred.config.settings.settings", mock_settings)
+        if "alfred.config" in sys.modules:
+            monkeypatch.setattr("alfred.config.settings", mock_settings)
 
-    # Cleanup task files after each test to ensure isolation
-    tasks_dir = TEST_ALFRED_DIR / "tasks"
-    if tasks_dir.exists():
-        for task_file in tasks_dir.glob("*.md"):
-            if task_file.name != "README.md":  # Keep README for reference
-                task_file.unlink()
-        
-        # Also remove task_counter.json to reset ID generation
-        counter_file = tasks_dir / "task_counter.json"
-        if counter_file.exists():
-            counter_file.unlink()
+        # Now patch all the places where settings might be imported
+        modules_to_patch = [
+            ("alfred.tools.create_task", "settings"),
+            ("alfred.lib.md_parser", "settings"),
+            ("alfred.state.manager", "settings"),
+            ("alfred.task_providers.local_provider", "settings"),
+            ("alfred.lib.structured_logger", "settings"),
+        ]
 
-    # Clean workspace directories
-    workspace_dir = TEST_ALFRED_DIR / "workspace"
-    if workspace_dir.exists():
-        for workspace in workspace_dir.iterdir():
-            if workspace.is_dir():
-                shutil.rmtree(workspace)
+        for module_name, attr_name in modules_to_patch:
+            if module_name in sys.modules:
+                try:
+                    module = sys.modules[module_name]
+                    if hasattr(module, attr_name):
+                        monkeypatch.setattr(f"{module_name}.{attr_name}", mock_settings)
+                except (ImportError, AttributeError):
+                    pass
+
+        # Set environment variable to ensure any subprocess also uses test dir
+        monkeypatch.setenv("ALFRED_DIR", str(test_alfred_dir))
+        monkeypatch.setenv("ALFRED_TEST_MODE", "true")
+
+        # Store test directories in pytest namespace for access by fixtures
+        pytest.test_temp_dir = test_dir
+        pytest.test_alfred_dir = test_alfred_dir
+
+        yield mock_settings
+
+        # Cleanup is automatic with tempfile.TemporaryDirectory
+        # No need to manually delete files
 
 
 @pytest.fixture
 def test_alfred_dir():
-    """Provide the test Alfred directory path."""
-    return TEST_ALFRED_DIR
+    """Provide the test Alfred directory path from temporary directory."""
+    return pytest.test_alfred_dir
 
 
 @pytest.fixture
@@ -231,7 +240,7 @@ Details
 @pytest.fixture
 def sample_context_discovery():
     """Sample context discovery artifact with real data."""
-    from src.alfred.models.discovery_artifacts import ComplexityLevel
+    from alfred.models.discovery_artifacts import ComplexityLevel
 
     return ContextDiscoveryArtifact(
         codebase_understanding={"main_components": ["Task system", "State machine", "Planning workflow"], "architecture": "Clean separation between models, core logic, and tools"},
@@ -283,17 +292,19 @@ VALID_TASK_STATUSES = list(TaskStatus)
 
 
 def cleanup_test_files():
-    """Utility function to clean up test files."""
-    if TEST_ALFRED_DIR.exists():
+    """Utility function to clean up test files.
+    NOTE: With temporary directories, this is rarely needed as cleanup is automatic.
+    """
+    if hasattr(pytest, "test_alfred_dir") and pytest.test_alfred_dir.exists():
         # Only clean task files, not the directory structure
-        tasks_dir = TEST_ALFRED_DIR / "tasks"
+        tasks_dir = pytest.test_alfred_dir / "tasks"
         if tasks_dir.exists():
             for task_file in tasks_dir.glob("*.md"):
                 if task_file.name not in ["README.md"]:
                     task_file.unlink()
 
         # Clean workspace directories
-        workspace_dir = TEST_ALFRED_DIR / "workspace"
+        workspace_dir = pytest.test_alfred_dir / "workspace"
         if workspace_dir.exists():
             for workspace in workspace_dir.iterdir():
                 if workspace.is_dir():
@@ -302,23 +313,29 @@ def cleanup_test_files():
 
 def get_test_alfred_dir():
     """Get the test Alfred directory path."""
-    return TEST_ALFRED_DIR
+    return pytest.test_alfred_dir if hasattr(pytest, "test_alfred_dir") else None
 
 
 def create_test_task_file(task_id: str, content: str) -> Path:
     """Create a test task file with given content."""
-    task_file = TEST_ALFRED_DIR / "tasks" / f"{task_id}.md"
+    if not hasattr(pytest, "test_alfred_dir"):
+        raise RuntimeError("Test environment not set up properly")
+    task_file = pytest.test_alfred_dir / "tasks" / f"{task_id}.md"
     task_file.write_text(content)
     return task_file
 
 
 def verify_test_task_file(task_id: str) -> bool:
     """Verify a test task file exists."""
-    task_file = TEST_ALFRED_DIR / "tasks" / f"{task_id}.md"
+    if not hasattr(pytest, "test_alfred_dir"):
+        return False
+    task_file = pytest.test_alfred_dir / "tasks" / f"{task_id}.md"
     return task_file.exists()
 
 
 def read_test_task_file(task_id: str) -> str:
     """Read content of a test task file."""
-    task_file = TEST_ALFRED_DIR / "tasks" / f"{task_id}.md"
+    if not hasattr(pytest, "test_alfred_dir"):
+        return ""
+    task_file = pytest.test_alfred_dir / "tasks" / f"{task_id}.md"
     return task_file.read_text() if task_file.exists() else ""

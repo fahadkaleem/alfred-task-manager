@@ -29,7 +29,7 @@ class ModelResponse(BaseModel):
 
     content: str
     model_name: str
-    usage: Dict[str, int] = Field(default_factory=dict)  # {input_tokens: int, output_tokens: int}
+    usage: Dict[str, Any] = Field(default_factory=dict)  # {input_tokens: int, output_tokens: int, cost: float, etc.}
     metadata: Dict[str, Any] = Field(default_factory=dict)  # Provider-specific data
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

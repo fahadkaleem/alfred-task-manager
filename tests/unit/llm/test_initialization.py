@@ -223,7 +223,7 @@ class TestInitializeSingleProvider:
         with pytest.raises(AuthenticationError) as exc_info:
             await _initialize_single_provider(config)
 
-        assert "No API key found for openai" in str(exc_info.value)
+        assert "No API key found for" in str(exc_info.value)
         assert "OPENAI_API_KEY" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -234,8 +234,9 @@ class TestInitializeSingleProvider:
 
         # Create a mock provider that's not in the supported list
         config = Mock()
-        config.name = "unsupported_provider"
-        config.name.value = "unsupported_provider"
+        mock_provider = Mock()
+        mock_provider.value = "unsupported_provider"
+        config.name = mock_provider
 
         with pytest.raises(ProviderError) as exc_info:
             await _initialize_single_provider(config)

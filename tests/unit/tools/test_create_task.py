@@ -7,9 +7,9 @@ Tests use actual file operations and minimal mocking for realistic validation.
 import pytest
 from pathlib import Path
 
-from src.alfred.tools.create_task import create_task_impl
-from src.alfred.models.schemas import ToolResponse
-from src.alfred.lib.md_parser import MarkdownTaskParser
+from alfred.tools.create_task import create_task_impl
+from alfred.models.schemas import ToolResponse
+from alfred.lib.md_parser import MarkdownTaskParser
 
 
 class TestCreateTaskImplementation:
@@ -21,7 +21,7 @@ class TestCreateTaskImplementation:
 
         assert response.status == "success"
         assert response.data is not None
-        
+
         # Get the generated task ID
         task_id = response.data["task_id"]
         assert task_id.startswith("TS-")

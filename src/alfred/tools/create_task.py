@@ -40,39 +40,34 @@ This file serves as both documentation and a working example. Task IDs are now a
 def generate_next_task_id() -> str:
     """
     Generates the next task ID by reading and incrementing the counter in task_counter.json
-    
+
     Returns:
         str: The next task ID in format TK-XX
     """
     tasks_dir = Path(settings.alfred_dir) / "tasks"
     counter_file = tasks_dir / "task_counter.json"
-    
+
     # Ensure directory exists
     tasks_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Read current counter or initialize
     if counter_file.exists():
-        with open(counter_file, 'r') as f:
+        with open(counter_file, "r") as f:
             counter_data = json.load(f)
     else:
-        counter_data = {
-            "last_task_number": 0,
-            "prefix": "TS",
-            "created_at": "2025-07-04",
-            "description": "Tracks the last assigned task number for auto-incrementing task IDs"
-        }
-    
+        counter_data = {"last_task_number": 0, "prefix": "TS", "created_at": "2025-07-04", "description": "Tracks the last assigned task number for auto-incrementing task IDs"}
+
     # Increment counter
     counter_data["last_task_number"] += 1
     next_number = counter_data["last_task_number"]
-    
+
     # Save updated counter
-    with open(counter_file, 'w') as f:
+    with open(counter_file, "w") as f:
         json.dump(counter_data, f, indent=2)
-    
+
     # Generate task ID with zero-padding
     task_id = f"{counter_data['prefix']}-{next_number:02d}"
-    
+
     logger.info(f"Generated new task ID: {task_id}")
     return task_id
 
@@ -91,10 +86,10 @@ def create_task_impl(task_content: str) -> ToolResponse:
     try:
         # Generate the next task ID
         task_id = generate_next_task_id()
-        
+
         # Prepend the task ID to the content
         full_task_content = f"# TASK: {task_id}\n\n{task_content.strip()}"
-        
+
         # Initialize parser
         parser = MarkdownTaskParser()
 
@@ -106,12 +101,12 @@ def create_task_impl(task_content: str) -> ToolResponse:
             tasks_dir = Path(settings.alfred_dir) / "tasks"
             counter_file = tasks_dir / "task_counter.json"
             if counter_file.exists():
-                with open(counter_file, 'r') as f:
+                with open(counter_file, "r") as f:
                     counter_data = json.load(f)
                 counter_data["last_task_number"] -= 1
-                with open(counter_file, 'w') as f:
+                with open(counter_file, "w") as f:
                     json.dump(counter_data, f, indent=2)
-            
+
             return ToolResponse(
                 status="error",
                 message="Task content format is invalid.",
@@ -134,12 +129,12 @@ def create_task_impl(task_content: str) -> ToolResponse:
             tasks_dir = Path(settings.alfred_dir) / "tasks"
             counter_file = tasks_dir / "task_counter.json"
             if counter_file.exists():
-                with open(counter_file, 'r') as f:
+                with open(counter_file, "r") as f:
                     counter_data = json.load(f)
                 counter_data["last_task_number"] -= 1
-                with open(counter_file, 'w') as f:
+                with open(counter_file, "w") as f:
                     json.dump(counter_data, f, indent=2)
-                    
+
             return ToolResponse(
                 status="error", message="Failed to parse task content.", data={"parse_error": str(e), "template": TASK_TEMPLATE, "help": "Ensure your task content follows the exact template format."}
             )
@@ -160,11 +155,11 @@ def create_task_impl(task_content: str) -> ToolResponse:
             status="success",
             message=f"Task '{task_id}' created successfully.",
             data={
-                "task_id": task_id, 
-                "file_path": str(task_file_path), 
-                "task_title": parsed_data.get("title", ""), 
+                "task_id": task_id,
+                "file_path": str(task_file_path),
+                "task_title": parsed_data.get("title", ""),
                 "next_action": f"Use work_on_task('{task_id}') to start working on this task.",
-                "note": "Task ID was automatically generated."
+                "note": "Task ID was automatically generated.",
             },
         )
 
@@ -175,14 +170,14 @@ def create_task_impl(task_content: str) -> ToolResponse:
             tasks_dir = Path(settings.alfred_dir) / "tasks"
             counter_file = tasks_dir / "task_counter.json"
             if counter_file.exists():
-                with open(counter_file, 'r') as f:
+                with open(counter_file, "r") as f:
                     counter_data = json.load(f)
                 counter_data["last_task_number"] -= 1
-                with open(counter_file, 'w') as f:
+                with open(counter_file, "w") as f:
                     json.dump(counter_data, f, indent=2)
         except Exception as counter_err:
             logger.error(f"Failed to decrement counter: {counter_err}")
-            
+
         return ToolResponse(
             status="error",
             message="An unexpected error occurred while creating the task.",

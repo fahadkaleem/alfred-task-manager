@@ -79,23 +79,26 @@ async def provide_review_logic(task_id: str, is_approved: bool, feedback_notes: 
 
         # Import here to avoid circular dependency
         from alfred.models.schemas import TaskStatus
-        from alfred.core.workflow_config import WorkflowConfiguration
+        from alfred.tools.workflow_utils import get_next_status
 
-        # Update task status based on the tool that just completed
+        # Update task status using workflow utilities for direct exit_status mapping
         current_task_status = task.task_status
-        if tool_name == ToolName.PLAN_TASK and current_task_status == TaskStatus.PLANNING:
-            # Planning completed, update to READY_FOR_DEVELOPMENT
-            state_manager.update_task_status(task_id, TaskStatus.READY_FOR_DEVELOPMENT)
-            logger.info("Planning completed, status updated", task_id=task_id, tool_name=tool_name, new_status="READY_FOR_DEVELOPMENT")
-            handoff = f"""The planning workflow has completed successfully!
+        next_status = get_next_status(current_task_status)
+        
+        if next_status:
+            state_manager.update_task_status(task_id, next_status)
+            logger.info("Tool completed, status updated", task_id=task_id, tool_name=tool_name, 
+                       old_status=current_task_status.value, new_status=next_status.value)
+            
+            if tool_name == ToolName.PLAN_TASK:
+                handoff = f"""The planning workflow has completed successfully!
 
 Task '{task_id}' is now ready for development.
 
 **Next Action:**
 Call `alfred.work_on_task(task_id='{task_id}')` to start implementation."""
-        else:
-            # For other tools, provide the standard handoff message
-            handoff = f"""The '{tool_name}' workflow has completed successfully! 
+            else:
+                handoff = f"""The '{tool_name}' workflow has completed successfully! 
 
 **Next Actions:**
 1. Call `alfred.work_on_task(task_id='{task_id}')` to check the current status and see what phase comes next
@@ -104,6 +107,12 @@ Call `alfred.work_on_task(task_id='{task_id}')` to start implementation."""
 **Quick Option:** If you're confident and want to skip the status check, call `alfred.approve_and_advance(task_id='{task_id}')` to automatically advance to the next phase.
 
 **Note**: approve_and_advance only works after a workflow is fully complete, not during sub-states."""
+        else:
+            # Fallback if no next status defined
+            handoff = f"""The '{tool_name}' workflow has completed successfully! 
+
+**Next Action:**
+Call `alfred.work_on_task(task_id='{task_id}')` to check the current status."""
 
         return ToolResponse(status="success", message=f"'{tool_name}' completed.", next_prompt=handoff)
 

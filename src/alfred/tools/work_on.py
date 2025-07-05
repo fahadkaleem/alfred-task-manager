@@ -1,6 +1,6 @@
 from alfred.state.manager import state_manager
 from alfred.models.schemas import TaskStatus, ToolResponse
-from alfred.core.workflow_config import WorkflowConfiguration
+from alfred.tools.workflow_utils import get_tool_for_status, get_phase_info, is_terminal_status
 from alfred.lib.task_utils import does_task_exist_locally, write_task_to_markdown
 from alfred.task_providers.factory import get_provider
 from alfred.lib.structured_logger import get_logger
@@ -41,25 +41,25 @@ def work_on_impl(task_id: str) -> ToolResponse:
             logger.error(f"Failed to fetch task from provider: {e}")
             return ToolResponse(status="error", message=f"Failed to fetch task '{task_id}' from provider: {str(e)}")
 
-    # Step 3: Use centralized workflow config for smart dispatch
+    # Step 3: Use workflow utilities for smart dispatch
     task_state = state_manager.load_or_create_task_state(task_id)
     task_status = task_state.task_status
 
-    # Get the appropriate tool from workflow configuration
-    next_tool = WorkflowConfiguration.get_tool_for_status(task_status)
+    # Get the appropriate tool from workflow utilities
+    next_tool = get_tool_for_status(task_status)
 
     if next_tool:
-        phase = WorkflowConfiguration.get_phase(task_status)
+        phase_info = get_phase_info(task_status)
         message = f"Task '{task_id}' is in status '{task_status.value}'. The next action is to use the '{next_tool}' tool."
 
-        if phase and phase.description:
-            message += f"\nPhase: {phase.description}"
+        if phase_info and phase_info.get("description"):
+            message += f"\nPhase: {phase_info['description']}"
 
         next_prompt = f"To proceed with task '{task_id}', call `alfred.{next_tool}(task_id='{task_id}')`."
         return ToolResponse(status="success", message=message, next_prompt=next_prompt)
 
     # Check if task is done
-    if WorkflowConfiguration.is_terminal_status(task_status):
+    if is_terminal_status(task_status):
         return ToolResponse(status="success", message=f"Task '{task_id}' is already done. No further action is required.")
 
     # Unknown status

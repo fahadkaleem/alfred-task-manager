@@ -95,6 +95,15 @@ class StateManager:
 
         logger.info("Updated task status", task_id=task_id, old_status=old_status.value, new_status=new_status.value)
 
+        # Update scratchpad to reflect the new status
+        from alfred.lib.turn_manager import turn_manager
+
+        try:
+            turn_manager.generate_scratchpad(task_id)
+            logger.debug("Updated scratchpad after status change", task_id=task_id, new_status=new_status.value)
+        except Exception as e:
+            logger.error("Failed to update scratchpad after status change", task_id=task_id, error=str(e))
+
     def update_tool_state(self, task_id: str, tool: Any) -> None:
         """Update tool state with proper locking."""
         with file_lock(self._get_lock_file(task_id)):

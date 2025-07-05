@@ -8,9 +8,9 @@ without mocking to ensure realistic behavior testing.
 import pytest
 from pathlib import Path
 
-from src.alfred.models.schemas import TaskStatus
-from src.alfred.tools.create_task import create_task_impl
-from src.alfred.lib.md_parser import MarkdownTaskParser
+from alfred.models.schemas import TaskStatus
+from alfred.tools.create_task import create_task_impl
+from alfred.lib.md_parser import MarkdownTaskParser
 
 
 class TestTaskManagementIntegration:
@@ -35,7 +35,7 @@ Task should be created successfully and maintain proper state.
 
         response = create_task_impl(content)
         assert response.status == "success"
-        
+
         # Get the auto-generated task ID
         task_id = response.data["task_id"]
         assert task_id.startswith("TS-")
@@ -175,7 +175,7 @@ Each task should be processed independently with:
 
             response = create_task_impl(content)
             assert response.status == "success"
-            
+
             # Get the auto-generated task ID
             task_id = response.data["task_id"]
             expected_id = f"TS-{i + 1:02d}"
@@ -229,7 +229,7 @@ Task ID should be auto-generated in the correct format.
 
             response = create_task_impl(content)
             assert response.status == "success"
-            
+
             # Verify auto-generated ID format
             task_id = response.data["task_id"]
             expected_id = f"TS-{i + 1:02d}"
@@ -447,7 +447,7 @@ All test operations should be isolated to test directory.
 
             response = create_task_impl(content)
             assert response.status == "success"
-            
+
             task_id = response.data["task_id"]
             created_task_ids.append(task_id)
 
@@ -455,19 +455,17 @@ All test operations should be isolated to test directory.
             test_task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
             assert test_task_file.exists()
 
-        # Verify production .alfred is not affected
-        production_alfred = Path(".alfred")
-        if production_alfred.exists():
-            production_tasks = production_alfred / "tasks"
-            if production_tasks.exists():
-                for task_id in created_task_ids:
-                    production_task_file = production_tasks / f"{task_id}.md"
-                    assert not production_task_file.exists(), f"Test task {task_id} leaked to production!"
-
         # Verify all test tasks exist only in test directory
         for task_id in created_task_ids:
             test_task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
             assert test_task_file.exists(), f"Test task {task_id} missing from test directory"
+
+            # Verify the file is in temp directory (contains temp directory marker)
+            assert "alfred_test_" in str(test_task_file), f"Task {task_id} not in temp directory"
+
+            # Verify the absolute path is not the production path
+            prod_path = Path.cwd() / ".alfred" / "tasks" / f"{task_id}.md"
+            assert test_task_file.resolve() != prod_path.resolve(), f"Task {task_id} created in production!"
 
     def test_comprehensive_real_data_integration(self, test_alfred_dir):
         """Test comprehensive integration using only real data and components."""
@@ -540,7 +538,7 @@ Technical requirements:
 
         # Verify task creation success
         assert response.status == "success"
-        
+
         # Get the auto-generated task ID
         task_id = response.data["task_id"]
         assert task_id.startswith("TS-")

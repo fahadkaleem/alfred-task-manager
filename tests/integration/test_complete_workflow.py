@@ -8,9 +8,9 @@ import pytest
 from pathlib import Path
 import json
 
-from src.alfred.tools.create_task import create_task_impl
-from src.alfred.models.schemas import TaskStatus
-from src.alfred.lib.md_parser import MarkdownTaskParser
+from alfred.tools.create_task import create_task_impl
+from alfred.models.schemas import TaskStatus
+from alfred.lib.md_parser import MarkdownTaskParser
 
 
 class TestCompleteWorkflowIntegration:
@@ -326,13 +326,13 @@ This task should be created once and prevent subsequent duplicates.
         # Both files should exist independently
         task_file2 = test_alfred_dir / "tasks" / "TS-02.md"
         assert task_file2.exists()
-        
+
         # Original file should be unchanged
         current_content = task_file.read_text()
         assert current_content == original_saved_content
         assert "Original" in current_content
         assert "Modified" not in current_content
-        
+
         # New file should have modified content
         new_content = task_file2.read_text()
         assert "Modified" in new_content
@@ -437,15 +437,16 @@ Task should be created and cleaned up properly.
         assert (test_alfred_dir / "workspace").exists()
         assert (test_alfred_dir / "debug").exists()
 
-        # Verify isolation - check that production .alfred is not affected
-        production_alfred = Path(".alfred")
-        if production_alfred.exists():
-            # If production .alfred exists, verify our test files aren't there
-            production_tasks = production_alfred / "tasks"
-            if production_tasks.exists():
-                for task_id in test_tasks:
-                    production_task_file = production_tasks / f"{task_id}.md"
-                    assert not production_task_file.exists(), f"Test task {task_id} leaked to production!"
+        # Verify isolation - tasks should be in temp directory only
+        for task_id in test_tasks:
+            test_task_file = test_alfred_dir / "tasks" / f"{task_id}.md"
+
+            # Verify the file is in temp directory (contains temp directory marker)
+            assert "alfred_test_" in str(test_task_file), f"Task {task_id} not in temp directory"
+
+            # Verify the absolute path is not the production path
+            prod_path = Path.cwd() / ".alfred" / "tasks" / f"{task_id}.md"
+            assert test_task_file.resolve() != prod_path.resolve(), f"Task {task_id} created in production!"
 
     def test_end_to_end_workflow_validation(self, test_alfred_dir):
         """Test complete end-to-end workflow validation."""

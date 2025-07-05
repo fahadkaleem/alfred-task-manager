@@ -107,10 +107,7 @@ def log_tool_transaction(impl_func: Callable) -> Callable:
 
                 # Log the detailed transaction with structured context
                 with logger.context(task_id=task_id, tool_name=tool_name):
-                    logger.info("Tool transaction completed", 
-                               request_params=request_data, 
-                               response_status=response.status,
-                               response_message=response.message)
+                    logger.info("Tool transaction completed", request_params=request_data, response_status=response.status, response_message=response.message)
 
                 return response
             except Exception as e:
